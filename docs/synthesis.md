@@ -487,7 +487,8 @@ period.
   test period keeps the lag from the last training period. The task is to forecast the test
   periods from the training horizon, and `time_series.withheld_test_columns` names the blanked
   columns. A random split has no horizon, so a schema whose published columns read an earlier
-  target is refused with a random split: hide those columns or use `split: "time"`.
+  target is refused with a random split: hide those columns or use `split: "time"`. This holds
+  when the lag reads a column that depends on the target, even a hidden near copy of it.
 - **Causal questions.** A `treatment` on a panel is refused with a `SchemaError`. A treatment
   reaches later periods through lags, and the effect replay recomputes descendants within one
   row, not across periods, so its effects would be wrong.

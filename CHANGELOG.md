@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- **`OTHER` segments are large enough too.** `scramble_categories` with `min_count` or
+  `min_entities` keeps merging the smallest segments into `OTHER` until it holds the minimum
+  rows and entities. If all segments together fall short, the column is blanked.
+
+- **A random split refuses lags of hidden copies of the target.** A published column that reads
+  a lag of any column depending on the target, directly or through other columns, is refused,
+  not only a lag of the target itself.
+
+- **Entity keys are found by how they link rows.** An untreated text, integer or whole-number
+  float column with at least 50 distinct values and a median of 10 or fewer rows per value now
+  makes the release `at_risk`. The old cut-off of 1,000 distinct values let 999 accounts through.
+
 - **Documented limits.** `docs/protection.md` gains "What keyed noise cannot hide": public
   seeds, guessable keys, same-key re-releases, averaging across keys, positional row keys and
   the derived key in DuckDB SQL. The business guide states that one known value plus a true

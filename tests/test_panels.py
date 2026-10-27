@@ -557,3 +557,28 @@ def test_a_random_split_refuses_published_lags_of_the_target():
 
     with pytest.raises(ValueError, match="last_month_sales read the target of earlier periods"):
         DatasetSchema.model_validate(spec)
+
+
+def _lag_of_a_hidden_copy(published_formula: str) -> dict[str, Any]:
+    columns = [
+        {"name": "y", "kind": "float", "mean": 100, "std": 20},
+        _formula("copy", "y + normal(0, 0.01)"),
+        _formula("second_copy", "lag(copy, 1)"),
+        _formula("signal", published_formula),
+    ]
+    return small_panel(
+        columns, split="random", hidden_columns=["copy", "second_copy"], test_share=0.3
+    )
+
+
+@pytest.mark.parametrize("published_formula", ["lag(copy, 1)", "lag(second_copy, 1) + 1"])
+def test_a_random_split_refuses_a_lag_of_a_column_that_depends_on_the_target(published_formula):
+    with pytest.raises(ValueError, match="signal read the target of earlier periods"):
+        DatasetSchema.model_validate(_lag_of_a_hidden_copy(published_formula))
+
+
+def test_a_random_split_allows_a_lag_of_a_column_unrelated_to_the_target():
+    spec = _lag_of_a_hidden_copy("lag(noise, 1)")
+    spec["columns"].append({"name": "noise", "kind": "float", "mean": 0, "std": 1})
+
+    DatasetSchema.model_validate(spec)

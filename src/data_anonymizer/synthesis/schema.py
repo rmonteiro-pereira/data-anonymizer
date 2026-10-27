@@ -547,6 +547,23 @@ class DatasetSchema(BaseModel):
         return cls.from_json(path.read_text(encoding="utf-8"))
 
 
+def columns_feeding(by_name: dict[str, ColumnSchema], name: str) -> set[str]:
+    """Return the columns that feed a column, in the same period or through `lag`, and so on."""
+    found: set[str] = set()
+    pending = list(_feeding_columns(by_name, name))
+    while pending:
+        current = pending.pop()
+        if current not in found:
+            found.add(current)
+            pending.extend(_feeding_columns(by_name, current))
+    return found
+
+
+def _feeding_columns(by_name: dict[str, ColumnSchema], name: str) -> set[str]:
+    column = by_name[name]
+    return (column.dependencies() | column.lagged_dependencies()) & set(by_name)
+
+
 def _check_correlatable(column: ColumnSchema | None, name: str) -> None:
     if column is None:
         raise ValueError(f"correlation names unknown column {name!r}")
@@ -589,17 +606,23 @@ def _check_split(question: Question, panel: Panel | None, by_name: dict[str, Col
         return
     # With a random split, a published lag of the target in one row is the label of a
     # neighbouring test row, so the test answers could be read straight off the files.
+    # The same holds when the lag reads a column that depends on the target, even a hidden one,
+    # such as a near copy of it, so every column that carries the target counts.
+    carriers = {question.target} | {
+        name for name in by_name if question.target in columns_feeding(by_name, name)
+    }
     lagging = [
         name
         for name, column in by_name.items()
         if name != question.target
         and name not in question.hidden_columns
-        and question.target in column.lagged_dependencies()
+        and column.lagged_dependencies() & carriers
     ]
     if lagging:
         raise ValueError(
-            f"{', '.join(lagging)} read the target of earlier periods, which with a random "
-            "split publishes test labels in neighbouring rows; use split: 'time'"
+            f"{', '.join(lagging)} read the target of earlier periods, directly or through "
+            "columns that depend on it, which with a random split publishes test labels in "
+            "neighbouring rows; use split: 'time'"
         )
 
 
