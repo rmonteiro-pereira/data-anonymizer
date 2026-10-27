@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **`apply_many` joins the whole graph of tables.** Tables linked through a bridge table are
+  joined together, and two columns with different names that code the same entities are linked
+  when their values occur equally often (`frequency_links.py`). k-anonymity and inference are
+  checked over each connected group of tables, per entity.
 - **Joint microaggregation counts people when the plan has an `entity_column`.** MDAV groups
   hold at least `group_size` distinct entities, an entity's rows share one vector, and the
   isolated-record and skew checks count entities, so five identical visits of one person are no

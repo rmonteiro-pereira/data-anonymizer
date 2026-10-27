@@ -1,4 +1,4 @@
-"""Check what several anonymized tables reveal when they are joined on a shared column.
+"""Check what several anonymized tables reveal when they are joined through their links.
 
 `apply_many` anonymizes related tables under one throwaway key, so a column such as an account
 ID gets the same code in every table. That is what lets a model use the tables together, and
@@ -6,17 +6,27 @@ it is also a join key. Each table can be k-anonymous on its own while the entiti
 through all their tables at once, are not: an account in district 1 (first table) and in band 1
 (second table) may be the only one that is both.
 
-For every column that several anonymizing plans release with consistent codes, the released
-tables are joined on it, and two checks run on the result, counting entities and not rows:
+Two kinds of link join tables:
+- a column that several anonymizing plans release with the same name and consistent codes;
+- two columns with different names that code the same entities, found because every entity
+  occurs a distinctive number of times in both (see `frequency_links`).
+
+Tables that are linked, directly or through other tables, form one component. A bridge table
+that holds an account and a case code joins a table that has only the account to a table that
+has only the case code, though no single link spans all three. The tables of each component are
+joined through all their links, and two checks run on the result, counting entities and not
+rows:
 - k-anonymity: every combination of the tables' quasi-identifiers is shared by at least the
   largest `k_target` of those plans' entities;
 - inference: no combination lets a sensitive value of one table be guessed with high
   confidence above its base rate, by the same rule as the single-table check.
+An entity is the link whose values are fewest in the joined result, the coarsest key, which is
+the person when the other links are visits or cases of that person.
 The checks take the released tables and the plans and return problem texts.
 """
 
-from collections.abc import Mapping
-from dataclasses import dataclass
+from collections.abc import Hashable, Mapping, Sequence
+from dataclasses import dataclass, field
 from typing import Any
 
 import narwhals as nw
@@ -24,11 +34,13 @@ import pandas as pd
 
 from oblitus.engines import as_working_frame, collect
 from oblitus.evaluation.inference import confident_inferences
+from oblitus.frequency_links import frequency_links
 from oblitus.plan import AnonymizationPlan, Protection
 
 # These leave a column's values the same from table to table within one anonymizing call.
 _CONSISTENT_TECHNIQUES = {"keep", "scramble_categories"}
 _DISCRETE_LIMIT = 50
+_LINK_PREFIX = "__link"
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,10 +51,23 @@ class _Contribution:
     sensitive: list[str]
 
 
+@dataclass(frozen=True, slots=True)
+class _Link:
+    """One entity key as several tables hold it: each table's column, and how to recode it.
+
+    `recodes` maps a table's values to the values of the first table, for links whose codes
+    differ from table to table.
+    """
+
+    description: str
+    columns: dict[str, str]
+    recodes: dict[str, dict[Hashable, Hashable]] = field(default_factory=dict)
+
+
 def joined_table_problems(
     released: Mapping[str, Any], plans: Mapping[str, AnonymizationPlan]
 ) -> dict[str, list[str]]:
-    """The problems each table has because of what its linking columns allow, by table name.
+    """The problems each table has because of what its links allow, by table name.
 
     Only anonymizing plans are looked at: pseudonymized tables join by design.
     """
@@ -51,15 +76,21 @@ def joined_table_problems(
         for name, data in released.items()
         if plans[name].protection is Protection.ANONYMIZATION
     }
+    links = _name_links(tables, plans)
+    links += _count_links(tables, plans, links)
     problems: dict[str, list[str]] = {}
-    for link, names in _linking_columns(tables, plans).items():
+    for names in _components(list(tables), links):
+        component_links = [link for link in links if set(link.columns) <= set(names)]
         found = _problems_of_join(
-            link, {name: tables[name] for name in names}, {name: plans[name] for name in names}
+            component_links,
+            {name: tables[name] for name in names},
+            {name: plans[name] for name in names},
         )
+        through = ", ".join(link.description for link in component_links)
         for name in names:
             others = ", ".join(repr(other) for other in names if other != name)
             problems.setdefault(name, []).extend(
-                f"joined with {others} on {link!r}: {text}" for text in found
+                f"joined with {others} on {through}: {text}" for text in found
             )
     return problems
 
@@ -68,30 +99,91 @@ def _released_as_pandas(data: Any) -> pd.DataFrame:
     return collect(as_working_frame(data)).to_pandas()
 
 
-def _linking_columns(
+def _name_links(
     tables: Mapping[str, pd.DataFrame], plans: Mapping[str, AnonymizationPlan]
-) -> dict[str, list[str]]:
+) -> list[_Link]:
     """Columns that two or more anonymized tables release with the same codes."""
     holders: dict[str, list[str]] = {}
     for name, frame in tables.items():
         for column in frame.columns:
-            action = plans[name].action_for(column)
-            consistent = action is None or action.technique in _CONSISTENT_TECHNIQUES
-            if consistent and frame[column].notna().any():
+            if _is_consistent(plans[name], column) and frame[column].notna().any():
                 holders.setdefault(column, []).append(name)
-    return {column: names for column, names in holders.items() if len(names) >= 2}
+    return [
+        _Link(repr(column), {name: column for name in names})
+        for column, names in holders.items()
+        if len(names) >= 2
+    ]
+
+
+def _is_consistent(plan: AnonymizationPlan, column: str) -> bool:
+    action = plan.action_for(column)
+    return action is None or action.technique in _CONSISTENT_TECHNIQUES
+
+
+def _count_links(
+    tables: Mapping[str, pd.DataFrame],
+    plans: Mapping[str, AnonymizationPlan],
+    name_links: Sequence[_Link],
+) -> list[_Link]:
+    """Links between differently named columns whose values occur equally often."""
+    linked = {(name, column) for link in name_links for name, column in link.columns.items()}
+    candidates = {
+        name: [
+            column
+            for column in frame.columns
+            if _is_consistent(plans[name], column)
+            and (name, column) not in linked
+            and column not in _measured_columns(plans[name])
+        ]
+        for name, frame in tables.items()
+    }
+    return [
+        _Link(
+            f"{found.left_table}.{found.left_column} ~ {found.right_table}.{found.right_column} "
+            "(same row counts)",
+            {found.left_table: found.left_column, found.right_table: found.right_column},
+            {found.right_table: found.pairing},
+        )
+        for found in frequency_links(tables, candidates)
+    ]
+
+
+def _measured_columns(plan: AnonymizationPlan) -> set[str]:
+    return {*plan.released_quasi_identifiers, *plan.sensitive_attributes}
+
+
+def _components(names: list[str], links: Sequence[_Link]) -> list[list[str]]:
+    """The groups of tables that are linked, directly or through other tables."""
+    group_of = {name: name for name in names}
+
+    def root(name: str) -> str:
+        while group_of[name] != name:
+            name = group_of[name]
+        return name
+
+    for link in links:
+        first, *rest = list(link.columns)
+        for other in rest:
+            group_of[root(other)] = root(first)
+    components: dict[str, list[str]] = {}
+    for name in names:
+        components.setdefault(root(name), []).append(name)
+    return [group for group in components.values() if len(group) >= 2]
 
 
 def _problems_of_join(
-    link: str, tables: Mapping[str, pd.DataFrame], plans: Mapping[str, AnonymizationPlan]
+    links: Sequence[_Link],
+    tables: Mapping[str, pd.DataFrame],
+    plans: Mapping[str, AnonymizationPlan],
 ) -> list[str]:
-    contributions = {name: _contribution(link, tables[name], plans[name]) for name in tables}
-    combined = _join(link, tables, contributions)
+    contributions = {name: _contribution(name, links, tables[name], plans[name]) for name in tables}
+    combined = _join(links, tables, contributions)
     quasi = [f"{name}.{column}" for name, own in contributions.items() for column in own.quasi]
     if combined.empty or not quasi:
         return []
+    entity = _coarsest_link(combined)
     target = max(plan.k_target for plan in plans.values())
-    entities = combined.groupby(quasi, dropna=False)[link].nunique()
+    entities = combined.groupby(quasi, dropna=False)[entity].nunique()
     problems = []
     if entities.min() < target:
         problems.append(
@@ -100,34 +192,77 @@ def _problems_of_join(
             "can be singled out by what the tables show together; drop the link column, or "
             "release the tables in separate calls so each gets its own codes"
         )
-    problems += _joined_inferences(link, combined, quasi, contributions, plans)
+    problems += _joined_inferences(entity, combined, quasi, contributions, plans)
     return problems
 
 
-def _contribution(link: str, frame: pd.DataFrame, plan: AnonymizationPlan) -> _Contribution:
-    present = [column for column in frame.columns if column != link]
+def _coarsest_link(combined: pd.DataFrame) -> str:
+    """The link column with the fewest distinct values, which stands for the entity."""
+    keys = [column for column in combined.columns if column.startswith(_LINK_PREFIX)]
+    return min(keys, key=lambda key: combined[key].nunique())
+
+
+def _contribution(
+    name: str, links: Sequence[_Link], frame: pd.DataFrame, plan: AnonymizationPlan
+) -> _Contribution:
+    used = {link.columns[name] for link in links if name in link.columns}
+    present = [column for column in frame.columns if column not in used]
     return _Contribution(
-        quasi=[column for column in plan.quasi_identifiers if column in present],
+        quasi=[column for column in plan.released_quasi_identifiers if column in present],
         sensitive=[column for column in plan.sensitive_attributes if column in present],
     )
 
 
 def _join(
-    link: str, tables: Mapping[str, pd.DataFrame], contributions: Mapping[str, _Contribution]
+    links: Sequence[_Link],
+    tables: Mapping[str, pd.DataFrame],
+    contributions: Mapping[str, _Contribution],
 ) -> pd.DataFrame:
-    """One row per entity and distinct combination of what the tables show about it."""
-    combined = pd.DataFrame()
-    for position, (name, frame) in enumerate(tables.items()):
-        own = contributions[name]
-        columns = [*own.quasi, *own.sensitive]
-        kept = frame[[link, *columns]].dropna(subset=[link]).drop_duplicates()
-        kept = kept.rename(columns={column: f"{name}.{column}" for column in columns})
-        combined = kept if position == 0 else combined.merge(kept, on=link, how="inner")
+    """One row per entity and distinct combination of what the linked tables show about it."""
+    prepared = {
+        name: _keyed(name, frame, links, contributions[name]) for name, frame in tables.items()
+    }
+    pending = list(prepared)
+    combined = prepared[pending.pop(0)]
+    while pending:
+        name = next((n for n in pending if _shared_keys(combined, prepared[n])), pending[0])
+        pending.remove(name)
+        combined = combined.merge(
+            prepared[name], on=_shared_keys(combined, prepared[name]), how="inner"
+        )
     return combined
 
 
+def _shared_keys(left: pd.DataFrame, right: pd.DataFrame) -> list[str]:
+    return [
+        column
+        for column in left.columns
+        if column.startswith(_LINK_PREFIX) and column in right.columns
+    ]
+
+
+def _keyed(
+    name: str, frame: pd.DataFrame, links: Sequence[_Link], own: _Contribution
+) -> pd.DataFrame:
+    """A table's distinct rows: its link columns under shared key names, and its own columns."""
+    columns = [*own.quasi, *own.sensitive]
+    kept = frame[columns].copy()
+    kept.columns = [f"{name}.{column}" for column in columns]
+    keys = []
+    for number, link in enumerate(links):
+        if name not in link.columns:
+            continue
+        values = frame[link.columns[name]]
+        if name in link.recodes:
+            values = values.map(link.recodes[name])
+        key = f"{_LINK_PREFIX}{number}"
+        kept[key] = values
+        keys.append(key)
+    return kept.dropna(subset=keys).drop_duplicates()
+
+
 def _joined_inferences(
-    link: str,
+    entity: str,
     combined: pd.DataFrame,
     quasi: list[str],
     contributions: Mapping[str, _Contribution],
@@ -137,7 +272,7 @@ def _joined_inferences(
     for name, own in contributions.items():
         for attribute in own.sensitive:
             joined_name = f"{name}.{attribute}"
-            entity_rows = combined[[link, *quasi, joined_name]].drop_duplicates()
+            entity_rows = combined[[entity, *quasi, joined_name]].drop_duplicates()
             findings = confident_inferences(
                 nw.from_native(entity_rows),
                 quasi,
