@@ -332,7 +332,8 @@ def _spark_uniforms(
     columns = []
     for position, name in enumerate(names):
         whole = _spark_hex_value(digest, position * _HEX_DIGITS_PER_UNIFORM + 1)
-        columns.append(f"({whole} + 0.5) / {_UNIFORM_SCALE} as {_spark_quoted(name)}")
+        scale = f"cast({_UNIFORM_SCALE} as double)"
+        columns.append(f"({whole} + 0.5) / {scale} as {_spark_quoted(name)}")
     native = frame.to_native()
     expr = _spark_functions(native).expr
     return nw.from_native(native.select("*", *[expr(column) for column in columns]))
@@ -341,11 +342,13 @@ def _spark_uniforms(
 def _spark_hex_value(digest: str, start: int) -> str:
     # `conv` is not available on every Spark-like backend, so the 13 hex digits are summed
     # as digit * 16^place. Each term is a double below 2^53, so the sum is exact.
+    # Spark reads a literal such as 16.0 as a decimal, and decimal division keeps only six
+    # digits after the point, so every number is cast to double explicitly.
     terms = []
     for offset in range(_HEX_DIGITS_PER_UNIFORM):
-        place = 16.0 ** (_HEX_DIGITS_PER_UNIFORM - 1 - offset)
+        place = 16 ** (_HEX_DIGITS_PER_UNIFORM - 1 - offset)
         digit = f"(instr('0123456789abcdef', substring({digest}, {start + offset}, 1)) - 1)"
-        terms.append(f"{digit} * {place}")
+        terms.append(f"cast({digit} as double) * cast({place} as double)")
     return "(" + " + ".join(terms) + ")"
 
 

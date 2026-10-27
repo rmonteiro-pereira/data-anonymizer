@@ -19,8 +19,10 @@ on every development machine, so real PySpark cannot run in every test environme
    with the data. Only the types that lookups use are mapped.
 4. **`sqlframe` is the test stand-in.** It has the PySpark API on top of DuckDB, and Narwhals
    treats it as Spark-like, so the engine parity tests run on it. It is a development
-   dependency. Real PySpark is the `spark` extra. Its tests are skipped without Java and have
-   not been run on a cluster.
+   dependency. Real PySpark is the `spark` extra. Its tests run in CI, where Java is installed, on a
+   local single-machine session; they are skipped without Java and have not been run on a
+   cluster. Spark SQL reads a literal such as `16.0` as a decimal, so the keyed-noise SQL casts
+   every number to double; without the casts real Spark lost precision that sqlframe did not.
 5. **Chunked files run per-row techniques only.** `Technique.whole_column_reason` marks what
    reads the whole column. Such techniques, the table-level steps and plans without a `row_key`
    are refused before any row is read. No first pass collects statistics: every such

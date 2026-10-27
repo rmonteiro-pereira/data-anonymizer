@@ -539,7 +539,8 @@ and still let someone who knows their own records follow those records:
 A Spark DataFrame stays a Spark query until a result is read: keyed noise is computed with
 `sha2` in Spark SQL and gives the same numbers as on every other engine, and lookups are
 joined on your own session. The Spark engine is tested on `sqlframe`, which has the PySpark
-API on top of DuckDB. It has not been run on a real Spark cluster. Spark column names cannot
+API on top of DuckDB, and on a local PySpark session in CI. It has not been run on a Spark
+cluster. Spark column names cannot
 contain dots or backticks.
 - k-anonymity, l-diversity, local suppression, record isolation and fingerprint columns
   are computed on the whole table by the engine that holds it. Mondrian, joint

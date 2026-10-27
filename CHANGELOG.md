@@ -85,7 +85,8 @@
 - **Spark tables.** `Anonymizer` takes PySpark DataFrames (extra `spark`) through the same
   engine layer as DuckDB: the work stays lazy as Spark SQL, keyed noise is computed with
   `sha2` and equals the pandas, Polars and DuckDB values, and the plan needs a `row_key`. The
-  engine parity tests run on `sqlframe`; real PySpark tests are skipped without Java.
+  engine parity tests run on `sqlframe`, and a local PySpark session checks the same values
+  in CI; real PySpark tests are skipped without Java.
 
 - **Tokenization with a vault.** The `tokenize` technique replaces values with random tokens
   (optionally keeping length and format, or with a prefix) and keeps the mapping in a vault you
