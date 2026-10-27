@@ -47,7 +47,7 @@
   - `stratify_by` on `synthesize` and `generate_from_reference` fits one copula per level
     of category columns that have enough rows;
   - conditional overrides are validated after merging with the column: a mean and std
-    replace a uniform or quantile base shape, and new choices reset the weights;
+    replace a uniform or quantile base shape, and new choices reset the weights.
 - Data-science challenges, from `challenge`: train and test files, plus an answer key
   with the true drivers and the best achievable scores.
 
