@@ -38,7 +38,10 @@ def _digest(text: str) -> str:
 def test_a_schema_without_drift_or_noise_gives_the_same_output_as_before():
     challenge = _challenge(_load("churn_challenge.json"), seed=4, rows=3000)
 
-    key_text = json.dumps(challenge.answer_key, sort_keys=True, default=str)
+    # The leakage flag list is a newer, additive field; the rest must match byte for byte.
+    key = json.loads(json.dumps(challenge.answer_key, default=str))
+    assert key["features"].pop("leaks_target") == []
+    key_text = json.dumps(key, sort_keys=True, default=str)
     assert _digest(challenge.train.to_csv(index=False)) == (
         "6389bd81985f7c110de9716bab72ccdbc585aca83d730534c45cabd2512c7a4d"
     )

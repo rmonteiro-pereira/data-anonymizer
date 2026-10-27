@@ -14,6 +14,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from data_anonymizer.synthesis.causal_graph import CausalGraph
+from data_anonymizer.synthesis.draw_replay import DRAW_PREFIX
 from data_anonymizer.synthesis.expressions import parse, referenced_columns, uses_randomness
 from data_anonymizer.taxonomy import ColumnKind, DataCategory
 
@@ -331,6 +333,12 @@ class Question(BaseModel):
 
     A classification target is boolean or 0/1. Any other target, such as a category with
     choices "no" and "yes", names its positive class in `positive_label`.
+
+    A causal question names a `treatment` column. `treatment_values` gives the control value
+    first and the treated value second; it may be left out for a boolean column (False, True)
+    and for an integer column bounded to 0 and 1. `effect_modifiers` are columns, not caused
+    by the treatment, to report conditional effects by. The answer key then holds the true
+    effects, found by setting the treatment for every row and replaying the other random numbers.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -342,6 +350,9 @@ class Question(BaseModel):
     hidden_columns: list[str] = Field(default_factory=list)
     truth_column: str | None = None
     positive_label: str | None = None
+    treatment: str | None = None
+    treatment_values: list[Any] | None = None
+    effect_modifiers: list[str] = Field(default_factory=list)
     test_share: float = Field(default=0.2, gt=0, lt=1)
     test_shift: list[ShiftedColumn] = Field(default_factory=list)
     label_noise: LabelNoise | None = None
@@ -367,6 +378,9 @@ class DatasetSchema(BaseModel):
         duplicated = {name for name in names if names.count(name) > 1}
         if duplicated:
             raise ValueError(f"duplicated column names: {', '.join(sorted(duplicated))}")
+        reserved = [name for name in names if name.startswith(DRAW_PREFIX)]
+        if reserved:
+            raise ValueError(f"column names cannot start with {DRAW_PREFIX!r}: {reserved}")
         return self
 
     @model_validator(mode="after")
@@ -486,6 +500,7 @@ def _check_question(question: Question, by_name: dict[str, ColumnSchema]) -> Non
         raise ValueError("the question's target cannot be hidden")
     _check_positive_label(question, by_name[question.target])
     _check_label_noise(question, by_name[question.target])
+    _check_treatment(question, by_name)
 
 
 def _check_positive_label(question: Question, target: ColumnSchema) -> None:
@@ -522,3 +537,68 @@ def _check_label_noise(question: Question, target: ColumnSchema) -> None:
         raise ValueError(
             f"label_noise flips the labels of {target.name!r}, which needs exactly two choices"
         )
+
+
+def treatment_levels(question: Question, treatment: ColumnSchema) -> tuple[Any, Any]:
+    """Return the control value and the treated value of a causal question."""
+    if question.treatment_values is not None:
+        return question.treatment_values[0], question.treatment_values[1]
+    if treatment.kind is ColumnKind.BOOLEAN:
+        return False, True
+    if treatment.kind is ColumnKind.INTEGER and (treatment.minimum, treatment.maximum) == (0, 1):
+        return 0, 1
+    raise ValueError(
+        f"the treatment {treatment.name!r} is not boolean or an integer bounded to 0 and 1, "
+        "so the question needs treatment_values: [control, treated]"
+    )
+
+
+def _check_treatment(question: Question, by_name: dict[str, ColumnSchema]) -> None:
+    if question.treatment is None:
+        if question.treatment_values is not None or question.effect_modifiers:
+            raise ValueError("treatment_values and effect_modifiers need a treatment")
+        return
+    treatment = question.treatment
+    if treatment not in by_name:
+        raise ValueError(f"the question's treatment {treatment!r} is not a column of the schema")
+    if treatment == question.target:
+        raise ValueError("the question's treatment cannot be its target")
+    if treatment in question.hidden_columns:
+        raise ValueError("the question's treatment cannot be hidden")
+    graph = CausalGraph.from_columns(by_name.values())
+    if question.target in graph.ancestors(treatment):
+        raise ValueError(
+            f"the treatment {treatment!r} is caused by the target {question.target!r}, "
+            "so it cannot be a treatment for it"
+        )
+    _check_treatment_values(question, by_name[treatment])
+    _check_effect_modifiers(question, by_name, graph)
+
+
+def _check_treatment_values(question: Question, treatment: ColumnSchema) -> None:
+    if question.treatment_values is not None and len(question.treatment_values) != 2:
+        raise ValueError("treatment_values needs two values: the control, then the treated")
+    control, treated = treatment_levels(question, treatment)
+    if control == treated:
+        raise ValueError("the control and treated values of the treatment must differ")
+    for value in (control, treated):
+        if treatment.choices and value not in treatment.choices:
+            raise ValueError(f"treatment value {value!r} is not a choice of {treatment.name!r}")
+
+
+def _check_effect_modifiers(
+    question: Question, by_name: dict[str, ColumnSchema], graph: CausalGraph
+) -> None:
+    assert question.treatment is not None
+    after_treatment = graph.descendants(question.treatment)
+    reportable = (ColumnKind.BOOLEAN, ColumnKind.CATEGORY, ColumnKind.INTEGER, ColumnKind.FLOAT)
+    for name in question.effect_modifiers:
+        if name not in by_name:
+            raise ValueError(f"the effect modifier {name!r} is not a column of the schema")
+        if name in (question.treatment, question.target) or name in after_treatment:
+            raise ValueError(
+                f"the effect modifier {name!r} must not be the treatment, the target "
+                "or caused by the treatment"
+            )
+        if by_name[name].kind not in reportable:
+            raise ValueError(f"the effect modifier {name!r} must be a boolean, category or number")

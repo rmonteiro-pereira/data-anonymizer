@@ -24,12 +24,19 @@ from data_anonymizer.errors import SchemaError
 from data_anonymizer.plan import Fidelity
 from data_anonymizer.surrogates import SurrogateFactory
 from data_anonymizer.synthesis.copula import fit_stratified_copula, nearest_positive_definite
+from data_anonymizer.synthesis.draw_replay import (
+    DrawLedger,
+    ReplayableTable,
+    attach_draws,
+    detach_draws,
+)
 from data_anonymizer.synthesis.expressions import evaluate
 from data_anonymizer.synthesis.marginals import quantile_function
 from data_anonymizer.synthesis.patterns import (
     apply_conditions,
     apply_gaps,
     compute_formula,
+    conditional_uniform,
     draw,
     plant_outliers,
 )
@@ -63,6 +70,17 @@ def generate_from_schema(
     surrogates: SurrogateFactory,
 ) -> pd.DataFrame:
     """Generate a table that follows the schema's columns, correlations and patterns."""
+    return generate_with_replay(schema, rows, rng=rng, surrogates=surrogates).table
+
+
+def generate_with_replay(
+    schema: DatasetSchema,
+    rows: int,
+    *,
+    rng: np.random.Generator,
+    surrogates: SurrogateFactory,
+) -> ReplayableTable:
+    """Generate the table of `generate_from_schema` and keep the random numbers behind it."""
 
     def draw_table(count: int) -> pd.DataFrame:
         return _draw_table(schema, count, rng, surrogates, learned=None)
@@ -104,7 +122,7 @@ def generate_from_reference(
         learned = copula.sample(count, rng) if copula is not None else None
         return _draw_table(schema, count, rng, surrogates, learned=learned)
 
-    return _build_table(schema, rows, draw_table, rng)
+    return _build_table(schema, rows, draw_table, rng).table
 
 
 def _check_stratify_by(stratify_by: Sequence[str], learned_kinds: dict[str, ColumnKind]) -> None:
@@ -140,7 +158,7 @@ def _draw_table(
     *,
     learned: pd.DataFrame | None,
 ) -> pd.DataFrame:
-    uniforms = _uniforms(schema, rows, rng)
+    ledger = DrawLedger.recording(rows, rng, _uniforms(schema, rows, rng))
     frame = pd.DataFrame(index=range(rows))
 
     def regenerate(settings: ColumnSchema, count: int) -> pd.Series:
@@ -148,20 +166,23 @@ def _draw_table(
 
     for name in schema.generation_order():
         column = schema.column(name)
-        uniform = uniforms.get(name)
+        draws = ledger.column(name)
+        is_learned = column.formula is None and learned is not None and name in learned.columns
+        base_uniform = draws.base()
         if column.formula is not None:
-            values = compute_formula(column, frame, rng)
-        elif learned is not None and name in learned.columns:
+            values = compute_formula(column, frame, draws)
+        elif is_learned:
+            assert learned is not None
             values = learned[name].reset_index(drop=True)
-            uniform = None
-        elif uniform is not None:
-            values = draw(column, uniform)
+        elif base_uniform is not None:
+            values = draw(column, base_uniform)
         else:
             values = _undrawn_values(column, rows, rng, surrogates)
+        uniform = None if is_learned else conditional_uniform(column, draws)
         values = apply_conditions(column, values, frame, uniform, regenerate)
         frame[name] = plant_outliers(column, values, rng).to_numpy()
 
-    return frame
+    return attach_draws(frame, ledger)
 
 
 def _uniforms(schema: DatasetSchema, rows: int, rng: np.random.Generator) -> dict[str, np.ndarray]:
@@ -218,12 +239,13 @@ def _drawn_values(column: ColumnSchema, rows: int, rng: np.random.Generator) -> 
 
 def _build_table(
     schema: DatasetSchema, rows: int, draw_table: TableDraw, rng: np.random.Generator
-) -> pd.DataFrame:
-    table = _kept_rows(schema, rows, draw_table)
+) -> ReplayableTable:
+    structural, draws = detach_draws(_kept_rows(schema, rows, draw_table))
     gapped = {
-        column.name: apply_gaps(column, table[column.name], table, rng) for column in schema.columns
+        column.name: apply_gaps(column, structural[column.name], structural, rng)
+        for column in schema.columns
     }
-    return pd.DataFrame(gapped)
+    return ReplayableTable(table=pd.DataFrame(gapped), structural=structural, draws=draws)
 
 
 def _kept_rows(schema: DatasetSchema, rows: int, draw_table: TableDraw) -> pd.DataFrame:

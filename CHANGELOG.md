@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- **Causal challenges and leakage traps.**
+  - A question can name a `treatment`, `treatment_values` and `effect_modifiers`. The answer
+    key gains a `causal` section: the true ATE and ATT, the effect on the `truth_column`, the
+    effect per modifier level, the naive difference and its bias, the roles of the columns and
+    a valid adjustment set.
+  - Effects come from `do(treatment = value)` on the generated rows, replayed from the random
+    numbers stored with each row.
+  - `features.leaks_target` lists published columns computed from the target. They are no
+    longer reported as true drivers or distractors.
+  - `examples/promo_uplift.json` plants a confounder, mediator, collider, instrument, effect
+    modifiers and a leak.
+  - Formulas that call `normal` or `poisson`, use `noise_std`, or sit under a condition draw
+    from stored uniform numbers by the inverse distribution function. Their distributions are
+    unchanged and their seeded values differ.
+  - A regression challenge whose target formula reads a text column no longer fails when the
+    noise-free truth is computed.
 - **Engines.**
   - `scan`, `propose`, `validate`, `apply` and `reveal` accept pandas, Polars and DuckDB
     tables, and return the same kind.
