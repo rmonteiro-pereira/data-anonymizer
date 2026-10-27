@@ -138,6 +138,13 @@ synthetic = anonymizer.synthesize(5_000, reference=customers, fidelity=Fidelity.
   correlations between numeric, date, boolean and category columns. Numbers are
   interpolated between observed quantiles, so rows are new rather than copied.
   Identifiers are always regenerated as fakes, never sampled from the reference.
+  - The correlation behind a boolean or category column is estimated by maximum
+    likelihood (polyserial against a number, polychoric against another category), so a
+    strong association between two yes/no columns survives: on a reference with phi 0.79,
+    the synthetic table shows 0.79.
+  - A category is one ordered scale, ranked by how common each value is. A nominal
+    category whose effect is not monotone along that scale, such as group means `a` 0,
+    `b` 10, `c` 1, is blurred. Fit one copula per level with `stratify_by` for that.
 - **`privacy`**: every column is drawn independently from an inferred schema, so no
   row-level structure survives. Categories seen fewer than 5 times become `OTHER`.
   Numeric columns are inferred as `quantiles`: the deciles, the 5% and 95% points, finer
@@ -145,6 +152,20 @@ synthetic = anonymizer.synthesize(5_000, reference=customers, fidelity=Fidelity.
   follow zero-inflated and heavy-tailed shapes, such as a capital gain that is zero for 92%
   of people, where a normal distribution with the same mean and std would invent negative
   values and a wrong mean. The mean of a heavy tail still varies by some percent.
+
+`stratify_by` names category or boolean columns of the reference, such as `["sex"]`:
+
+```python
+synthetic = anonymizer.synthesize(5_000, reference=customers, stratify_by=["segment"])
+```
+
+- Each level with at least 200 reference rows gets its own copula, so it keeps its own
+  distributions and correlations, and appears at its share of the reference.
+- Smaller levels, and rows with a missing level, share one pooled copula.
+- It needs a reference table and has no effect with `privacy` fidelity. A name that is not a
+  category or boolean column learned from the reference is a `SchemaError`.
+- Only the levels are separated. Associations between a stratifying column and the rest
+  come from the levels, not from the copula.
 
 Patterns in a schema you pass along, such as formulas, conditions and constraints, apply
 in both modes. `anonymize infer-schema` writes the inferred schema so you can edit it and

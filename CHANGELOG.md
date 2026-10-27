@@ -41,6 +41,11 @@
   - `infer-schema` describes numeric columns by quantile points instead of a normal mean
     and std, so zero-inflated and heavy-tailed columns keep their mean and sign under
     privacy fidelity;
+  - the copula learned from a reference keeps strong associations between booleans and
+    categories, by estimating the hidden correlation by maximum likelihood instead of from
+    jittered scores;
+  - `stratify_by` on `synthesize` and `generate_from_reference` fits one copula per level
+    of category columns that have enough rows;
   - conditional overrides are validated after merging with the column: a mean and std
     replace a uniform or quantile base shape, and new choices reset the weights;
 - Data-science challenges, from `challenge`: train and test files, plus an answer key

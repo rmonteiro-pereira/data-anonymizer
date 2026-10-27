@@ -88,6 +88,71 @@ def test_statistical_synthesis_keeps_correlations_and_invents_identifiers(people
     assert synthetic["birth_date"].dt.year.between(1940, 2010).all()
 
 
+def _associated_reference(rows: int = 20000) -> pd.DataFrame:
+    generator = np.random.default_rng(0)
+    smoker = generator.random(rows) < 0.4
+    agrees = generator.random(rows) < 0.8
+    high_risk = np.where(agrees, smoker, generator.random(rows) < 0.5)
+    return pd.DataFrame(
+        {
+            "smoker": np.where(smoker, "yes", "no"),
+            "risk": np.where(high_risk, "high", "low"),
+            "flag": smoker,
+            "other_flag": high_risk,
+        }
+    )
+
+
+def test_statistical_synthesis_keeps_strong_associations_between_categories_and_booleans():
+    reference = _associated_reference()
+
+    synthetic = Anonymizer(seed=1).synthesize(20000, reference=reference)
+
+    def high_share(frame: pd.DataFrame, smoker: str) -> float:
+        return float((frame.loc[frame["smoker"] == smoker, "risk"] == "high").mean())
+
+    def phi(frame: pd.DataFrame) -> float:
+        return float(np.corrcoef(frame["flag"], frame["other_flag"].astype(float))[0, 1])
+
+    assert high_share(synthetic, "yes") == pytest.approx(high_share(reference, "yes"), abs=0.03)
+    assert high_share(synthetic, "no") == pytest.approx(high_share(reference, "no"), abs=0.03)
+    assert phi(synthetic) == pytest.approx(phi(reference), abs=0.04)
+
+
+def _grouped_reference() -> pd.DataFrame:
+    generator = np.random.default_rng(1)
+    groups = generator.choice(["a", "b", "c", "d"], 6000, p=[0.5, 0.3, 0.2 - 0.002, 0.002])
+    level = pd.Series(groups).map({"a": 0.0, "b": 10.0, "c": 1.0, "d": 5.0}).to_numpy()
+    return pd.DataFrame({"group": groups, "level": level + generator.normal(0, 0.5, 6000)})
+
+
+def test_stratifying_keeps_each_levels_own_distribution():
+    reference = _grouped_reference()
+
+    synthetic = Anonymizer(seed=2).synthesize(10000, reference=reference, stratify_by=["group"])
+    means = synthetic.groupby("group")["level"].mean()
+
+    assert means["a"] == pytest.approx(0.0, abs=0.2)
+    assert means["b"] == pytest.approx(10.0, abs=0.2)
+    assert means["c"] == pytest.approx(1.0, abs=0.2)
+    assert synthetic["group"].value_counts(normalize=True)["b"] == pytest.approx(0.3, abs=0.03)
+    # The 12 rows of level d are too few for their own copula, but the level is not lost.
+    assert "d" in set(synthetic["group"])
+
+
+def test_stratify_by_names_must_be_learned_category_columns():
+    reference = _grouped_reference()
+
+    with pytest.raises(SchemaError, match="stratify_by"):
+        Anonymizer(seed=2).synthesize(100, reference=reference, stratify_by=["level"])
+    with pytest.raises(SchemaError, match="reference"):
+        Anonymizer(seed=2).synthesize(
+            100,
+            schema=DatasetSchema(columns=[ColumnSchema(name="a", kind=ColumnKind.FLOAT, mean=0)]),
+            stratify_by=["a"],
+        )
+
+
 def test_privacy_synthesis_drops_correlations(people):
     synthetic = Anonymizer(seed=5).synthesize(1000, reference=people, fidelity=Fidelity.PRIVACY)
 

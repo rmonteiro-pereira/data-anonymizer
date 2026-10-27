@@ -13,7 +13,7 @@ Constraints see the table before cells are blanked, so a null never removes a ro
 """
 
 import math
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import Any
 
 import numpy as np
@@ -23,7 +23,7 @@ from scipy import stats
 from data_anonymizer.errors import SchemaError
 from data_anonymizer.plan import Fidelity
 from data_anonymizer.surrogates import SurrogateFactory
-from data_anonymizer.synthesis.copula import fit_gaussian_copula, nearest_positive_definite
+from data_anonymizer.synthesis.copula import fit_stratified_copula, nearest_positive_definite
 from data_anonymizer.synthesis.expressions import evaluate
 from data_anonymizer.synthesis.marginals import quantile_function
 from data_anonymizer.synthesis.patterns import (
@@ -78,6 +78,7 @@ def generate_from_reference(
     fidelity: Fidelity,
     rng: np.random.Generator,
     surrogates: SurrogateFactory,
+    stratify_by: Sequence[str] = (),
 ) -> pd.DataFrame:
     """Generate a table that resembles `reference`.
 
@@ -85,6 +86,10 @@ def generate_from_reference(
     Gaussian copula fitted to the reference, so correlations survive. With privacy
     fidelity, every column is drawn independently from the schema, so no row-level
     structure of the reference survives. Patterns in the schema apply either way.
+
+    `stratify_by` names category or boolean columns. With statistical fidelity, each of their
+    levels that has enough rows gets its own copula, so the level keeps its own distributions
+    and correlations; the small levels share one. It has no effect with privacy fidelity.
     """
     if fidelity is Fidelity.PRIVACY:
         return generate_from_schema(schema, rows, rng=rng, surrogates=surrogates)
@@ -92,13 +97,23 @@ def generate_from_reference(
     learned_kinds = {
         column.name: column.kind for column in schema.columns if _learnable(column, reference)
     }
-    copula = fit_gaussian_copula(reference, learned_kinds, rng) if learned_kinds else None
+    _check_stratify_by(stratify_by, learned_kinds)
+    copula = fit_stratified_copula(reference, learned_kinds, stratify_by) if learned_kinds else None
 
     def draw_table(count: int) -> pd.DataFrame:
         learned = copula.sample(count, rng) if copula is not None else None
         return _draw_table(schema, count, rng, surrogates, learned=learned)
 
     return _build_table(schema, rows, draw_table, rng)
+
+
+def _check_stratify_by(stratify_by: Sequence[str], learned_kinds: dict[str, ColumnKind]) -> None:
+    for name in stratify_by:
+        if learned_kinds.get(name) not in (ColumnKind.CATEGORY, ColumnKind.BOOLEAN):
+            raise SchemaError(
+                f"stratify_by: {name!r} must be a category or boolean column of the "
+                "schema that is learned from the reference table"
+            )
 
 
 def _learnable(column: ColumnSchema, reference: pd.DataFrame) -> bool:
