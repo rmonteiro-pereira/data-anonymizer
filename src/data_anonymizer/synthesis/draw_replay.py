@@ -93,9 +93,35 @@ class DrawLedger:
         return dict(self._arrays)
 
     def subset(self, positions: np.ndarray) -> "DrawLedger":
-        """Return a replay of the same numbers for some rows, such as one period of a panel."""
+        """Return the numbers of some rows, such as one period of a panel.
+
+        A replay ledger gives a replay of the same numbers. A recording ledger gives a window
+        onto itself: numbers drawn through the window are drawn for every row of this ledger
+        and kept in it, so a panel can build one period at a time and still store everything.
+        """
+        if self._rng is not None:
+            return _RecordingWindow(self, positions)
         chosen = {key: values[positions] for key, values in self._arrays.items()}
         return DrawLedger(len(next(iter(chosen.values()), [])), None, chosen)
+
+
+class _RecordingWindow(DrawLedger):
+    """Some rows of a recording ledger, which keeps drawing and storing in that ledger."""
+
+    def __init__(self, parent: DrawLedger, positions: np.ndarray) -> None:
+        super().__init__(len(positions), None, {})
+        self._parent = parent
+        self._positions = positions
+
+    def stored(self, key: DrawKey) -> np.ndarray | None:
+        values = self._parent.stored(key)
+        return None if values is None else values[self._positions]
+
+    def uniform(self, key: DrawKey) -> np.ndarray:
+        return self._parent.uniform(key)[self._positions]
+
+    def arrays(self) -> StoredDraws:
+        return {key: values[self._positions] for key, values in self._parent.arrays().items()}
 
 
 class ColumnDraws:

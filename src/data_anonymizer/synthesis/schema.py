@@ -14,9 +14,16 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from data_anonymizer.errors import SchemaError
 from data_anonymizer.synthesis.causal_graph import CausalGraph
 from data_anonymizer.synthesis.draw_replay import DRAW_PREFIX
-from data_anonymizer.synthesis.expressions import parse, referenced_columns, uses_randomness
+from data_anonymizer.synthesis.expressions import (
+    lagged_references,
+    parse,
+    referenced_columns,
+    uses_randomness,
+)
+from data_anonymizer.synthesis.panel import Level, Panel, check_panel_schema
 from data_anonymizer.taxonomy import ColumnKind, DataCategory
 
 # Kinds whose values come from an inverse distribution function, so they can be
@@ -107,12 +114,16 @@ class ColumnSchema(BaseModel):
       away from the mean, ignoring the bounds, to plant anomalies.
     - `exact`: match `mean` and `std` (numbers) or `weights` (categories, booleans)
       exactly rather than on average.
+
+    In a schema with a `panel`, `level` says how often the value is drawn: per "row" (the
+    default), once per "entity" and repeated, or once per "period" and shared by all entities.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     name: str
     kind: ColumnKind
+    level: Level = Level.ROW
     category: DataCategory | None = None
     minimum: float | None = None
     maximum: float | None = None
@@ -150,6 +161,14 @@ class ColumnSchema(BaseModel):
         for override in self.conditions:
             names |= referenced_columns(override.when)
         return names - {self.name}
+
+    def lags(self) -> dict[str, set[int]]:
+        """Return the columns the formula reads from earlier periods, with the lags it uses."""
+        return {} if self.formula is None else lagged_references(self.formula)
+
+    def lagged_dependencies(self) -> set[str]:
+        """Return the columns the formula reads from earlier periods, possibly itself."""
+        return set(self.lags())
 
     def with_override(self, override: ColumnOverride) -> "ColumnSchema":
         """Return this column with an override's settings applied, validated as a whole."""
@@ -251,6 +270,13 @@ class Task(StrEnum):
     CLASSIFICATION = "classification"
 
 
+class Split(StrEnum):
+    """How a challenge's rows are divided into train and test."""
+
+    RANDOM = "random"
+    TIME = "time"
+
+
 class ShiftedColumn(ColumnOverride):
     """New settings for one column of the test set, which stays the same in the train set.
 
@@ -339,6 +365,11 @@ class Question(BaseModel):
     and for an integer column bounded to 0 and 1. `effect_modifiers` are columns, not caused
     by the treatment, to report conditional effects by. The answer key then holds the true
     effects, found by setting the treatment for every row and replaying the other random numbers.
+    A panel does not support a treatment, because its effects run through lags.
+
+    `split` says how rows are divided: "random" (the default) or, for a panel, "time", which
+    holds out the last `test_share` of periods. A panel's `test_shift` needs a time split, and
+    changes the test periods like a regime change in the future.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -354,6 +385,7 @@ class Question(BaseModel):
     treatment_values: list[Any] | None = None
     effect_modifiers: list[str] = Field(default_factory=list)
     test_share: float = Field(default=0.2, gt=0, lt=1)
+    split: Split = Split.RANDOM
     test_shift: list[ShiftedColumn] = Field(default_factory=list)
     label_noise: LabelNoise | None = None
 
@@ -363,6 +395,10 @@ class DatasetSchema(BaseModel):
 
     `constraints` are expressions every generated row must satisfy, such as
     `end_date >= start_date`; rows that break one are drawn again.
+
+    A `panel` makes the table `entities × periods` rows, and adds the entity and time columns
+    it names. Columns then have a `level`, and formulas can use `lag`, `period` and
+    `entity_index`. A panel cannot have constraints.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -370,6 +406,7 @@ class DatasetSchema(BaseModel):
     columns: list[ColumnSchema] = Field(min_length=1)
     correlations: list[Correlation] = Field(default_factory=list)
     constraints: list[str] = Field(default_factory=list)
+    panel: Panel | None = None
     question: Question | None = None
 
     @model_validator(mode="after")
@@ -386,25 +423,50 @@ class DatasetSchema(BaseModel):
     @model_validator(mode="after")
     def _patterns_refer_to_known_columns(self) -> "DatasetSchema":
         by_name = {column.name: column for column in self.columns}
+        readable = set(by_name) | (set() if self.panel is None else self.panel.readable_names())
         for column in self.columns:
-            unknown = column.dependencies() - set(by_name)
+            unknown = column.dependencies() - readable
             if unknown:
                 raise ValueError(f"{column.name}: unknown columns {', '.join(sorted(unknown))}")
+            unknown_lagged = column.lagged_dependencies() - set(by_name)
+            if unknown_lagged:
+                raise ValueError(f"{column.name}: lag of unknown columns {sorted(unknown_lagged)}")
         for correlation in self.correlations:
             for name in correlation.columns:
                 _check_correlatable(by_name.get(name), name)
         for expression in self._checked_expressions():
             if uses_randomness(expression):
                 raise ValueError(f"{expression!r}: random functions are only allowed in formulas")
+            if lagged_references(expression):
+                raise ValueError(f"{expression!r}: lag is only allowed in formulas")
         for constraint in self.constraints:
-            unknown = referenced_columns(constraint) - set(by_name)
+            unknown = referenced_columns(constraint) - readable
             if unknown:
                 raise ValueError(f"constraint {constraint!r}: unknown columns {sorted(unknown)}")
         self.generation_order()
+        check_panel_schema(self.panel, self.columns, self.correlations, self.constraints)
         if self.question is not None:
-            _check_question(self.question, by_name)
+            _check_question(self.question, by_name, self.panel)
             self.shifted(self.question.test_shift)
         return self
+
+    def row_count(self, requested: int | None) -> int:
+        """Return how many rows to generate: the panel's, or the requested number.
+
+        A panel fixes its own row count, so a request must match it or be left out. Any other
+        schema needs a request.
+        """
+        if self.panel is None:
+            if requested is None:
+                raise SchemaError("rows is required unless the schema has a panel")
+            return requested
+        if requested is not None and requested != self.panel.rows:
+            raise SchemaError(
+                f"the panel has {self.panel.entities} entities × {self.panel.periods} periods = "
+                f"{self.panel.rows} rows, so {requested} rows cannot be generated; "
+                "leave the row count out"
+            )
+        return self.panel.rows
 
     def _checked_expressions(self) -> list[str]:
         conditions = [override.when for column in self.columns for override in column.conditions]
@@ -430,14 +492,24 @@ class DatasetSchema(BaseModel):
                 replacements[shift.name] = self.column(shift.name).with_shift(shift)
             except KeyError:
                 raise ValueError(f"test_shift names unknown column {shift.name!r}") from None
+            if self.column(shift.name).level is Level.ENTITY:
+                raise ValueError(
+                    f"test_shift {shift.name}: an entity-level column is drawn once per entity, "
+                    "so it cannot change in the test periods"
+                )
         columns = [replacements.get(column.name, column) for column in self.columns]
         return DatasetSchema(
-            columns=columns, correlations=self.correlations, constraints=self.constraints
+            columns=columns,
+            correlations=self.correlations,
+            constraints=self.constraints,
+            panel=self.panel,
         )
 
     def generation_order(self) -> list[str]:
         """Order columns so each comes after the columns its formula and conditions read."""
-        dependencies = {column.name: column.dependencies() for column in self.columns}
+        names = {column.name for column in self.columns}
+        # A panel's entity, time and index columns are not in the schema, so they have no order.
+        dependencies = {column.name: column.dependencies() & names for column in self.columns}
         ordered: list[str] = []
         visiting: set[str] = set()
 
@@ -486,7 +558,9 @@ def _check_correlatable(column: ColumnSchema | None, name: str) -> None:
         )
 
 
-def _check_question(question: Question, by_name: dict[str, ColumnSchema]) -> None:
+def _check_question(
+    question: Question, by_name: dict[str, ColumnSchema], panel: Panel | None
+) -> None:
     names = set(by_name)
     mentioned = {question.target, *question.hidden_columns}
     if question.truth_column is not None:
@@ -500,7 +574,17 @@ def _check_question(question: Question, by_name: dict[str, ColumnSchema]) -> Non
         raise ValueError("the question's target cannot be hidden")
     _check_positive_label(question, by_name[question.target])
     _check_label_noise(question, by_name[question.target])
-    _check_treatment(question, by_name)
+    _check_split(question, panel)
+    _check_treatment(question, by_name, panel)
+
+
+def _check_split(question: Question, panel: Panel | None) -> None:
+    if question.split is Split.TIME and panel is None:
+        raise ValueError("the question's split is 'time', which needs a schema with a panel")
+    if panel is not None and question.test_shift and question.split is not Split.TIME:
+        raise ValueError(
+            "a panel's test_shift changes the test periods, so the question needs split: 'time'"
+        )
 
 
 def _check_positive_label(question: Question, target: ColumnSchema) -> None:
@@ -553,11 +637,19 @@ def treatment_levels(question: Question, treatment: ColumnSchema) -> tuple[Any, 
     )
 
 
-def _check_treatment(question: Question, by_name: dict[str, ColumnSchema]) -> None:
+def _check_treatment(
+    question: Question, by_name: dict[str, ColumnSchema], panel: Panel | None
+) -> None:
     if question.treatment is None:
         if question.treatment_values is not None or question.effect_modifiers:
             raise ValueError("treatment_values and effect_modifiers need a treatment")
         return
+    if panel is not None:
+        raise SchemaError(
+            "a causal question (treatment) is not supported with a panel: a treatment reaches "
+            "later periods through lag(...), and the effect replay does not recompute lagged "
+            "columns, so the answer key's effects would be wrong. Remove the treatment or the panel"
+        )
     treatment = question.treatment
     if treatment not in by_name:
         raise ValueError(f"the question's treatment {treatment!r} is not a column of the schema")

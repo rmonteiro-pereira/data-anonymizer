@@ -16,11 +16,15 @@ from scipy import stats
 from data_anonymizer.errors import SchemaError
 from data_anonymizer.surrogates import SurrogateFactory
 from data_anonymizer.synthesis.causal_graph import CausalGraph
+from data_anonymizer.synthesis.draw_replay import ReplayableTable
 from data_anonymizer.synthesis.drift import describe_drift, drift_kind, with_shifted_test_rows
 from data_anonymizer.synthesis.expressions import evaluate, uses_randomness
 from data_anonymizer.synthesis.generator import generate_with_replay
 from data_anonymizer.synthesis.label_noise import corrupt_labels
-from data_anonymizer.synthesis.schema import ColumnSchema, DatasetSchema, Question, Task
+from data_anonymizer.synthesis.panel import Level
+from data_anonymizer.synthesis.panel_generation import SchemaSwitch
+from data_anonymizer.synthesis.schema import ColumnSchema, DatasetSchema, Question, Split, Task
+from data_anonymizer.synthesis.time_series import describe_time_series
 from data_anonymizer.synthesis.treatment_effects import causal_answer
 from data_anonymizer.taxonomy import ColumnKind
 
@@ -40,28 +44,37 @@ class Challenge:
     answer_key: dict[str, Any]
 
 
+@dataclass(frozen=True, slots=True)
+class _SplitTable:
+    """The generated rows, which of them are test rows, and the schema that made those."""
+
+    built: ReplayableTable
+    full: pd.DataFrame
+    in_test: np.ndarray
+    test_schema: DatasetSchema
+
+
 def build_challenge(
     schema: DatasetSchema,
-    rows: int,
+    rows: int | None,
     *,
     rng: np.random.Generator,
     surrogates: SurrogateFactory,
 ) -> Challenge:
-    """Generate the table, split it, withhold hidden columns and write the answer key."""
+    """Generate the table, split it, withhold hidden columns and write the answer key.
+
+    A schema with a panel fixes its own row count, so `rows` may be left out.
+    """
     question = schema.question
     if question is None:
         raise SchemaError("the schema has no question to build a challenge from")
 
-    built = generate_with_replay(schema, rows, rng=rng, surrogates=surrogates)
-    full = built.table
-    in_test = _split_rows(question, rows, rng)
-    test_schema = schema
-    if question.test_shift:
-        test_schema = schema.shifted(question.test_shift)
-        full, in_test = with_shifted_test_rows(
-            test_schema, full, in_test, rng=rng, surrogates=surrogates
-        )
-    truth = _truth_per_split(schema, test_schema, question, full, in_test)
+    rows = schema.row_count(rows)
+    split = _generate_and_split(schema, question, rows, rng, surrogates)
+    built = split.built
+    full = split.full
+    in_test = split.in_test
+    truth = _truth_per_split(schema, split.test_schema, question, full, in_test)
     published = full.drop(columns=question.hidden_columns)
     train = published[~in_test].reset_index(drop=True)
     clean_train = train
@@ -90,6 +103,8 @@ def build_challenge(
         answer_key["drift"] = describe_drift(question, kind, best_published)
     if question.label_noise is not None and changed_labels is not None:
         answer_key["label_noise"] = _describe_label_noise(question, changed_labels, best_clean)
+    if schema.panel is not None:
+        answer_key["time_series"] = describe_time_series(schema, question, in_test)
     if question.treatment is not None:
 
         def outcome_as_numbers(answers: pd.Series) -> np.ndarray:
@@ -108,6 +123,53 @@ def build_challenge(
     )
 
 
+def _generate_and_split(
+    schema: DatasetSchema,
+    question: Question,
+    rows: int,
+    rng: np.random.Generator,
+    surrogates: SurrogateFactory,
+) -> _SplitTable:
+    """Generate the rows and mark the test rows, drawn apart when the test set is shifted."""
+    if question.split is Split.TIME:
+        return _generate_time_split(schema, question, rows, rng, surrogates)
+    built = generate_with_replay(schema, rows, rng=rng, surrogates=surrogates)
+    full = built.table
+    in_test = _split_rows(question, rows, rng)
+    test_schema = schema
+    if question.test_shift:
+        test_schema = schema.shifted(question.test_shift)
+        full, in_test = with_shifted_test_rows(
+            test_schema, full, in_test, rng=rng, surrogates=surrogates
+        )
+    return _SplitTable(built, full, in_test, test_schema)
+
+
+def _generate_time_split(
+    schema: DatasetSchema,
+    question: Question,
+    rows: int,
+    rng: np.random.Generator,
+    surrogates: SurrogateFactory,
+) -> _SplitTable:
+    """Generate a panel whose last periods are the test set.
+
+    A shifted test set is a regime change in the future: the shifted schema takes over at the
+    first test period, and every entity's series carries on from where the train periods end.
+    """
+    panel = schema.panel
+    assert panel is not None
+    first_test_period = panel.first_test_period(question.test_share)
+    test_schema = schema
+    switch = None
+    if question.test_shift:
+        test_schema = schema.shifted(question.test_shift)
+        switch = SchemaSwitch(test_schema, first_test_period)
+    built = generate_with_replay(schema, rows, rng=rng, surrogates=surrogates, switch=switch)
+    in_test = panel.row_period_index() >= first_test_period
+    return _SplitTable(built, built.table, in_test, test_schema)
+
+
 def _truth_per_split(
     schema: DatasetSchema,
     test_schema: DatasetSchema,
@@ -118,6 +180,8 @@ def _truth_per_split(
     """Return the truth, taking the test rows' truth from the shifted schema."""
     if test_schema is schema:
         return _truth(schema, question, full)
+    if schema.panel is not None:
+        return _panel_truth_per_split(schema, test_schema, question, full, in_test)
     train_truth = _truth(schema, question, full[~in_test])
     test_truth = _truth(test_schema, question, full[in_test])
     if isinstance(train_truth, str):
@@ -125,6 +189,23 @@ def _truth_per_split(
     if isinstance(test_truth, str):
         return test_truth
     return pd.concat([train_truth, test_truth], ignore_index=True)
+
+
+def _panel_truth_per_split(
+    schema: DatasetSchema,
+    test_schema: DatasetSchema,
+    question: Question,
+    full: pd.DataFrame,
+    in_test: np.ndarray,
+) -> pd.Series | str:
+    """Return a panel's truth, which needs the whole table because lags cross the split."""
+    train_truth = _truth(schema, question, full)
+    test_truth = _truth(test_schema, question, full)
+    if isinstance(train_truth, str):
+        return train_truth
+    if isinstance(test_truth, str):
+        return test_truth
+    return pd.Series(np.where(in_test, test_truth.to_numpy(), train_truth.to_numpy()))
 
 
 def _with_label_noise(
@@ -190,7 +271,17 @@ def _truth(schema: DatasetSchema, question: Question, full: pd.DataFrame) -> pd.
             f"not computable: {', '.join(changes)} change the target after its formula, "
             f"so the formula is not its noise-free truth; {_NAME_A_TRUTH_COLUMN}"
         )
-    return pd.Series(evaluate(target.formula, _with_float_nulls(full)).astype(float))
+    return pd.Series(_evaluate_without_noise(schema, target.formula, full).astype(float))
+
+
+def _evaluate_without_noise(schema: DatasetSchema, formula: str, full: pd.DataFrame) -> np.ndarray:
+    """Evaluate a formula over the table; in a panel, lags read the same entity's earlier rows."""
+    table = _with_float_nulls(full)
+    if schema.panel is None:
+        return evaluate(formula, table)
+    return evaluate(
+        formula, schema.panel.with_index_columns(table), lags=schema.panel.table_lags(table)
+    )
 
 
 def _changes_after_formula(target: ColumnSchema) -> list[str]:
@@ -222,14 +313,21 @@ def _with_float_nulls(frame: pd.DataFrame) -> pd.DataFrame:
 
 
 def _ancestors(schema: DatasetSchema, name: str) -> set[str]:
+    """Return the columns that feed a column, in the same period or through `lag`."""
     found: set[str] = set()
-    pending = list(schema.column(name).dependencies())
+    pending = list(_feeding_columns(schema, name))
     while pending:
         current = pending.pop()
         if current not in found:
             found.add(current)
-            pending.extend(schema.column(current).dependencies())
+            pending.extend(_feeding_columns(schema, current))
     return found
+
+
+def _feeding_columns(schema: DatasetSchema, name: str) -> set[str]:
+    column = schema.column(name)
+    names = {other.name for other in schema.columns}
+    return (column.dependencies() | column.lagged_dependencies()) & names
 
 
 def _feature_roles(schema: DatasetSchema, question: Question) -> dict[str, list[str]]:
@@ -244,15 +342,21 @@ def _feature_roles(schema: DatasetSchema, question: Question) -> dict[str, list[
     visible = [column.name for column in schema.columns if column.name not in hidden]
     leaks = CausalGraph.of(schema).descendants(question.target)
     candidates = [name for name in visible if name != question.target and name not in leaks]
-    return {
+    others = [name for name in candidates if name not in drivers and name not in correlated]
+    # Reading the target of an earlier period is allowed: the value is known when predicting.
+    reads_past_target = [
+        name for name in others if question.target in schema.column(name).lagged_dependencies()
+    ]
+    roles = {
         "true_drivers": [name for name in candidates if name in drivers],
         "hidden_drivers": sorted(drivers & hidden),
         "correlated_but_not_causal": [name for name in candidates if name in correlated],
         "leaks_target": [name for name in visible if name in leaks],
-        "distractors": [
-            name for name in candidates if name not in drivers and name not in correlated
-        ],
+        "distractors": [name for name in others if name not in reads_past_target],
     }
+    if reads_past_target:
+        roles["lags_target"] = reads_past_target
+    return roles
 
 
 def _derivation(schema: DatasetSchema, target: str) -> list[dict[str, Any]]:
@@ -269,8 +373,10 @@ def _derivation(schema: DatasetSchema, target: str) -> list[dict[str, Any]]:
                 step["noise_std"] = column.noise_std
         else:
             step["drawn_from"] = column.model_dump(
-                exclude_none=True, exclude={"name", "conditions", "formula"}
+                exclude_none=True, exclude={"name", "conditions", "formula", "level"}
             )
+        if column.level is not Level.ROW:
+            step["level"] = column.level.value
         if column.conditions:
             step["conditions"] = [
                 override.model_dump(exclude_none=True) for override in column.conditions

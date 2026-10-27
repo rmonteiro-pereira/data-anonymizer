@@ -60,8 +60,15 @@ class CausalGraph:
     def from_columns(
         cls, columns: Iterable["ColumnSchema"], correlated_pairs: Iterable[tuple[str, str]] = ()
     ) -> "CausalGraph":
-        """Build the graph from what each column's formula and conditions read."""
-        return cls({column.name: column.dependencies() for column in columns}, correlated_pairs)
+        """Build the graph from what each column's formula and conditions read.
+
+        Only the schema's columns are nodes: a panel's entity, time and index columns are not.
+        A column read through `lag` is an earlier period, so it adds no edge.
+        """
+        listed = list(columns)
+        names = {column.name for column in listed}
+        parents = {column.name: column.dependencies() & names for column in listed}
+        return cls(parents, correlated_pairs)
 
     @classmethod
     def of(cls, schema: "DatasetSchema") -> "CausalGraph":

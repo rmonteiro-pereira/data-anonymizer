@@ -10,6 +10,8 @@ One table is built in four steps:
 4. blank cells at each column's null fraction.
 
 Constraints see the table before cells are blanked, so a null never removes a row.
+
+A schema with a panel is built period by period instead (see `panel_generation.py`).
 """
 
 import math
@@ -18,12 +20,12 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
-from scipy import stats
 
 from data_anonymizer.errors import SchemaError
 from data_anonymizer.plan import Fidelity
 from data_anonymizer.surrogates import SurrogateFactory
-from data_anonymizer.synthesis.copula import fit_stratified_copula, nearest_positive_definite
+from data_anonymizer.synthesis.column_values import build_column, draw_uniforms
+from data_anonymizer.synthesis.copula import fit_stratified_copula
 from data_anonymizer.synthesis.draw_replay import (
     DrawLedger,
     ReplayableTable,
@@ -31,25 +33,11 @@ from data_anonymizer.synthesis.draw_replay import (
     detach_draws,
 )
 from data_anonymizer.synthesis.expressions import evaluate
-from data_anonymizer.synthesis.marginals import quantile_function
-from data_anonymizer.synthesis.patterns import (
-    apply_conditions,
-    apply_gaps,
-    compute_formula,
-    conditional_uniform,
-    draw,
-    plant_outliers,
-)
+from data_anonymizer.synthesis.panel_generation import SchemaSwitch, generate_panel
+from data_anonymizer.synthesis.patterns import apply_gaps
 from data_anonymizer.synthesis.schema import DRAWN_KINDS, ColumnSchema, DatasetSchema
-from data_anonymizer.synthesis.unique_values import (
-    template_values,
-    unique_integer_capacity,
-    unique_integers,
-)
-from data_anonymizer.taxonomy import ColumnKind, DataCategory
-
-# Uniform values are kept away from 0 and 1, where some inverse functions are infinite.
-_EDGE = 1e-9
+from data_anonymizer.synthesis.unique_values import unique_integer_capacity
+from data_anonymizer.taxonomy import ColumnKind
 
 # Constraint filtering draws batches sized from the share of rows that passed so far. It
 # gives up after drawing this many rows per requested row, within the two bounds below.
@@ -79,8 +67,17 @@ def generate_with_replay(
     *,
     rng: np.random.Generator,
     surrogates: SurrogateFactory,
+    switch: SchemaSwitch | None = None,
 ) -> ReplayableTable:
-    """Generate the table of `generate_from_schema` and keep the random numbers behind it."""
+    """Generate the table of `generate_from_schema` and keep the random numbers behind it.
+
+    A panel can change schema partway through with `switch`, which keeps each entity's series
+    going across the change.
+    """
+    if schema.panel is not None:
+        return generate_panel(schema, rows, rng=rng, surrogates=surrogates, switch=switch)
+    if switch is not None:
+        raise SchemaError("a schema switch needs a panel: only a panel has periods to switch at")
 
     def draw_table(count: int) -> pd.DataFrame:
         return _draw_table(schema, count, rng, surrogates, learned=None)
@@ -109,6 +106,10 @@ def generate_from_reference(
     levels that has enough rows gets its own copula, so the level keeps its own distributions
     and correlations; the small levels share one. It has no effect with privacy fidelity.
     """
+    if schema.panel is not None:
+        raise SchemaError(
+            "a schema with a panel is generated from the schema alone, not a reference"
+        )
     if fidelity is Fidelity.PRIVACY:
         return generate_from_schema(schema, rows, rng=rng, surrogates=surrogates)
 
@@ -141,15 +142,6 @@ def _learnable(column: ColumnSchema, reference: pd.DataFrame) -> bool:
     return column.category is None and not column.unique and column.formula is None
 
 
-def _is_drawn(column: ColumnSchema) -> bool:
-    return (
-        column.kind in DRAWN_KINDS
-        and column.category is None
-        and column.formula is None
-        and not column.unique
-    )
-
-
 def _draw_table(
     schema: DatasetSchema,
     rows: int,
@@ -158,83 +150,14 @@ def _draw_table(
     *,
     learned: pd.DataFrame | None,
 ) -> pd.DataFrame:
-    ledger = DrawLedger.recording(rows, rng, _uniforms(schema, rows, rng))
+    uniforms = draw_uniforms(schema.columns, schema.correlations, rows, rng)
+    ledger = DrawLedger.recording(rows, rng, uniforms)
     frame = pd.DataFrame(index=range(rows))
-
-    def regenerate(settings: ColumnSchema, count: int) -> pd.Series:
-        return _undrawn_values(settings, count, rng, surrogates)
-
     for name in schema.generation_order():
         column = schema.column(name)
-        draws = ledger.column(name)
-        is_learned = column.formula is None and learned is not None and name in learned.columns
-        base_uniform = draws.base()
-        if column.formula is not None:
-            values = compute_formula(column, frame, draws)
-        elif is_learned:
-            assert learned is not None
-            values = learned[name].reset_index(drop=True)
-        elif base_uniform is not None:
-            values = draw(column, base_uniform)
-        else:
-            values = _undrawn_values(column, rows, rng, surrogates)
-        uniform = None if is_learned else conditional_uniform(column, draws)
-        values = apply_conditions(column, values, frame, uniform, regenerate)
-        frame[name] = plant_outliers(column, values, rng).to_numpy()
-
+        values = build_column(column, frame, ledger.column(name), rng, surrogates, learned=learned)
+        frame[name] = values.to_numpy()
     return attach_draws(frame, ledger)
-
-
-def _uniforms(schema: DatasetSchema, rows: int, rng: np.random.Generator) -> dict[str, np.ndarray]:
-    uniforms = {column.name: rng.random(rows) for column in schema.columns if _is_drawn(column)}
-    correlated = list(dict.fromkeys(name for item in schema.correlations for name in item.columns))
-    if not correlated or rows == 0:
-        return uniforms
-
-    position = {name: index for index, name in enumerate(correlated)}
-    matrix = np.eye(len(correlated))
-    for correlation in schema.correlations:
-        first, second = (position[name] for name in correlation.columns)
-        # A Gaussian copula with Pearson r gives Spearman rho = 6/pi * arcsin(r/2).
-        pearson = 2 * np.sin(np.pi * correlation.value / 6)
-        matrix[first, second] = pearson
-        matrix[second, first] = pearson
-    scores = rng.multivariate_normal(
-        np.zeros(len(correlated)), nearest_positive_definite(matrix), size=rows
-    )
-    correlated_uniforms = np.clip(stats.norm.cdf(scores), _EDGE, 1 - _EDGE)
-    for name, index in position.items():
-        uniforms[name] = correlated_uniforms[:, index]
-    return uniforms
-
-
-def _undrawn_values(
-    column: ColumnSchema,
-    rows: int,
-    rng: np.random.Generator,
-    surrogates: SurrogateFactory,
-) -> pd.Series:
-    """Values for columns that are not drawn from a distribution: keys, fakes and text."""
-    if column.category is not None and column.kind in (ColumnKind.TEXT, ColumnKind.CATEGORY):
-        return pd.Series(surrogates.many(column.category, rows, rng, unique=column.unique))
-    if column.unique and column.kind is ColumnKind.INTEGER:
-        return pd.Series(unique_integers(column, rows, rng))
-    if column.kind in DRAWN_KINDS:
-        return _drawn_values(column, rows, rng)
-    if column.template is not None:
-        return pd.Series(template_values(column, rows, rng))
-    if column.choices:
-        return quantile_function(column.model_copy(update={"kind": ColumnKind.CATEGORY}))(
-            rng.random(rows)
-        )
-    return pd.Series(surrogates.many(DataCategory.GENERIC_TEXT, rows, rng, unique=column.unique))
-
-
-def _drawn_values(column: ColumnSchema, rows: int, rng: np.random.Generator) -> pd.Series:
-    values = draw(column, rng.random(rows))
-    if column.unique and values.duplicated().any():
-        raise SchemaError(f"{column.name}: this distribution cannot give {rows} unique values")
-    return values
 
 
 def _build_table(

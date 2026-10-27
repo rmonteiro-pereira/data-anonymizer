@@ -115,7 +115,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     synth_parser = commands.add_parser("synthesize", help="generate a synthetic table")
     synth_parser.add_argument("-o", "--output", type=Path, required=True)
-    synth_parser.add_argument("--rows", type=int, required=True)
+    synth_parser.add_argument("--rows", type=int, default=None)
     synth_parser.add_argument("--schema", type=Path)
     synth_parser.add_argument("--reference", type=Path)
     _add_fidelity(synth_parser)
@@ -142,7 +142,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "challenge", help="generate a data-science challenge with a known answer"
     )
     challenge_parser.add_argument("--schema", type=Path, required=True)
-    challenge_parser.add_argument("--rows", type=int, required=True)
+    challenge_parser.add_argument("--rows", type=int, default=None)
     challenge_parser.add_argument("-o", "--output", type=Path, required=True, help="folder")
     challenge_parser.set_defaults(handler=_challenge)
 
@@ -307,6 +307,7 @@ def _question_page(challenge) -> str:
         f"Files: `train.csv` ({key['rows']['train']} rows, with the target) and "
         f"`test.csv` ({key['rows']['test']} rows, without it).\n\n"
         f"{_treatment_note(key)}"
+        f"{_panel_note(key)}"
         f"## Columns\n\n{columns}\n"
     )
 
@@ -320,6 +321,18 @@ def _treatment_note(key: dict) -> str:
         f"Treatment column: `{causal['treatment']}` (control {values['control']!r}, "
         f"treated {values['treated']!r}).\n\n"
     )
+
+
+def _panel_note(key: dict) -> str:
+    series = key.get("time_series")
+    if series is None:
+        return ""
+    note = f"Each row is one `{series['entity']}` in one period, dated by `{series['time']}`."
+    first_test = series["first_test_period"]
+    if first_test is not None:
+        periods = series["periods_per_split"]["test"]
+        note += f" The test rows are the last {periods} periods, from {first_test['date']}."
+    return note + "\n\n"
 
 
 def _list_techniques(anonymizer: Anonymizer, arguments: argparse.Namespace) -> None:

@@ -25,7 +25,7 @@ synthetic = Anonymizer(seed=1, locale="pt_BR").synthesize(10_000, schema=schema)
 | `category` | `choices`, optional `weights` |
 | `datetime` | `start`, `end` |
 | `text` | `category` for realistic fakes (`email`, `person_name`, `cpf`, `cnpj`, `phone`, ...), a `template` where `#` is a digit and `?` an uppercase letter, or `choices` |
-| any | `null_fraction`, and `unique` for integer keys, fake-value categories and templates. A unique template with fewer possible values than rows is a `SchemaError`. `unique` is rejected on boolean, datetime and `choices` columns |
+| any | `level` in a schema with a `panel` (see [Panels and time series](#panels-and-time-series)), `null_fraction`, and `unique` for integer keys, fake-value categories and templates. A unique template with fewer possible values than rows is a `SchemaError`. `unique` is rejected on boolean, datetime and `choices` columns |
 
 | `distribution` | Parameters |
 |---|---|
@@ -212,6 +212,8 @@ The answer key holds:
     the target;
   - `leaks_target`: published columns computed from the target (see
     [Leakage traps](#leakage-traps));
+  - `lags_target`: published columns that read an earlier period of the target in a panel (see
+    [Panels and time series](#panels-and-time-series)); only present when there are any;
   - `distractors`: everything else.
 - **how_the_target_was_built**: every formula, distribution and condition on the path to
   the target.
@@ -393,3 +395,90 @@ The key gains a `label_noise` section with the settings, the number of labels `f
 `perturbed`) per split, and `best_achievable_on_clean_test_labels`. The top-level
 `best_achievable` is measured against the published test answers, so it equals the clean score
 unless the test split is noisy.
+
+## Panels and time series
+
+A `panel` makes the table `entities × periods` rows: the same entities observed over many
+periods, such as 40 stores over 36 months. The full example is
+[store_sales_panel.json](../examples/store_sales_panel.json).
+
+```json
+"panel": {
+  "entity": "store_id", "entities": 40,
+  "time": "date", "start": "2022-01-01", "periods": 36, "frequency": "MS"
+}
+```
+
+- The panel creates two columns, `entity` (integer ids 1 to `entities`) and `time` (one date
+  per period, spaced by `frequency`, a pandas offset alias such as `MS`, `W` or `D`). They come
+  first, and rows are ordered by entity and then by period.
+- The row count is fixed by the panel. Leave `rows` out of `synthesize` and `challenge`, or
+  pass exactly `entities × periods`; any other number is a `SchemaError`. `--rows` is optional
+  on the command line for the same reason.
+- A panel is generated from the schema alone, so it cannot be combined with a reference table,
+  and it cannot have `constraints`, because dropping rows would break its periods.
+- Names the panel uses (`entity`, `time`, `period`, `entity_index`) cannot be column names.
+
+**Levels.** `level` says how often a column's value is drawn:
+
+| `level` | Drawn | Example |
+|---|---|---|
+| `row` (default) | for each entity and period | weather, sales |
+| `entity` | once per entity, repeated over its periods | store size, region |
+| `period` | once per period, shared by every entity | a market shock |
+
+An entity-level column can read only entity-level columns, and a period-level column only
+period-level columns, so the value stays constant where it should. Row-level columns read
+anything. Correlations join columns of the same level. Only entity-level columns can be
+`unique`, and a period-level column cannot be `exact` or have `outlier_fraction`.
+
+**Formulas.** A formula can read `period` (the 0-based period of the row), `entity_index`
+(the 0-based entity), the time column (`month(date)`, `dayofyear(date)`) and
+`lag(column, k)`:
+- `lag(sales)` or `lag(sales, 2)` (also `lag(sales, k=2)`) is the column's value `k` periods
+  earlier for the same entity, with `k` a whole number from 1. It is missing for the first `k`
+  periods of each entity.
+- A formula may lag itself. `0.7 * lag(sales) + 20` is an AR(1) series. Rows are built period
+  by period, all entities together, so the value a formula lags is already built.
+- Give the first period its own value, since the lag is missing there:
+  `where(period == 0, 130, 20 + 0.7 * lag(sales))`.
+- `lag` is allowed in formulas only, not in conditions or constraints, and not on entity-level
+  columns. A period-level column can lag period-level columns.
+
+**Regimes.** A regime is a condition on `period` (or on the time column):
+
+```json
+{"name": "new_competitor", "kind": "boolean", "true_share": 0,
+ "conditions": [{"when": "period >= 24", "true_share": 1}]}
+```
+
+Formulas that read `new_competitor` change level from period 24 on. The key lists these
+conditions under `time_series.regimes`.
+
+### Time-series questions
+
+Add `"split": "time"` to the question to hold out the last `test_share` of the periods
+(rounded to at least one) as the test set. The default, `"random"`, picks test rows at random,
+so every period appears in both splits. A time split needs a panel and at least one training
+period.
+
+- **Drift.** With `split: "time"` and a `test_shift`, the shifted schema generates the test
+  periods: a regime change in the future. The same entities carry on, and an autoregressive
+  column continues from its last training value. Entity-level columns cannot be shifted. A
+  shift on a panel needs a time split.
+- **Label noise** applies to the published labels as for any table.
+- **Leakage.** A column that reads the current target is a leak, as before. A column that reads
+  `lag` of the target is a legitimate feature: the earlier value is known when predicting. The
+  key lists such columns under `features.lags_target` instead of `distractors`.
+- **Causal questions.** A `treatment` on a panel is refused with a `SchemaError`. A treatment
+  reaches later periods through lags, and the effect replay recomputes descendants within one
+  row, not across periods, so its effects would be wrong.
+- **Best achievable.** The truth of a target formula that lags is its formula evaluated
+  again without noise on the observed earlier values, the best one-step-ahead prediction.
+
+The key gains a `time_series` section:
+- `entity`, `time`, `entities`, `periods`, `start`, `frequency` and `split`;
+- `periods_per_split`: the number of periods in `train` and in `test`;
+- `first_test_period`: its index and date, for a time split (null for a random split);
+- `lags`: for each column, the columns its formula lags and by how many periods;
+- `regimes`: each condition on `period` or the time column, with the column it changes.

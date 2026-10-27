@@ -35,7 +35,7 @@ A Python library and command-line tool for tables that contain personal data. It
 | Utility | Change in mean and standard deviation, Kolmogorov–Smirnov, Wasserstein / IQR, total variation distance, correlation change, per-record shift in standard deviations |
 | Noise explorer | A self-contained interactive HTML page per column. For every technique and strength it shows before/after distributions, original against released per record with an exposure band, and a risk-utility map. It works offline and follows light and dark themes |
 | Synthesis | Distributions (normal, lognormal, gamma, exponential, Poisson, uniform, quantile curves) truncated to bounds. Spearman correlations imposed through a Gaussian copula. Conditional overrides that keep correlations. Formula columns using a safe expression language with date and random functions. Outlier planting, exact statistics, row constraints, unique keys, null shares and templates. Learned Gaussian copula from a reference table |
-| Challenges | A schema `question` produces train and test files and a private answer key. The key lists the true drivers, the correlated-but-not-causal columns and the distractors, plus the best score any model can reach (RMSE/R², or accuracy/AUC/log loss). Columns that leak the target are flagged. With a `treatment`, the key also holds the true average, treated-only and per-group effects, the bias of the naive comparison, the confounders, mediators, colliders and instruments, and a valid adjustment set. Optional test-set drift (covariate or concept) and label noise on the train or test labels, both reported in the key |
+| Challenges | A schema `question` produces train and test files and a private answer key. The key lists the true drivers, the correlated-but-not-causal columns and the distractors, plus the best score any model can reach (RMSE/R², or accuracy/AUC/log loss). Columns that leak the target are flagged. With a `treatment`, the key also holds the true average, treated-only and per-group effects, the bias of the naive comparison, the confounders, mediators, colliders and instruments, and a valid adjustment set. Optional test-set drift (covariate or concept) and label noise on the train or test labels, both reported in the key. Panels of entities over periods (entity-level and period-level columns, `lag`, AR series, seasonality, regimes) with a time split that holds out the last periods |
 | Interfaces | Python API (`Anonymizer`), editable JSON plans and schemas, the `anonymize` CLI, CSV and Parquet, custom techniques |
 
 ### Roadmap
@@ -44,8 +44,7 @@ Planned, not yet implemented:
 
 - **Richer data-science challenges.**
   - Class imbalance and missing-not-at-random patterns.
-  - Time series with autocorrelation and regime changes, and multi-table relational data
-    with foreign keys.
+  - Multi-table relational data with foreign keys.
   - Difficulty knobs and question text generated from the schema.
 - **Detection.**
   - An optional named-entity extra for names and addresses inside text: GLiNER with
@@ -135,8 +134,8 @@ locale for fake values, such as `pt_BR`; default `en_US`). Tables can be `.csv` 
 | `anonymize reveal INPUT --plan PLAN -o OUTPUT [--row-key COLUMN]` | Decrypts the columns the plan encrypted and leaves one-way columns as they are |
 | `anonymize explore-noise INPUT --column NAME -o PAGE.html [--band SD] [--max-rows N]` | Writes the interactive noise explorer for one numeric column. Columns longer than `N` values (default 200,000) are explored on a random sample |
 | `anonymize infer-schema INPUT [--fidelity F] [-o SCHEMA]` | Learns a generation schema from a table |
-| `anonymize synthesize -o OUTPUT --rows N [--schema SCHEMA] [--reference INPUT] [--fidelity F]` | Generates a synthetic table |
-| `anonymize challenge --schema SCHEMA --rows N -o FOLDER` | Generates a data-science challenge: `train.csv`, `test.csv`, `QUESTION.md`, and `answers/` with the answer key |
+| `anonymize synthesize -o OUTPUT [--rows N] [--schema SCHEMA] [--reference INPUT] [--fidelity F]` | Generates a synthetic table |
+| `anonymize challenge --schema SCHEMA [--rows N] -o FOLDER` | Generates a data-science challenge: `train.csv`, `test.csv`, `QUESTION.md`, and `answers/` with the answer key |
 | `anonymize techniques` | Lists every technique, its parameters and whether it is reversible |
 
 `P` is `anonymization` (the default) or `pseudonymization`. `F` is `statistical` (the

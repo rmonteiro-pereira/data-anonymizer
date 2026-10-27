@@ -1,0 +1,41 @@
+{
+  "panel": {
+    "entity": "store_id",
+    "entities": 40,
+    "time": "date",
+    "start": "2022-01-01",
+    "periods": 36,
+    "frequency": "MS"
+  },
+  "columns": [
+    {
+      "name": "store_size", "kind": "float", "level": "entity",
+      "mean": 60, "std": 15, "minimum": 20
+    },
+    {
+      "name": "region", "kind": "category", "level": "entity",
+      "choices": ["north", "south", "east", "west"]
+    },
+    {"name": "market_shock", "kind": "float", "level": "period", "mean": 0, "std": 4},
+    {"name": "weather_index", "kind": "float", "mean": 0, "std": 1},
+    {
+      "name": "new_competitor", "kind": "boolean", "true_share": 0,
+      "conditions": [{"when": "period >= 24", "true_share": 1}]
+    },
+    {
+      "name": "sales", "kind": "float", "noise_std": 5,
+      "formula": "where(period == 0, 130 + 2 * store_size, 20 + 0.9 * store_size + 0.7 * lag(sales) + 6 * sin(2 * pi * month(date) / 12) + market_shock - 12 * new_competitor)"
+    },
+    {"name": "last_month_sales", "kind": "float", "formula": "lag(sales)"}
+  ],
+  "question": {
+    "title": "Next month's sales per store",
+    "prompt": "Each row is one store in one month. Predict sales for the last months of the history, using what is known about the stores and the earlier months.",
+    "target": "sales",
+    "task": "regression",
+    "split": "time",
+    "test_share": 0.2,
+    "hidden_columns": ["new_competitor"],
+    "test_shift": [{"name": "market_shock", "std": 8}]
+  }
+}

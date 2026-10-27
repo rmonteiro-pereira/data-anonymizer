@@ -103,3 +103,19 @@ def test_apply_and_reveal_take_a_row_key_that_overrides_the_plan(people, tmp_pat
         == 0
     )
     assert main(apply_arguments + ["-o", str(output), "--row-key", "missing"]) == 2
+
+
+def test_challenge_command_builds_a_panel_without_a_row_count(tmp_path, capsys):
+    schema = Path(__file__).parent.parent / "examples" / "store_sales_panel.json"
+    folder = tmp_path / "stores"
+
+    assert main(["--seed", "3", "challenge", "--schema", str(schema), "-o", str(folder)]) == 0
+
+    page = (folder / "QUESTION.md").read_text()
+    assert "one `store_id` in one period, dated by `date`" in page
+    assert "the last 7 periods, from 2024-06-01" in page
+    assert len(pd.read_csv(folder / "test.csv")) == 40 * 7
+    assert main(["synthesize", "--schema", str(schema), "-o", str(tmp_path / "s.csv")]) == 0
+    assert len(pd.read_csv(tmp_path / "s.csv")) == 40 * 36
+    assert main(["synthesize", "-o", str(tmp_path / "x.csv")]) == 2
+    assert "rows is required" in capsys.readouterr().err

@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- **Time series and panels.**
+  - A schema can declare a `panel` of entities over periods. Columns take a `level` (`row`,
+    `entity` or `period`), and formulas can read `lag(column, k)`, `period` and `entity_index`,
+    so AR(1) series, seasonality and regimes (conditions on `period`) can be planted.
+  - A question can set `split: "time"` to hold out the last periods. With a `test_shift`, the
+    shifted schema generates the test periods as a regime change in the future.
+  - The answer key gains `time_series` and, for columns that read the lagged target,
+    `features.lags_target`.
+  - `rows` is optional for `synthesize`, `challenge` and the CLI `--rows` when the schema has a
+    panel. A treatment on a panel is refused with a `SchemaError`.
+  - `examples/store_sales_panel.json` plants entity-level store size, a period-level market
+    shock, AR(1) sales with seasonality and a regime at period 24.
+
 - **Causal challenges and leakage traps.**
   - A question can name a `treatment`, `treatment_values` and `effect_modifiers`. The answer
     key gains a `causal` section: the true ATE and ATT, the effect on the `truth_column`, the

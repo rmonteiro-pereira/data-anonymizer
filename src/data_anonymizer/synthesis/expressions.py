@@ -10,6 +10,11 @@ Formulas may also call `bernoulli(p)`, `normal(mean, std)`, `poisson(rate)` and
 number into its value through the inverse distribution function, so a build can be replayed
 (see `draw_replay`).
 
+In a panel, `lag(column, k)` reads a column's value `k` periods earlier for the same entity,
+with `k` a whole number from 1 (1 when left out), and it is missing at the start of each
+entity. A formula may lag its own column, which makes an autoregressive series. `period` and
+`entity_index` are the 0-based period and entity of each row.
+
 Examples:
     50 + 2.5 * age
     bernoulli(sigmoid(-2 + 0.8 * support_tickets))
@@ -110,6 +115,12 @@ def _random_functions(next_uniform: UniformSource, rows: int) -> dict[str, Calla
     return {"bernoulli": bernoulli, "normal": normal, "poisson": poisson, "uniform": uniform}
 
 
+# The panel function reads other periods of the same entity. It takes a column name, not values.
+LAG_FUNCTION = "lag"
+
+# Returns the values of a column `k` periods earlier, one per row, or NaN where there are none.
+LagSource = Callable[[str, int], np.ndarray]
+
 CONSTANTS = {"pi": np.pi, "e": np.e}
 
 
@@ -207,15 +218,62 @@ def _depth(tree: ast.AST) -> int:
 
 
 def referenced_columns(text: str) -> set[str]:
-    """Return the column names an expression reads."""
+    """Return the names of the columns an expression reads in the same period.
+
+    A column that only appears inside `lag(...)` is read from an earlier period, so it is not
+    listed here; `lagged_references` lists those.
+    """
     tree = parse(text)
     called = {
         node.func.id
         for node in ast.walk(tree)
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
     }
-    names = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}
+    lagged_nodes = {id(call.args[0]) for call in _lag_calls(tree)}
+    names = {
+        node.id
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Name) and id(node) not in lagged_nodes
+    }
     return names - called - set(CONSTANTS)
+
+
+def lagged_references(text: str) -> dict[str, set[int]]:
+    """Return the columns an expression reads from earlier periods, with the lags it uses."""
+    found: dict[str, set[int]] = {}
+    for call in _lag_calls(parse(text)):
+        column = call.args[0]
+        assert isinstance(column, ast.Name)
+        found.setdefault(column.id, set()).add(_lag_steps(call))
+    return found
+
+
+def _lag_calls(tree: ast.AST) -> list[ast.Call]:
+    return [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == LAG_FUNCTION
+    ]
+
+
+def _lag_steps_node(call: ast.Call) -> ast.expr | None:
+    """The expression given for `k`, as a second argument or as `k=...`, or None when left out."""
+    if len(call.args) >= 2:
+        return call.args[1]
+    for keyword in call.keywords:
+        if keyword.arg == "k":
+            return keyword.value
+    return None
+
+
+def _lag_steps(call: ast.Call) -> int:
+    steps = _lag_steps_node(call)
+    if steps is None:
+        return 1
+    assert isinstance(steps, ast.Constant) and isinstance(steps.value, int)
+    return steps.value
 
 
 def uses_randomness(text: str) -> bool:
@@ -234,11 +292,12 @@ def evaluate(
     rng: np.random.Generator | None = None,
     *,
     uniforms: UniformSource | None = None,
+    lags: LagSource | None = None,
 ) -> np.ndarray:
     """Evaluate an expression over every row of a table and return one value per row.
 
     The random functions need either `rng`, which draws new numbers, or `uniforms`, which
-    returns the stored numbers of the next call site, one per row.
+    returns the stored numbers of the next call site, one per row. `lag` needs `lags`.
     """
     tree = parse(text)
     functions = dict(FUNCTIONS)
@@ -246,6 +305,8 @@ def evaluate(
         uniforms = _fresh_uniforms(rng, len(frame))
     if uniforms is not None:
         functions.update(_random_functions(uniforms, len(frame)))
+    if lags is not None:
+        functions[LAG_FUNCTION] = lags
     try:
         result = _evaluate(tree.body, frame, functions)
     except ExpressionError:
@@ -270,6 +331,7 @@ _ALLOWED_NODES = (
     ast.Constant,
     ast.List,
     ast.Tuple,
+    ast.keyword,
     ast.Load,
     ast.And,
     ast.Or,
@@ -287,14 +349,33 @@ def _check_node(node: ast.AST, text: str) -> None:
     if not isinstance(node, _ALLOWED_NODES):
         raise ExpressionError(f"{type(node).__name__} is not allowed in {text!r}")
     if isinstance(node, ast.Call):
-        known = FUNCTIONS.keys() | RANDOM_FUNCTIONS
+        known = FUNCTIONS.keys() | RANDOM_FUNCTIONS | {LAG_FUNCTION}
         if not isinstance(node.func, ast.Name) or node.func.id not in known:
             allowed = ", ".join(sorted(known))
             raise ExpressionError(f"unknown function in {text!r}; allowed: {allowed}")
-        if node.keywords:
+        if node.func.id == LAG_FUNCTION:
+            _check_lag_call(node, text)
+        elif node.keywords:
             raise ExpressionError(f"keyword arguments are not allowed in {text!r}")
     if isinstance(node, ast.Constant) and not isinstance(node.value, int | float | str | bool):
         raise ExpressionError(f"only numbers, strings and booleans are allowed in {text!r}")
+
+
+def _check_lag_call(call: ast.Call, text: str) -> None:
+    steps = _lag_steps_node(call)
+    has_column = bool(call.args) and isinstance(call.args[0], ast.Name)
+    has_valid_steps = steps is None or (
+        isinstance(steps, ast.Constant)
+        and isinstance(steps.value, int)
+        and not isinstance(steps.value, bool)
+        and steps.value >= 1
+    )
+    keywords_are_k = all(keyword.arg == "k" for keyword in call.keywords)
+    one_steps_argument = len(call.args) + len(call.keywords) <= 2
+    if not (has_column and has_valid_steps and keywords_are_k and one_steps_argument):
+        raise ExpressionError(
+            f"lag in {text!r} must be lag(column) or lag(column, k), with k a whole number from 1"
+        )
 
 
 def _evaluate(node: ast.AST, frame: pd.DataFrame, functions: Functions) -> Any:
@@ -318,11 +399,21 @@ def _evaluate(node: ast.AST, frame: pd.DataFrame, functions: Functions) -> Any:
     if isinstance(node, ast.Call):
         assert isinstance(node.func, ast.Name)
         name = node.func.id
+        if name == LAG_FUNCTION:
+            return _lagged(node, functions)
         if name not in functions:
             raise ExpressionError(f"{name} draws random values and is only allowed in formulas")
         arguments = [_evaluate(argument, frame, functions) for argument in node.args]
         return functions[name](*arguments)
     raise ExpressionError(f"{type(node).__name__} is not allowed")
+
+
+def _lagged(call: ast.Call, functions: Functions) -> Any:
+    if LAG_FUNCTION not in functions:
+        raise ExpressionError("lag needs a panel: it reads earlier periods of the same entity")
+    column = call.args[0]
+    assert isinstance(column, ast.Name)
+    return functions[LAG_FUNCTION](column.id, _lag_steps(call))
 
 
 def _name(name: str, frame: pd.DataFrame) -> Any:

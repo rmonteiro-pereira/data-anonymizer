@@ -235,7 +235,7 @@ class Anonymizer:
 
     def synthesize(
         self,
-        rows: int,
+        rows: int | None = None,
         *,
         schema: DatasetSchema | None = None,
         reference: pd.DataFrame | None = None,
@@ -248,7 +248,11 @@ class Anonymizer:
         table, the schema is inferred when not given, and statistical fidelity also
         keeps the correlations between the reference's columns. `stratify_by` names
         category columns whose levels each get their own distributions and correlations.
+
+        A schema with a panel fixes its own row count (entities × periods), so `rows` may be
+        left out or must equal it.
         """
+        rows = _resolved_rows(rows, schema)
         if rows < 0:
             raise SchemaError("rows must not be negative")
         rng = np.random.default_rng(self._seed)
@@ -273,11 +277,12 @@ class Anonymizer:
             stratify_by=stratify_by,
         )
 
-    def challenge(self, schema: DatasetSchema, rows: int) -> Challenge:
+    def challenge(self, schema: DatasetSchema, rows: int | None = None) -> Challenge:
         """Generate a data-science challenge from a schema with a `question`.
 
         Returns the training table, the test features, the test answers and an
-        answer key with the true drivers and the best achievable scores.
+        answer key with the true drivers and the best achievable scores. A schema with a
+        panel fixes its own row count, so `rows` may be left out.
         """
         rng = np.random.default_rng(self._seed)
         return build_challenge(schema, rows, rng=rng, surrogates=SurrogateFactory(self._locale))
@@ -297,6 +302,15 @@ class Anonymizer:
             plan.sensitive_attributes,
             k_target=plan.k_target,
         )
+
+
+def _resolved_rows(rows: int | None, schema: DatasetSchema | None) -> int:
+    """Return the requested row count, or the schema panel's when none was requested."""
+    if schema is not None:
+        return schema.row_count(rows)
+    if rows is None:
+        raise SchemaError("rows is required unless the schema has a panel")
+    return rows
 
 
 def _randomness_key(secret_key: bytes | None, seed: int | None) -> bytes:

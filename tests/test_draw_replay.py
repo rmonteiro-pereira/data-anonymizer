@@ -187,3 +187,19 @@ def test_column_names_cannot_collide_with_the_hidden_helper_columns():
         DatasetSchema.model_validate(
             {"columns": [{"name": "__draw__x", "kind": "float", "mean": 0, "std": 1}]}
         )
+
+
+def test_a_window_onto_a_recording_ledger_stores_numbers_for_every_row():
+    rng = np.random.default_rng(3)
+    ledger = DrawLedger.recording(6, rng, {})
+    first_rows = ledger.subset(np.array([0, 2, 4]))
+    other_rows = ledger.subset(np.array([1, 3, 5]))
+
+    first_noise = first_rows.column("y").noise()
+    other_noise = other_rows.column("y").noise()
+
+    stored = ledger.stored(("y", "noise"))
+    assert stored is not None
+    np.testing.assert_array_equal(stored[[0, 2, 4]], first_noise)
+    np.testing.assert_array_equal(stored[[1, 3, 5]], other_noise)
+    np.testing.assert_array_equal(first_rows.column("y").noise(), first_noise)

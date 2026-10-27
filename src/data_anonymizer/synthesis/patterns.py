@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 
 from data_anonymizer.synthesis.draw_replay import ColumnDraws, normal_from_uniform
-from data_anonymizer.synthesis.expressions import evaluate
+from data_anonymizer.synthesis.expressions import LagSource, evaluate
 from data_anonymizer.synthesis.marginals import (
     evenly_spread,
     match_mean_and_std,
@@ -32,10 +32,18 @@ def draw(column: ColumnSchema, uniform: np.ndarray) -> pd.Series:
     return values
 
 
-def compute_formula(column: ColumnSchema, frame: pd.DataFrame, draws: ColumnDraws) -> pd.Series:
-    """Evaluate a column's formula over the columns generated so far, plus its noise."""
+def compute_formula(
+    column: ColumnSchema,
+    frame: pd.DataFrame,
+    draws: ColumnDraws,
+    lags: LagSource | None = None,
+) -> pd.Series:
+    """Evaluate a column's formula over the columns generated so far, plus its noise.
+
+    In a panel, `lags` gives the earlier periods that `lag(...)` reads.
+    """
     assert column.formula is not None
-    computed = evaluate(column.formula, frame, uniforms=draws.next_call_site)
+    computed = evaluate(column.formula, frame, uniforms=draws.next_call_site, lags=lags)
     if column.kind is ColumnKind.BOOLEAN:
         return pd.Series(np.asarray(computed).astype(bool))
     if column.kind not in NUMERIC_KINDS:
