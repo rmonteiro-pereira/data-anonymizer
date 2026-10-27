@@ -43,7 +43,7 @@ the default `anonymization` target the proposal is:
 | Column | Technique | Result |
 |---|---|---|
 | Store name | `scramble_categories` (`ORG-…`) | An opaque code per store. All rows of one store keep the same code, so its behaviour over time can still be modelled |
-| Segment | `scramble_categories` (`SEG-…`) | Opaque codes in random order. Segments with fewer than 3 rows or 3 stores (5 with `--fidelity privacy`) are merged into `SEG-OTHER`. A segment with fewer than 3 contributors is also flagged by the dominance check while values keep their units |
+| Segment | `scramble_categories` (`SEG-…`) | Opaque codes in random order. Segments with fewer than 3 rows or 3 stores (5 with `--fidelity privacy`) are merged into `SEG-OTHER`. If `SEG-OTHER` itself falls short of that minimum, the smallest remaining segments join it until it reaches it; if all segments together are too few, the column is blanked. A segment with fewer than 3 contributors is also flagged by the dominance check while values keep their units |
 | Floor area | `bin_numeric`, quartiles | Size bands instead of square metres |
 | Revenue, rent | `normalize`, `robust` | (value − median) / interquartile range. No reais are left; the ranking, the seasonality and the shape of the distribution are kept |
 | Dates | `date_shift` by store | Every row of one store moves by the same number of days, so its monthly pattern stays intact |

@@ -22,6 +22,7 @@ from data_anonymizer.techniques.context import TechniqueContext
 from data_anonymizer.techniques.ff1 import FF1
 from data_anonymizer.techniques.value_mapping import (
     canonical_value,
+    distinct_entities_among,
     distinct_entity_counts,
     lookup_distinct,
     lookup_per_row,
@@ -333,6 +334,8 @@ def scramble_categories(
         for label, count in counts_by_label.items()
         if count >= min_count and entities_by_label.get(label, min_entities) >= min_entities
     )
+    pool = _OtherPool(table, column, by, min_count, min_entities, raw_by_label, counts_by_label)
+    common, other_is_blank = pool.grow_until_large_enough(common, entities_by_label)
     if keyed:
         ordered = sorted(common, key=lambda label: context.keyed_digest(label))
     else:
@@ -340,11 +343,72 @@ def scramble_categories(
         ordered = [common[index] for index in permutation]
     width = max(2, len(str(len(ordered))))
     codes = {label: f"{prefix}-{number:0{width}d}" for number, label in enumerate(ordered, 1)}
-    other = f"{prefix}-OTHER"
+    other = None if other_is_blank else f"{prefix}-OTHER"
     mapping = {
         value: codes.get(label, other) for label, values in raw_by_label.items() for value in values
     }
     return table.lookup(column, mapping, nw.String)
+
+
+class _OtherPool:
+    """The labels merged into `OTHER`, which must hide their members as well as a segment does.
+
+    A pool of leftovers can itself be too small, such as three stores under a minimum of five.
+    Then the smallest labels that had a code of their own join it, one at a time, until it is
+    large enough. If all labels together are still too few, the whole column is blanked.
+    """
+
+    def __init__(
+        self,
+        table: Table,
+        column: str,
+        by: str | None,
+        min_count: int,
+        min_entities: int,
+        raw_by_label: dict[str, list[Any]],
+        counts_by_label: Counter[str],
+    ) -> None:
+        self._table = table
+        self._column = column
+        self._by = by
+        self._min_count = min_count
+        self._min_entities = min_entities
+        self._raw_by_label = raw_by_label
+        self._counts_by_label = counts_by_label
+
+    def grow_until_large_enough(
+        self, common: list[str], entities_by_label: Counter[str]
+    ) -> tuple[list[str], bool]:
+        """Return the labels that keep a code, and whether `OTHER` has to be blanked."""
+        kept = list(common)
+        pooled = [label for label in self._counts_by_label if label not in set(kept)]
+        if not pooled:
+            return kept, False
+        smallest_first = sorted(
+            kept,
+            key=lambda label: (
+                entities_by_label.get(label, 0),
+                self._counts_by_label[label],
+                label,
+            ),
+        )
+        while not self._is_large_enough(pooled):
+            if not smallest_first:
+                return [], True
+            label = smallest_first.pop(0)
+            kept.remove(label)
+            pooled.append(label)
+        return kept, False
+
+    def _is_large_enough(self, pooled: list[str]) -> bool:
+        rows = sum(self._counts_by_label[label] for label in pooled)
+        if rows < self._min_count:
+            return False
+        if self._by is None or self._min_entities <= 1:
+            return True
+        values = [value for label in pooled for value in self._raw_by_label[label]]
+        entities = distinct_entities_among(self._table, self._column, self._by, values)
+        return entities >= self._min_entities
 
 
 def _entities_by_label(

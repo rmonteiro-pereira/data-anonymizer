@@ -147,8 +147,9 @@ def test_scramble_categories_hides_order_and_merges_small_segments(run, context)
 
     codes = run(scramble_categories, labels, context, prefix="SEG", min_count=3)
 
-    assert set(codes) == {"SEG-01", "SEG-02", "SEG-03", "SEG-OTHER"}
-    assert codes.iloc[-1] == "SEG-OTHER"
+    # Joalheria alone has 1 row, so the smallest segment, Casa, joins it in OTHER.
+    assert set(codes) == {"SEG-01", "SEG-02", "SEG-OTHER"}
+    assert (codes[labels.isin(["Casa", "Joalheria"])] == "SEG-OTHER").all()
     assert codes.groupby(labels).nunique().max() == 1
 
 

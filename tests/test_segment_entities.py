@@ -17,19 +17,49 @@ def _scramble(frame, **params):
 
 def test_scramble_categories_merges_segments_with_too_few_entities():
     # Jewellery has many rows but only two stores, so it must not keep a code of its own.
+    # Two stores are too few for OTHER as well, so the smallest segment joins it.
     frame = pd.DataFrame(
         {
-            "store": [f"s{index % 6}" for index in range(60)] + ["j1", "j2"] * 36,
-            "segment": ["Fashion"] * 60 + ["Jewellery"] * 72,
+            "store": [f"s{index % 6}" for index in range(60)]
+            + [f"b{index % 7}" for index in range(70)]
+            + ["j1", "j2"] * 36,
+            "segment": ["Fashion"] * 60 + ["Books"] * 70 + ["Jewellery"] * 72,
         }
     )
 
     by_rows = _scramble(frame, prefix="SEG", min_count=3)
     by_entities = _scramble(frame, prefix="SEG", min_count=3, min_entities=3, by="store")
 
-    assert by_rows.nunique() == 2
+    assert by_rows.nunique() == 3
     assert set(by_entities) == {"SEG-01", "SEG-OTHER"}
-    assert (by_entities[60:] == "SEG-OTHER").all()
+    assert (by_entities[60:130] == "SEG-01").all()
+    assert (by_entities[:60] == "SEG-OTHER").all()
+    assert (by_entities[130:] == "SEG-OTHER").all()
+
+
+def test_other_grows_until_it_holds_the_minimum_number_of_entities():
+    segments = {"Big": 8, "Mid": 6, "Small": 2, "Tiny": 1}
+    stores = [f"{name}{index}" for name, count in segments.items() for index in range(count)]
+    frame = pd.DataFrame(
+        {
+            "store": stores * 4,
+            "segment": [name for name, count in segments.items() for _ in range(count)] * 4,
+        }
+    )
+
+    released = _scramble(frame, prefix="SEG", min_count=1, min_entities=5, by="store")
+
+    in_other = released == "SEG-OTHER"
+    assert frame[in_other].store.nunique() >= 5
+    assert set(frame[in_other].segment) == {"Tiny", "Small", "Mid"}
+
+
+def test_the_column_is_blanked_when_no_pool_can_reach_the_minimum():
+    frame = pd.DataFrame({"store": ["a", "b"] * 10, "segment": ["x", "y"] * 10})
+
+    released = _scramble(frame, prefix="SEG", min_entities=3, by="store")
+
+    assert released.isna().all()
 
 
 def test_min_entities_needs_the_entity_column():

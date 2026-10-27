@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **`OTHER` segments are large enough too.** `scramble_categories` with `min_count` or
+  `min_entities` keeps merging the smallest segments into `OTHER` until it holds the minimum
+  rows and entities. If all segments together fall short, the column is blanked.
+
 - **A random split refuses lags of hidden copies of the target.** A published column that reads
   a lag of any column depending on the target, directly or through other columns, is refused,
   not only a lag of the target itself.

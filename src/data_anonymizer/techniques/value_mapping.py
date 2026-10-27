@@ -70,6 +70,13 @@ def distinct_entity_counts(table: Table, column: str, by: str) -> Counter[Any]:
     return Counter(dict(_collected(grouped).iter_rows()))
 
 
+def distinct_entities_among(table: Table, column: str, by: str, values: list[Any]) -> int:
+    """How many distinct entities (values of `by`) hold any of these values of the column."""
+    entity = table.original_column(by)
+    holders = table.frame.filter(nw.col(column).is_in(values)).select(nw.col(entity).n_unique())
+    return int(_collected(holders).item())
+
+
 def _collected(frame: nw.DataFrame[Any] | nw.LazyFrame[Any]) -> nw.DataFrame[Any]:
     if isinstance(frame, nw.LazyFrame):
         return frame.collect()
