@@ -79,7 +79,7 @@ def assess_privacy(
     working = as_working_frame(frame)
     names = working.collect_schema().names()
     columns = [column for column in quasi_identifiers if column in names]
-    entity = entity_column if entity_column in names and entity_column not in columns else None
+    entity = _entity_to_count(working, entity_column, columns)
     counts = _counts(working, [a for a in sensitive_attributes if a in names], entity)
     total = counts[_ROWS]
     if not columns or total == 0:
@@ -151,6 +151,21 @@ def group_sizes(
     an attacker who sees them.
     """
     return frame.group_by(list(columns)).agg(_group_size(entity_column).alias(GROUP_SIZE))
+
+
+def _entity_to_count(
+    frame: WorkingFrame, entity_column: str | None, columns: Sequence[str]
+) -> str | None:
+    """The entity column when the released table still tells entities apart, else None.
+
+    A suppressed or constant entity column holds at most one value, so counting its distinct
+    values would turn every group into a group of one entity.
+    """
+    names = frame.collect_schema().names()
+    if entity_column is None or entity_column not in names or entity_column in columns:
+        return None
+    distinct = first_row(frame.select(distinct_present(entity_column).alias("entities")))
+    return entity_column if int(distinct["entities"]) >= 2 else None
 
 
 def _group_size(entity_column: str | None) -> nw.Expr:
