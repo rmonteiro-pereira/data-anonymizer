@@ -62,7 +62,20 @@ def to_working_frame(native: Any) -> tuple[WorkingFrame, Engine]:
         return nw.from_native(_polars_from_pandas(native), eager_only=True), engine
     if engine is Engine.POLARS and isinstance(native, pl.LazyFrame):
         return nw.from_native(native.collect(), eager_only=True), engine
+    _check_duckdb_names(column_names(native))
     return nw.from_native(native), engine
+
+
+def _check_duckdb_names(names: Sequence[str]) -> None:
+    # Narwhals writes DuckDB column references without escaping dots and double quotes,
+    # so such names fail deep inside a query. Refusing them here gives a clear message.
+    unsafe = [name for name in names if "." in name or '"' in name]
+    if unsafe:
+        listed = ", ".join(repr(name) for name in unsafe)
+        raise ValueError(
+            f"DuckDB columns cannot contain dots or double quotes here: {listed}; "
+            "rename them, for example with a select ... as alias"
+        )
 
 
 def as_working_frame(frame: Any) -> WorkingFrame:

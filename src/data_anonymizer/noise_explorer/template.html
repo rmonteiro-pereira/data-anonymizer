@@ -503,12 +503,17 @@
     const yScale = linearScale(toLogY(chance / 2), 0, frame.bottom, frame.top);
     const allShifts = points.map((metrics) => metrics.median_deviation_sd);
     const allRisks = points.map((metrics) => metrics.linkage_rate);
-    const xTicks = logTicks(toLogX(xFloor), toLogX(Math.max(...shifts)),
-      allShifts.some((value) => value <= 0));
-    const yTicks = logTicks(toLogY(chance / 2), 0, allRisks.some((value) => value <= 0));
+    const shiftsHaveZeros = allShifts.some((value) => value <= 0);
+    const risksHaveZeros = allRisks.some((value) => value <= 0);
+    const xTicks = logTicks(toLogX(xFloor), toLogX(Math.max(...shifts)), shiftsHaveZeros);
+    const yTicks = logTicks(toLogY(chance / 2), 0, risksHaveZeros);
+    // The floor tick reads "0" only when zeros sit on it; a real power of ten that happens
+    // to equal the floor keeps its own label.
+    const xZeroAt = shiftsHaveZeros ? toLogX(xFloor) : null;
+    const yZeroAt = risksHaveZeros ? toLogY(chance / 2) + 2 : null;
     drawAxes(svg, frame, xTicks, yTicks, xScale, yScale,
-      (exponent) => formatPowerOfTen(exponent, toLogX(xFloor), ""),
-      (exponent) => formatPowerOfTen(exponent + 2, toLogY(chance / 2) + 2, "%"));
+      (exponent) => formatPowerOfTen(exponent, xZeroAt, ""),
+      (exponent) => formatPowerOfTen(exponent + 2, yZeroAt, "%"));
     axisTitle(svg, "information loss: typical record shift, in standard deviations (log)",
       (frame.left + frame.right) / 2, frame.bottom + 34);
     axisTitle(svg, "re-linked records (log)", 12, (frame.top + frame.bottom) / 2, true);
@@ -551,8 +556,8 @@
     return [floor, ...clear];
   }
 
-  function formatPowerOfTen(exponent, floor, unit) {
-    if (exponent === floor) {
+  function formatPowerOfTen(exponent, zeroAt, unit) {
+    if (zeroAt !== null && exponent === zeroAt) {
       return "0" + unit;
     }
     const rounded = Math.round(exponent);

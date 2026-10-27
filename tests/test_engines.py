@@ -530,3 +530,11 @@ def test_duplicate_pandas_column_names_are_refused():
 
     with pytest.raises(ValueError, match="duplicate column names: a"):
         Table.from_native(frame)
+
+
+@pytest.mark.parametrize("name", ["a.ge", 'a"ge'])
+def test_duckdb_columns_with_dots_or_quotes_are_refused_clearly(name):
+    relation = duckdb.connect().from_df(pd.DataFrame({name: [1, 2]}))
+
+    with pytest.raises(ValueError, match="dots or double quotes"):
+        Table.from_native(relation)
