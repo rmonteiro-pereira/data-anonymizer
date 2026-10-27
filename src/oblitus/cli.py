@@ -18,14 +18,15 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from oblitus.anonymizer import AnonymizationResult, Anonymizer
-from oblitus.entropy_sources import sources_by_name
 from oblitus.differential_privacy import BudgetReport, PrivacyBudget, Statistic
-from oblitus.errors import AnonymizerError, PlanError
+from oblitus.entropy_sources import sources_by_name
+from oblitus.errors import AnonymizerError, PlanError, SchemaError
 from oblitus.key_generation import GeneratedKey, SourceStatus, generate_key
 from oblitus.noise_explorer import explore_noise, save_page
 from oblitus.noise_explorer.sweep import DEFAULT_MAX_ROWS
 from oblitus.plan import AnonymizationPlan, Fidelity, Protection
-from oblitus.synthesis import DatasetSchema, infer_schema
+from oblitus.synthesis import RelationalSchema, infer_schema, load_schema
+from oblitus.synthesis.question_text import describe_task
 from oblitus.synthesis.rare_values import min_records_for
 from oblitus.table_files import read_table, write_table
 from oblitus.table_manifest import TableManifest
@@ -136,7 +137,9 @@ def _build_parser() -> argparse.ArgumentParser:
     schema_parser.set_defaults(handler=_infer_schema)
 
     synth_parser = commands.add_parser("synthesize", help="generate a synthetic table")
-    synth_parser.add_argument("-o", "--output", type=Path, required=True)
+    synth_parser.add_argument(
+        "-o", "--output", type=Path, required=True, help="file; a folder for related tables"
+    )
     synth_parser.add_argument("--rows", type=int, default=None)
     synth_parser.add_argument("--schema", type=Path)
     synth_parser.add_argument("--reference", type=Path)
@@ -417,7 +420,10 @@ def _infer_schema(anonymizer: Anonymizer, arguments: argparse.Namespace) -> None
 
 
 def _synthesize(anonymizer: Anonymizer, arguments: argparse.Namespace) -> None:
-    schema = None if arguments.schema is None else DatasetSchema.load(arguments.schema)
+    schema = None if arguments.schema is None else load_schema(arguments.schema)
+    if isinstance(schema, RelationalSchema):
+        _synthesize_tables(anonymizer, schema, arguments)
+        return
     reference = None
     if arguments.reference is not None:
         reference = read_table(arguments.reference).to_pandas()
@@ -467,6 +473,19 @@ def _budget_line(report: BudgetReport) -> str:
     )
 
 
+def _synthesize_tables(
+    anonymizer: Anonymizer, schema: RelationalSchema, arguments: argparse.Namespace
+) -> None:
+    if arguments.rows is None or arguments.reference is not None:
+        raise SchemaError("related tables need --rows (the root table's size) and no --reference")
+    generated = anonymizer.synthesize_tables(schema, arguments.rows)
+    folder: Path = arguments.output
+    folder.mkdir(parents=True, exist_ok=True)
+    for name, frame in generated.tables.items():
+        write_table(frame, folder / f"{name}.csv")
+    print(f"wrote {len(generated.tables)} tables to {folder}")
+
+
 def _explore_noise(anonymizer: Anonymizer, arguments: argparse.Namespace) -> None:
     frame = read_table(arguments.input)
     try:
@@ -484,55 +503,21 @@ def _explore_noise(anonymizer: Anonymizer, arguments: argparse.Namespace) -> Non
 
 
 def _challenge(anonymizer: Anonymizer, arguments: argparse.Namespace) -> None:
-    challenge = anonymizer.challenge(DatasetSchema.load(arguments.schema), arguments.rows)
+    schema = load_schema(arguments.schema)
+    challenge = anonymizer.challenge(schema, arguments.rows)
     folder: Path = arguments.output
     folder.mkdir(parents=True, exist_ok=True)
     write_table(challenge.train, folder / "train.csv")
     write_table(challenge.test_features, folder / "test.csv")
+    for name, related in challenge.related_tables.items():
+        write_table(related, folder / f"{name}.csv")
     private = folder / "answers"
     private.mkdir(exist_ok=True)
     write_table(challenge.test_answers, private / "test_answers.csv")
     key_path = private / "answer_key.json"
     key_path.write_text(json.dumps(challenge.answer_key, indent=2, default=str) + "\n")
-    (folder / "QUESTION.md").write_text(_question_page(challenge), encoding="utf-8")
+    (folder / "QUESTION.md").write_text(describe_task(schema, challenge), encoding="utf-8")
     print(f"wrote the challenge to {folder}; keep {private} away from participants")
-
-
-def _question_page(challenge) -> str:
-    key = challenge.answer_key
-    columns = "\n".join(f"- `{name}`" for name in challenge.train.columns)
-    return (
-        f"# {key['title']}\n\n{key['prompt']}\n\n"
-        f"Task: {key['task']}. Target column: `{key['target']}`.\n\n"
-        f"Files: `train.csv` ({key['rows']['train']} rows, with the target) and "
-        f"`test.csv` ({key['rows']['test']} rows, without it).\n\n"
-        f"{_treatment_note(key)}"
-        f"{_panel_note(key)}"
-        f"## Columns\n\n{columns}\n"
-    )
-
-
-def _treatment_note(key: dict) -> str:
-    causal = key.get("causal")
-    if causal is None:
-        return ""
-    values = causal["treatment_values"]
-    return (
-        f"Treatment column: `{causal['treatment']}` (control {values['control']!r}, "
-        f"treated {values['treated']!r}).\n\n"
-    )
-
-
-def _panel_note(key: dict) -> str:
-    series = key.get("time_series")
-    if series is None:
-        return ""
-    note = f"Each row is one `{series['entity']}` in one period, dated by `{series['time']}`."
-    first_test = series["first_test_period"]
-    if first_test is not None:
-        periods = series["periods_per_split"]["test"]
-        note += f" The test rows are the last {periods} periods, from {first_test['date']}."
-    return note + "\n\n"
 
 
 def _list_techniques(anonymizer: Anonymizer, arguments: argparse.Namespace) -> None:

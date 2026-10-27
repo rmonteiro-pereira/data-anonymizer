@@ -15,7 +15,7 @@ from oblitus.errors import (
 from oblitus.evaluation import PrivacyReport, UtilityReport
 from oblitus.plan import AnonymizationPlan, ColumnAction, Fidelity, Protection
 from oblitus.protection import ProtectionAssessment, ProtectionLevel
-from oblitus.synthesis import ColumnSchema, DatasetSchema, infer_schema
+from oblitus.synthesis import ColumnSchema, DatasetSchema, RelationalSchema, infer_schema
 from oblitus.taxonomy import ColumnKind, DataCategory, Sensitivity
 from oblitus.techniques import (
     BUILTIN_TECHNIQUES,
@@ -49,6 +49,7 @@ __all__ = [
     "Protection",
     "ProtectionAssessment",
     "ProtectionLevel",
+    "RelationalSchema",
     "SchemaError",
     "Sensitivity",
     "SqliteVault",

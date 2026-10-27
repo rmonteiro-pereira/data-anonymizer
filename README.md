@@ -38,7 +38,7 @@ and how far each record moved](https://raw.githubusercontent.com/rmonteiro-perei
 | Privacy and risk | k-anonymity, l-diversity, k-anonymity enforcement by local suppression, whole-record uniqueness, distance-based record linkage, interval disclosure |
 | Utility | Change in mean and standard deviation, Kolmogorov–Smirnov, Wasserstein / IQR, total variation distance, correlation change, per-record shift in standard deviations |
 | Noise explorer | A self-contained interactive HTML page per column. For every technique and strength it shows before/after distributions, original against released per record with an exposure band, and a risk-utility map. It works offline and follows light and dark themes |
-| Synthesis | Distributions (normal, lognormal, gamma, exponential, Poisson, uniform, quantile curves) truncated to bounds. Spearman correlations imposed through a Gaussian copula. Conditional overrides that keep correlations. Formula columns using a safe expression language with date and random functions. Outlier planting, exact statistics, row constraints, unique keys, null shares and templates. Learned Gaussian copula from a reference table |
+| Synthesis | Distributions (normal, lognormal, gamma, exponential, Poisson, uniform, quantile curves) truncated to bounds. Spearman correlations imposed through a Gaussian copula. Conditional overrides that keep correlations. Formula columns using a safe expression language with date and random functions. Outlier planting, exact statistics, row constraints, unique keys, null shares (random, or following the data: MAR and MNAR) and templates. Related tables with foreign keys, class imbalance and difficulty levels for challenges. Learned Gaussian copula from a reference table |
 | Challenges | A schema `question` produces train and test files and a private answer key. The key lists the true drivers, the correlated-but-not-causal columns and the distractors, plus the best score any model can reach (RMSE/R², or accuracy/AUC/log loss). Columns that leak the target are flagged. With a `treatment`, the key also holds the true average, treated-only and per-group effects, the bias of the naive comparison, the confounders, mediators, colliders and instruments, and a valid adjustment set. Optional test-set drift (covariate or concept) and label noise on the train or test labels, both reported in the key. Panels of entities over periods (entity-level and period-level columns, `lag`, AR series, seasonality, regimes) with a time split that holds out the last periods |
 | Interfaces | Python API (`Anonymizer`), editable JSON plans and schemas, the `oblitus` CLI, CSV and Parquet, custom techniques |
 
@@ -46,10 +46,6 @@ and how far each record moved](https://raw.githubusercontent.com/rmonteiro-perei
 
 Planned, not yet implemented:
 
-- **Richer data-science challenges.**
-  - Class imbalance and missing-not-at-random patterns.
-  - Multi-table relational data with foreign keys.
-  - Difficulty knobs and question text generated from the schema.
 - **Detection.**
   - An optional named-entity extra for names and addresses inside text: GLiNER with
     `urchade/gliner_multi_pii-v1` or a Portuguese PII model, or Presidio.
@@ -202,10 +198,10 @@ locale for fake values, such as `pt_BR`; default `en_US`). Tables can be `.csv` 
 | `oblitus reveal INPUT --plan PLAN -o OUTPUT [--row-key COLUMN] [--vault PATH]` | Decrypts the columns the plan encrypted, detokenizes those it tokenized (with `--vault`), and leaves one-way columns as they are |
 | `oblitus explore-noise INPUT --column NAME -o PAGE.html [--band SD] [--max-rows N]` | Writes the interactive noise explorer for one numeric column. Columns longer than `N` values (default 200,000) are explored on a random sample |
 | `oblitus infer-schema INPUT [--fidelity F] [-o SCHEMA]` | Learns a generation schema from a table |
-| `oblitus synthesize -o OUTPUT [--rows N] [--schema SCHEMA] [--reference INPUT] [--fidelity F]` | Generates a synthetic table |
+| `oblitus synthesize -o OUTPUT [--rows N] [--schema SCHEMA] [--reference INPUT] [--fidelity F]` | Generates a synthetic table. A schema with related tables writes one CSV per table into the folder `OUTPUT` |
 | `oblitus dp-synthesize INPUT --domains DOMAINS.json -o OUTPUT (--epsilon E [--delta D] \| --rho R) [--rows N]` | Generates a differentially private synthetic copy with MST. The JSON file declares each column's public domain. Needs `--delta` or `--rho` (Gaussian noise). Prints the budget spent |
 | `oblitus dp-aggregate INPUT --spec SPEC.json -o OUTPUT (--epsilon E [--delta D] \| --rho R) [--confidence C] [--accuracy-output FILE]` | Releases noisy counts, sums and means per group with OpenDP (`oblitus[opendp]`). The JSON spec declares each group's values and each sum's bounds. Also writes the interval half-width of every value |
-| `oblitus challenge --schema SCHEMA [--rows N] -o FOLDER` | Generates a data-science challenge: `train.csv`, `test.csv`, `QUESTION.md`, and `answers/` with the answer key |
+| `oblitus challenge --schema SCHEMA [--rows N] -o FOLDER` | Generates a data-science challenge: `train.csv`, `test.csv`, `QUESTION.md` (a task description written from the schema), one CSV per child table for related-table schemas, and `answers/` with the answer key |
 | `oblitus keygen [--source NAME ...] [--format hex\|base64]` | Prints a key for `OBLITUS_SECRET_KEY` on stdout and the per-source report on stderr. `NAME` is `hardware`, `microphone`, `camera`, `timing` or `beacon`; `os` is always mixed in |
 | `oblitus techniques` | Lists every technique, its parameters and whether it is reversible |
 

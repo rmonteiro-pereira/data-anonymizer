@@ -68,21 +68,39 @@ def generate_with_replay(
     rng: np.random.Generator,
     surrogates: SurrogateFactory,
     switch: SchemaSwitch | None = None,
+    context: pd.DataFrame | None = None,
 ) -> ReplayableTable:
     """Generate the table of `generate_from_schema` and keep the random numbers behind it.
 
     A panel can change schema partway through with `switch`, which keeps each entity's series
-    going across the change.
+    going across the change. `context` holds one row per generated row with the columns the
+    schema lists as `context_columns`, which its formulas may read; a related table gets its
+    parent's values this way. A context needs a schema without a panel or constraints, since
+    both change which rows are kept.
     """
+    _check_context(schema, rows, context)
     if schema.panel is not None:
         return generate_panel(schema, rows, rng=rng, surrogates=surrogates, switch=switch)
     if switch is not None:
         raise SchemaError("a schema switch needs a panel: only a panel has periods to switch at")
 
     def draw_table(count: int) -> pd.DataFrame:
-        return _draw_table(schema, count, rng, surrogates, learned=None)
+        return _draw_table(schema, count, rng, surrogates, learned=None, context=context)
 
     return _build_table(schema, rows, draw_table, rng)
+
+
+def _check_context(schema: DatasetSchema, rows: int, context: pd.DataFrame | None) -> None:
+    supplied = set() if context is None else set(context.columns)
+    missing = set(schema.context_columns) - supplied
+    if missing:
+        raise SchemaError(f"the context lacks the columns {', '.join(sorted(missing))}")
+    if context is None:
+        return
+    if len(context) != rows:
+        raise SchemaError(f"the context has {len(context)} rows but {rows} rows are generated")
+    if schema.panel is not None or schema.constraints:
+        raise SchemaError("a table built from a context cannot have a panel or constraints")
 
 
 def generate_from_reference(
@@ -149,10 +167,13 @@ def _draw_table(
     surrogates: SurrogateFactory,
     *,
     learned: pd.DataFrame | None,
+    context: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     uniforms = draw_uniforms(schema.columns, schema.correlations, rows, rng)
     ledger = DrawLedger.recording(rows, rng, uniforms)
     frame = pd.DataFrame(index=range(rows))
+    if context is not None:
+        frame = context.reset_index(drop=True).copy()
     for name in schema.generation_order():
         column = schema.column(name)
         values = build_column(column, frame, ledger.column(name), rng, surrogates, learned=learned)

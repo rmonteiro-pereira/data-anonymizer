@@ -11,6 +11,7 @@ from pydantic import ValidationError
 
 from oblitus import Anonymizer, DatasetSchema
 from oblitus.errors import SchemaError
+from oblitus.synthesis import load_schema
 from oblitus.synthesis.expressions import ExpressionError, evaluate, parse
 
 EXAMPLE = Path(__file__).parent.parent / "examples" / "store_sales_panel.json"
@@ -540,11 +541,12 @@ def _formula(name: str, formula: str) -> dict[str, Any]:
     "example", sorted(EXAMPLE.parent.glob("*.json")), ids=lambda path: path.name
 )
 def test_every_example_schema_with_a_question_builds_a_challenge(example):
-    schema = DatasetSchema.load(example)
+    schema = load_schema(example)
     if schema.question is None:
         pytest.skip("this example has no question")
 
-    challenge = Anonymizer(seed=1).challenge(schema, None if schema.panel else 4000)
+    has_panel = getattr(schema, "panel", None) is not None
+    challenge = Anonymizer(seed=1).challenge(schema, None if has_panel else 4000)
 
     assert len(challenge.train) > 0
     assert challenge.answer_key["target"] == schema.question.target
