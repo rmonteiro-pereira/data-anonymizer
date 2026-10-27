@@ -13,8 +13,8 @@ group between two cuts reads `20 to under 40`, and the outermost groups are open
 cut bounds on this column reads `any value`, unless all the table's values are equal. Categories are
 described by the set of their values, or by their closest common ancestor when the plan gives a
 hierarchy. A category held by fewer than k rows in the whole table is never named in a set: it
-reads `other`, so the set does not show that its few holders are in the table. Missing cells take the description of their group, so that every row of a group
-holds the same value.
+reads `other`, so the set does not show that its few holders are in the table. Missing cells
+take the description of their group, so that every row of a group holds the same value.
 """
 
 import math
