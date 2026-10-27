@@ -8,11 +8,12 @@ anonymous: whoever holds the key can confirm a guess about a person.
 import base64
 import hashlib
 import os
+from collections import Counter
 from collections.abc import Callable
+from typing import Any
 
 import bcrypt
 import narwhals as nw
-import pandas as pd
 from argon2.low_level import Type, hash_secret
 
 from data_anonymizer.table import Table
@@ -20,10 +21,10 @@ from data_anonymizer.taxonomy import DataCategory
 from data_anonymizer.techniques.context import TechniqueContext
 from data_anonymizer.techniques.ff1 import FF1
 from data_anonymizer.techniques.value_mapping import (
-    canonical_text,
+    canonical_value,
     lookup_distinct,
-    map_distinct,
-    map_present,
+    lookup_per_row,
+    present_counts,
 )
 
 _DIGITS = "0123456789"
@@ -38,6 +39,9 @@ _BCRYPT_BASE64 = "./ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz01234567
 
 # How many reseeds a surrogate may try before accepting a fake value already in use.
 _COLLISION_ATTEMPTS = 20
+
+# The most fake values built for random surrogates; rows pick from this pool.
+_MAX_SURROGATE_POOL = 100_000
 
 
 def keyed_hash(
@@ -67,7 +71,8 @@ def keyed_hash(
 
 
 def argon2_hash(
-    values: pd.Series,
+    table: Table,
+    column: str,
     context: TechniqueContext,
     *,
     time_cost: int = 2,
@@ -75,7 +80,7 @@ def argon2_hash(
     parallelism: int = 1,
     hash_length: int = 32,
     deterministic: bool = True,
-) -> pd.Series:
+) -> nw.Expr:
     """Replace each value with an Argon2id hash in the standard `$argon2id$...` format.
 
     Argon2id is deliberately slow and memory-hungry, so every guess at the value
@@ -83,8 +88,9 @@ def argon2_hash(
     The defaults are the OWASP minimum (19 MiB, two passes): 10 to 20 ms per
     distinct value. With `deterministic`, all values share one salt derived from the
     secret key, so equal values get equal hashes and joins survive. Without it, each
-    distinct value gets a random salt and hashes cannot be joined, though anyone can
-    still test a guessed value against a published hash.
+    cell gets its own random salt and hashes cannot be joined, though anyone can
+    still test a guessed value against a published hash. That mode needs one Python
+    call per row, so it collects the column's values.
     """
 
     def digest(text: str) -> str:
@@ -99,19 +105,20 @@ def argon2_hash(
         )
         return encoded.decode("ascii")
 
-    return map_distinct(values, digest)
+    return _hash_lookup(table, column, digest, deterministic)
 
 
 def bcrypt_hash(
-    values: pd.Series,
+    table: Table,
+    column: str,
     context: TechniqueContext,
     *,
     rounds: int = 10,
     deterministic: bool = True,
-) -> pd.Series:
+) -> nw.Expr:
     """Replace each value with a bcrypt hash in the standard `$2b$...` format.
 
-    Each extra round doubles the cost; 10 rounds take 40 to 60 ms per distinct value.
+    Each extra round doubles the cost; 10 rounds take 40 to 60 ms per hash.
     `deterministic` works as in `argon2_hash`. bcrypt reads only 72 bytes, so longer
     values are first reduced to their SHA-256 hex digest.
     """
@@ -128,7 +135,17 @@ def bcrypt_hash(
             salt = bcrypt.gensalt(rounds)
         return bcrypt.hashpw(secret, salt).decode("ascii")
 
-    return map_distinct(values, digest)
+    return _hash_lookup(table, column, digest, deterministic)
+
+
+def _hash_lookup(
+    table: Table, column: str, digest: Callable[[str], str], deterministic: bool
+) -> nw.Expr:
+    # Equal values share a hash only when the salt is shared, so only then is one
+    # call per distinct value enough.
+    if deterministic:
+        return lookup_distinct(table, column, digest)
+    return lookup_per_row(table, column, digest)
 
 
 def _salt(context: TechniqueContext, deterministic: bool) -> bytes:
@@ -146,7 +163,7 @@ def _bcrypt_salt(raw_salt: bytes, rounds: int) -> bytes:
     return f"$2b${rounds:02d}${translated}".encode("ascii")
 
 
-def scramble_characters(values: pd.Series, context: TechniqueContext) -> pd.Series:
+def scramble_characters(table: Table, column: str, context: TechniqueContext) -> nw.Expr:
     """Replace each digit with a digit and each letter with a letter, keeping the format.
 
     `AB-1234567` might become `QZ-8071533`. Digits and letters are each encrypted
@@ -164,7 +181,7 @@ def scramble_characters(values: pd.Series, context: TechniqueContext) -> pd.Seri
         _encrypt_class(characters, _is_ascii_letter, _LOWERCASE, letter_cipher, context, text)
         return "".join(characters)
 
-    return map_distinct(values, scramble)
+    return lookup_distinct(table, column, scramble)
 
 
 def _is_ascii_letter(character: str) -> bool:
@@ -196,43 +213,69 @@ def _encrypt_class(
 
 
 def surrogate(
-    values: pd.Series,
+    table: Table,
+    column: str,
     context: TechniqueContext,
     *,
     category: str,
     unique: bool = True,
     consistent: bool = True,
-) -> pd.Series:
+) -> nw.Expr:
     """Replace each value with a realistic fake of the given category, such as an email.
 
     With `consistent`, the fake is derived from the value and the secret key, so the
     same person gets the same fake everywhere: a pseudonym. Without it, every cell
-    gets an unrelated random fake and nothing links back to the person. With
-    `unique` and `consistent`, two different real values never share a fake value,
-    which keeps distinct counts exact.
+    gets an unrelated random fake and nothing links back to the person; the fakes
+    are drawn from a pool of at most 100,000, as large as the column has present
+    rows. With `unique` and `consistent`, two different real values never share a
+    fake value, which keeps distinct counts exact.
     """
     data_category = DataCategory(category)
-    if not consistent:
-        return map_present(
-            values, lambda original: _random_surrogate(context, data_category, original)
-        )
+    if consistent:
+        return _consistent_surrogate(table, column, context, data_category, unique)
+    return _random_surrogate(table, column, context, data_category)
 
-    present = canonical_text(values)
-    mapping: dict[str, str] = {}
+
+def _consistent_surrogate(
+    table: Table,
+    column: str,
+    context: TechniqueContext,
+    category: DataCategory,
+    unique: bool,
+) -> nw.Expr:
+    # Values are visited in text order so a collision resolves the same way on every engine.
+    by_text = {canonical_value(value): value for value in table.distinct_values(column)}
+    mapping: dict[Any, str] = {}
     used: set[str] = set()
-    for original in present.unique():
-        fake = _surrogate_for(context, data_category, original, used if unique else None)
-        mapping[original] = fake
+    for original in sorted(by_text):
+        fake = _surrogate_for(context, category, original, used if unique else None)
+        mapping[by_text[original]] = fake
         used.add(fake)
-
-    result = values.astype(object).copy()
-    result[values.notna()] = present.map(mapping)
-    return result
+    return table.lookup(column, mapping, nw.String)
 
 
-def _random_surrogate(context: TechniqueContext, category: DataCategory, original: str) -> str:
-    seed = int(context.rng.integers(0, 2**63 - 1))
-    return context.surrogates.value_for(category, seed, like=original)
+def _random_surrogate(
+    table: Table, column: str, context: TechniqueContext, category: DataCategory
+) -> nw.Expr:
+    value = nw.col(column)
+    digits_only = value.cast(nw.String).str.contains(r"^[0-9]+$").all()
+    counts = table.statistics(present=value.count(), digits_only=digits_only)
+    pool_size = min(counts["present"], _MAX_SURROGATE_POOL)
+    if pool_size == 0:
+        return value.cast(nw.String)
+
+    # A fake keeps the punctuation style of the value it replaces, judged on the whole column.
+    style_example = "0" if counts["digits_only"] else None
+    generator = context.generator(column, "surrogate")
+    seeds = generator.integers(0, 2**63 - 1, size=pool_size)
+    pool = {
+        index: context.surrogates.value_for(category, int(seed), like=style_example)
+        for index, seed in enumerate(seeds)
+    }
+    (uniform,) = table.uniforms(context.stream_key(column, "surrogate"))
+    pick = table.add((uniform * pool_size).floor().cast(nw.Int64))
+    fakes = table.lookup(pick, pool, nw.String)
+    return nw.when(~value.is_null()).then(fakes)
 
 
 def _surrogate_for(
@@ -253,13 +296,14 @@ def _surrogate_for(
 
 
 def scramble_categories(
-    values: pd.Series,
+    table: Table,
+    column: str,
     context: TechniqueContext,
     *,
     prefix: str = "C",
     min_count: int = 1,
     keyed: bool = False,
-) -> pd.Series:
+) -> nw.Expr:
     """Replace each category with an opaque code such as `C-03`, the same code for the same label.
 
     Codes are handed out in a random order, so they reveal neither the alphabetical
@@ -269,16 +313,23 @@ def scramble_categories(
     secret key instead, so the same label gets the same code in every release: a
     pseudonym that the key holder can link.
     """
-    present = canonical_text(values)
-    counts = present.value_counts()
-    common = [label for label in counts.index if counts[label] >= min_count]
+    counts_by_label: Counter[str] = Counter()
+    raw_by_label: dict[str, list[Any]] = {}
+    for value, count in present_counts(table, column).items():
+        label = canonical_value(value)
+        counts_by_label[label] += count
+        raw_by_label.setdefault(label, []).append(value)
+
+    common = sorted(label for label, count in counts_by_label.items() if count >= min_count)
     if keyed:
         ordered = sorted(common, key=lambda label: context.keyed_digest(label))
     else:
-        ordered = [common[index] for index in context.rng.permutation(len(common))]
+        permutation = context.generator(column, "scramble_categories").permutation(len(common))
+        ordered = [common[index] for index in permutation]
     width = max(2, len(str(len(ordered))))
     codes = {label: f"{prefix}-{number:0{width}d}" for number, label in enumerate(ordered, 1)}
     other = f"{prefix}-OTHER"
-    result = values.astype(object).copy()
-    result[values.notna()] = present.map(lambda label: codes.get(label, other))
-    return result
+    mapping = {
+        value: codes.get(label, other) for label, values in raw_by_label.items() for value in values
+    }
+    return table.lookup(column, mapping, nw.String)

@@ -34,7 +34,7 @@ DuckDB 2.0 also breaks Narwhals joins; DuckDB 1.4 works.
    every backend. Eager in-memory work runs on Polars.
 3. **Per-distinct-value techniques compute a mapping table and join it back.** The
    distinct values are collected to Python and mapped there; the mapping goes back to
-   the engine as a table and is joined on the value. `map_distinct` already works this
+   the engine as a table and is joined on the value. `lookup_distinct` works this
    way.
 4. **Randomness is keyed per row, not drawn in row order.** Every random number comes
    from HMAC-SHA-256 of the secret key, the column name and a row key, turned into a

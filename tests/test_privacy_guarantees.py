@@ -105,8 +105,10 @@ def test_short_secret_keys_are_refused(tmp_path, monkeypatch, capsys):
     assert "at least 16 bytes" in capsys.readouterr().err
 
 
-def test_argon2_salt_does_not_depend_on_the_value(context):
-    hashes = argon2_hash(pd.Series(["111.444.777-35", "529.982.247-25"]), context, memory_cost=1024)
+def test_argon2_salt_does_not_depend_on_the_value(run, context):
+    hashes = run(
+        argon2_hash, pd.Series(["111.444.777-35", "529.982.247-25"]), context, memory_cost=1024
+    )
     salts = {encoded.split("$")[4] for encoded in hashes}
     guess_salt = context.keyed_digest("529.982.247-25")[:16]
 
@@ -124,10 +126,10 @@ def test_argon2_salt_does_not_depend_on_the_value(context):
     assert guess_salt not in {bytes(salt, "ascii") for salt in salts}
 
 
-def test_scramble_characters_keeps_distinct_ids_distinct(context):
+def test_scramble_characters_keeps_distinct_ids_distinct(run, context):
     ids = pd.Series([f"{number:06d}" for number in range(20_000)])
 
-    scrambled = scramble_characters(ids, context)
+    scrambled = run(scramble_characters, ids, context)
 
     assert scrambled.nunique() == 20_000
     assert scrambled.str.fullmatch(r"\d{6}").all()

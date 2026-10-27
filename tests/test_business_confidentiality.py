@@ -140,21 +140,21 @@ def test_growth_follows_each_store_over_time(mall):
     assert released["faturamento"].abs().median() < 1
 
 
-def test_scramble_categories_hides_order_and_merges_small_segments(context):
+def test_scramble_categories_hides_order_and_merges_small_segments(run, context):
     labels = pd.Series(["Moda"] * 10 + ["Alimentação"] * 8 + ["Casa"] * 6 + ["Joalheria"])
 
-    codes = scramble_categories(labels, context, prefix="SEG", min_count=3)
+    codes = run(scramble_categories, labels, context, prefix="SEG", min_count=3)
 
     assert set(codes) == {"SEG-01", "SEG-02", "SEG-03", "SEG-OTHER"}
     assert codes.iloc[-1] == "SEG-OTHER"
     assert codes.groupby(labels).nunique().max() == 1
 
 
-def test_keyed_scramble_gives_the_same_codes_in_every_release(context):
+def test_keyed_scramble_gives_the_same_codes_in_every_release(run, context):
     labels = pd.Series(["Moda", "Casa", "Lazer", "Moda"])
 
-    first = scramble_categories(labels, context, keyed=True)
-    second = scramble_categories(labels.iloc[::-1].reset_index(drop=True), context, keyed=True)
+    first = run(scramble_categories, labels, context, keyed=True)
+    second = run(scramble_categories, labels.iloc[::-1].reset_index(drop=True), context, keyed=True)
 
     assert dict(zip(labels, first, strict=True)) == dict(
         zip(labels.iloc[::-1], second, strict=True)

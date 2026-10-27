@@ -1,51 +1,25 @@
-"""Apply a text transformation to the present values of a column, leaving gaps as gaps."""
+"""Apply a text transformation in Python to the values of a table column.
 
+Python code cannot run inside a SQL engine, so the values are collected, transformed
+and joined back as a lookup. Gaps stay gaps.
+"""
+
+from collections import Counter
 from collections.abc import Callable
+from typing import Any
 
 import narwhals as nw
-import pandas as pd
 
 from data_anonymizer.table import Table
 
 TextTransform = Callable[[str], str]
 
 
-def canonical_text(values: pd.Series) -> pd.Series:
-    """Return the present values as text, writing whole-number floats without `.0`.
-
-    An integer ID column turns into floats as soon as it has a gap, so `123` would
-    become `123.0` and get a different pseudonym than in a table without gaps.
-    """
-    present = values.dropna()
-    if pd.api.types.is_float_dtype(present) and (present % 1 == 0).all():
-        return present.astype("int64").astype(str)
-    return present.astype(str)
-
-
-def map_present(values: pd.Series, transform: TextTransform) -> pd.Series:
-    """Transform every present cell on its own."""
-    result = values.astype(object).copy()
-    result[values.notna()] = canonical_text(values).map(transform)
-    return result
-
-
-def map_distinct(values: pd.Series, transform: TextTransform) -> pd.Series:
-    """Transform each distinct value once and reuse the result for its repeats.
-
-    Use it for deterministic transformations; slow ones such as Argon2 then cost
-    one call per distinct value instead of one per row.
-    """
-    present = canonical_text(values)
-    mapping = {original: transform(original) for original in present.unique()}
-    result = values.astype(object).copy()
-    result[values.notna()] = present.map(mapping)
-    return result
-
-
 def canonical_value(value: object) -> str:
     """Return one value as text, writing whole-number floats without `.0`.
 
-    The table version of `canonical_text`: `123.0` and `123` get the same pseudonym.
+    An integer ID column turns into floats as soon as it has a gap, so `123.0` and
+    `123` must get the same pseudonym.
     """
     if isinstance(value, float) and value.is_integer():
         return str(int(value))
@@ -60,3 +34,31 @@ def lookup_distinct(table: Table, column: str, transform: TextTransform) -> nw.E
     """
     mapping = {value: transform(canonical_value(value)) for value in table.distinct_values(column)}
     return table.lookup(column, mapping, nw.String)
+
+
+def lookup_per_row(table: Table, column: str, transform: TextTransform) -> nw.Expr:
+    """Transform every present value on its own, so equal values can get different results.
+
+    For randomized transformations such as a fresh salt or nonce per cell. The lookup is
+    keyed on the table's row key, which means it collects one value per row into Python.
+    Prefer `lookup_distinct` whenever the transformation is deterministic.
+    """
+    row_key = table.row_key
+    pairs = _collected(table.frame.select(nw.col(row_key), nw.col(column)).drop_nulls())
+    mapping = {
+        key: transform(canonical_value(value))
+        for key, value in zip(pairs.get_column(row_key), pairs.get_column(column), strict=True)
+    }
+    return table.lookup(row_key, mapping, nw.String)
+
+
+def present_counts(table: Table, column: str) -> Counter[Any]:
+    """How many rows hold each distinct present value of the column."""
+    grouped = table.frame.select(nw.col(column)).drop_nulls().group_by(column).agg(nw.len())
+    return Counter(dict(_collected(grouped).iter_rows()))
+
+
+def _collected(frame: nw.DataFrame[Any] | nw.LazyFrame[Any]) -> nw.DataFrame[Any]:
+    if isinstance(frame, nw.LazyFrame):
+        return frame.collect()
+    return frame

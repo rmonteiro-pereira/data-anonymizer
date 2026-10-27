@@ -8,13 +8,14 @@ pseudonymizes and decrypts. Revealed values come back as text.
 import base64
 import os
 
-import pandas as pd
+import narwhals as nw
 from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM, AESSIV
 
+from data_anonymizer.table import Table
 from data_anonymizer.techniques.context import TechniqueContext
 from data_anonymizer.techniques.ff1 import FF1
-from data_anonymizer.techniques.value_mapping import map_distinct, map_present
+from data_anonymizer.techniques.value_mapping import lookup_distinct, lookup_per_row
 
 _DETERMINISTIC_PREFIX = "siv:"
 _RANDOMIZED_PREFIX = "gcm:"
@@ -27,32 +28,33 @@ _ALPHABETS = {
 
 
 def encrypt(
-    values: pd.Series, context: TechniqueContext, *, deterministic: bool = True
-) -> pd.Series:
+    table: Table, column: str, context: TechniqueContext, *, deterministic: bool = True
+) -> nw.Expr:
     """Replace each value with an encrypted, authenticated token.
 
     Deterministic mode uses AES-SIV (RFC 5297): equal values give equal tokens, so
     joins and counts survive, at the cost of revealing which rows share a value.
     Randomized mode uses AES-256-GCM with a fresh random nonce per cell, so equal
-    values give different tokens and nothing can be linked without the key.
+    values give different tokens and nothing can be linked without the key. Randomized
+    mode needs one Python call per row, so it collects the column's values.
     """
     if deterministic:
         cipher = AESSIV(context.derived_key("aes-siv", 64))
-        return map_distinct(values, lambda text: _encrypt_deterministic(cipher, text))
+        return lookup_distinct(table, column, lambda text: _encrypt_deterministic(cipher, text))
     gcm = AESGCM(context.derived_key("aes-gcm", 32))
-    return map_present(values, lambda text: _encrypt_randomized(gcm, text))
+    return lookup_per_row(table, column, lambda text: _encrypt_randomized(gcm, text))
 
 
 def decrypt(
-    values: pd.Series, context: TechniqueContext, *, deterministic: bool = True
-) -> pd.Series:
+    table: Table, column: str, context: TechniqueContext, *, deterministic: bool = True
+) -> nw.Expr:
     """Reverse `encrypt`. Tokens made in either mode are recognised by their prefix.
 
     `deterministic` is accepted, and ignored, so a plan's parameters fit both directions.
     """
     siv = AESSIV(context.derived_key("aes-siv", 64))
     gcm = AESGCM(context.derived_key("aes-gcm", 32))
-    return map_distinct(values, lambda token: _decrypt_token(siv, gcm, token))
+    return lookup_distinct(table, column, lambda token: _decrypt_token(siv, gcm, token))
 
 
 def _encrypt_deterministic(cipher: AESSIV, text: str) -> str:
@@ -90,12 +92,13 @@ def _decode(text: str) -> bytes:
 
 
 def format_preserving_encrypt(
-    values: pd.Series,
+    table: Table,
+    column: str,
     context: TechniqueContext,
     *,
     alphabet: str = "digits",
     tweak: str = "",
-) -> pd.Series:
+) -> nw.Expr:
     """Encrypt with FF1 so the result keeps the original format and length.
 
     With `digits`, only digits change and every other character stays in place:
@@ -107,20 +110,25 @@ def format_preserving_encrypt(
     """
     cipher = _ff1(context, alphabet, tweak)
     characters = _ALPHABETS[alphabet]
-    return map_distinct(values, lambda text: _ff1_transform(cipher.encrypt, characters, text))
+    return lookup_distinct(
+        table, column, lambda text: _ff1_transform(cipher.encrypt, characters, text)
+    )
 
 
 def format_preserving_decrypt(
-    values: pd.Series,
+    table: Table,
+    column: str,
     context: TechniqueContext,
     *,
     alphabet: str = "digits",
     tweak: str = "",
-) -> pd.Series:
+) -> nw.Expr:
     """Reverse `format_preserving_encrypt`; use the same alphabet and tweak."""
     cipher = _ff1(context, alphabet, tweak)
     characters = _ALPHABETS[alphabet]
-    return map_distinct(values, lambda text: _ff1_transform(cipher.decrypt, characters, text))
+    return lookup_distinct(
+        table, column, lambda text: _ff1_transform(cipher.decrypt, characters, text)
+    )
 
 
 def _ff1(context: TechniqueContext, alphabet: str, tweak: str) -> FF1:

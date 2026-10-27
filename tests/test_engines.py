@@ -10,7 +10,21 @@ from data_anonymizer.techniques import BUILTIN_TECHNIQUES
 
 # Techniques that map each value on its own: masking, pseudonymization, encryption.
 MAPPING_TECHNIQUES = [
+    ("keep", "email", {}),
+    ("redact", "email", {}),
+    ("suppress", "email", {}),
+    ("partial_mask", "email", {"keep_last": 3}),
+    ("redact_entities", "email", {}),
     ("keyed_hash", "email", {}),
+    ("scramble_characters", "email", {}),
+    ("surrogate", "email", {"category": "email"}),
+    ("surrogate", "email", {"category": "email", "consistent": False}),
+    ("argon2_hash", "email", {"memory_cost": 1024, "time_cost": 1}),
+    ("bcrypt_hash", "email", {"rounds": 4}),
+    ("scramble_categories", "store", {"prefix": "S"}),
+    ("scramble_categories", "store", {"min_count": 14, "keyed": True}),
+    ("encrypt", "email", {}),
+    ("format_preserving_encrypt", "email", {"alphabet": "alphanumeric", "tweak": "t"}),
 ]
 
 # Techniques built from expressions, windows and keyed noise.
@@ -75,7 +89,7 @@ def test_every_engine_releases_the_same_values(context, name, column, params):
         if pd.api.types.is_numeric_dtype(reference):
             np.testing.assert_allclose(other, reference, rtol=1e-9, equal_nan=True)
         else:
-            assert other.tolist() == reference.tolist()
+            assert _gaps_as_none(other) == _gaps_as_none(reference)
 
 
 def test_the_table_comes_back_as_the_kind_it_was_given(context):
@@ -128,3 +142,74 @@ def test_reordered_values_keep_the_column_and_its_gaps(context, engine):
     assert released["amount"].isna().tolist() == frame["amount"].isna().tolist()
     assert sorted(released["amount"].dropna()) == sorted(frame["amount"].dropna())
     assert not released["amount"].equals(frame["amount"])
+
+
+@pytest.mark.parametrize("engine", list(Engine))
+@pytest.mark.parametrize(
+    ("technique", "params"),
+    [
+        ("encrypt", {"deterministic": False}),
+        ("encrypt", {"deterministic": True}),
+        ("format_preserving_encrypt", {"alphabet": "alphanumeric"}),
+    ],
+)
+def test_reversible_techniques_restore_the_original_on_every_engine(
+    context, engine, technique, params
+):
+    frame = _sample()
+    frame.loc[[2, 9], "email"] = None
+    table = Table.from_native(_native(frame, engine), row_key="id")
+
+    BUILTIN_TECHNIQUES[technique].apply(table, "email", context, params)
+    BUILTIN_TECHNIQUES[technique].reverse(table, "email", context, params)
+
+    released = _as_pandas(table.to_native(), engine).sort_values("id").reset_index(drop=True)
+    assert _gaps_as_none(released["email"]) == _gaps_as_none(frame["email"])
+
+
+@pytest.mark.parametrize("engine", list(Engine))
+@pytest.mark.parametrize(
+    ("technique", "params"),
+    [
+        ("encrypt", {"deterministic": False}),
+        ("argon2_hash", {"memory_cost": 1024, "time_cost": 1, "deterministic": False}),
+        ("bcrypt_hash", {"rounds": 4, "deterministic": False}),
+    ],
+)
+def test_randomized_techniques_give_equal_values_different_results(
+    context, engine, technique, params
+):
+    table = Table.from_native(_native(_sample(), engine), row_key="id")
+
+    BUILTIN_TECHNIQUES[technique].apply(table, "email", context, params)
+
+    released = _as_pandas(table.to_native(), engine)
+    assert released["email"].nunique() == len(released)
+
+
+@pytest.mark.parametrize("engine", list(Engine))
+def test_random_surrogates_keep_gaps_and_do_not_link_equal_values(context, engine):
+    frame = _sample()
+    frame.loc[[4, 20], "email"] = None
+    table = Table.from_native(_native(frame, engine), row_key="id")
+    params = {"category": "email", "consistent": False}
+
+    BUILTIN_TECHNIQUES["surrogate"].apply(table, "email", context, params)
+
+    released = _as_pandas(table.to_native(), engine).sort_values("id")
+    assert released["email"].isna().tolist() == frame["email"].isna().tolist()
+    present_rows = frame["email"].notna().sum()
+    assert released["email"].nunique() > present_rows / 2
+
+
+def _as_pandas(native, engine: Engine) -> pd.DataFrame:
+    if engine is Engine.DUCKDB:
+        return native.df()
+    if engine is Engine.POLARS:
+        return native.to_pandas()
+    return native
+
+
+def _gaps_as_none(column: pd.Series) -> list:
+    # Engines hand back missing text as None or NaN; both mean the same here.
+    return [None if pd.isna(item) else item for item in column]

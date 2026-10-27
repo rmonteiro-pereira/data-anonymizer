@@ -53,22 +53,22 @@ def test_ff1_matches_the_nist_sample_vectors(key, tweak, radix, plaintext, ciphe
 
 
 @pytest.mark.parametrize("deterministic", [True, False])
-def test_encrypt_round_trips_and_keeps_gaps(context, deterministic):
+def test_encrypt_round_trips_and_keeps_gaps(run, context, deterministic):
     values = pd.Series(["ana@example.com", None, "ana@example.com"])
 
-    tokens = encrypt(values, context, deterministic=deterministic)
+    tokens = run(encrypt, values, context, deterministic=deterministic)
 
     assert pd.isna(tokens.iloc[1])
     assert (tokens.iloc[0] == tokens.iloc[2]) is deterministic
-    assert decrypt(tokens, context).iloc[[0, 2]].tolist() == ["ana@example.com"] * 2
+    assert run(decrypt, tokens, context).iloc[[0, 2]].tolist() == ["ana@example.com"] * 2
 
 
-def test_tokens_do_not_decrypt_under_another_key(context):
-    tokens = encrypt(pd.Series(["secret"]), context)
+def test_tokens_do_not_decrypt_under_another_key(run, context):
+    tokens = run(encrypt, pd.Series(["secret"]), context)
     other = TechniqueContext(context.rng, b"another key", context.surrogates)
 
     with pytest.raises(ValueError, match="does not decrypt"):
-        decrypt(tokens, other)
+        run(decrypt, tokens, other)
 
 
 @pytest.mark.parametrize(
@@ -78,27 +78,29 @@ def test_tokens_do_not_decrypt_under_another_key(context):
         ("alphanumeric", "AB-12cd", r"[0-9A-Za-z]{2}-[0-9A-Za-z]{4}"),
     ],
 )
-def test_format_preserving_encryption_keeps_the_shape(context, alphabet, value, shape):
+def test_format_preserving_encryption_keeps_the_shape(run, context, alphabet, value, shape):
     values = pd.Series([value])
 
-    encrypted = format_preserving_encrypt(values, context, alphabet=alphabet, tweak="t1")
+    encrypted = run(format_preserving_encrypt, values, context, alphabet=alphabet, tweak="t1")
 
     assert encrypted.iloc[0] != value
     assert encrypted.str.fullmatch(shape).all()
-    restored = format_preserving_decrypt(encrypted, context, alphabet=alphabet, tweak="t1")
+    restored = run(format_preserving_decrypt, encrypted, context, alphabet=alphabet, tweak="t1")
     assert restored.iloc[0] == value
 
 
-def test_format_preserving_encryption_rejects_too_short_values(context):
+def test_format_preserving_encryption_rejects_too_short_values(run, context):
     with pytest.raises(ValueError, match="at least 6"):
-        format_preserving_encrypt(pd.Series(["1234"]), context)
+        run(format_preserving_encrypt, pd.Series(["1234"]), context)
 
 
-def test_argon2_hash_verifies_and_is_deterministic_by_default(context):
+def test_argon2_hash_verifies_and_is_deterministic_by_default(run, context):
     values = pd.Series(["529.982.247-25", "529.982.247-25"])
 
-    hashes = argon2_hash(values, context, memory_cost=1024, time_cost=1)
-    random_salted = argon2_hash(values.iloc[:1], context, memory_cost=1024, deterministic=False)
+    hashes = run(argon2_hash, values, context, memory_cost=1024, time_cost=1)
+    random_salted = run(
+        argon2_hash, values.iloc[:1], context, memory_cost=1024, deterministic=False
+    )
 
     assert hashes.iloc[0] == hashes.iloc[1]
     assert hashes.iloc[0].startswith("$argon2id$")
@@ -106,11 +108,11 @@ def test_argon2_hash_verifies_and_is_deterministic_by_default(context):
     assert random_salted.iloc[0] != hashes.iloc[0]
 
 
-def test_bcrypt_hash_verifies_and_handles_long_values(context):
+def test_bcrypt_hash_verifies_and_handles_long_values(run, context):
     long_value = "x" * 100
     values = pd.Series(["short", "short", long_value])
 
-    hashes = bcrypt_hash(values, context, rounds=4)
+    hashes = run(bcrypt_hash, values, context, rounds=4)
 
     assert hashes.iloc[0] == hashes.iloc[1]
     assert bcrypt.checkpw(b"short", hashes.iloc[0].encode())

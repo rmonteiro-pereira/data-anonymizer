@@ -1,44 +1,48 @@
 """Techniques that hide values, wholly or partly, without replacing them with look-alikes."""
 
-import pandas as pd
+import narwhals as nw
 
 from data_anonymizer.detection.patterns import ValueRecognizer, recognizers_for
+from data_anonymizer.table import Table
 from data_anonymizer.taxonomy import DataCategory
 from data_anonymizer.techniques.context import TechniqueContext
-from data_anonymizer.techniques.value_mapping import map_present
+from data_anonymizer.techniques.value_mapping import lookup_distinct
 
 
-def keep(values: pd.Series, context: TechniqueContext) -> pd.Series:
+def keep(table: Table, column: str, context: TechniqueContext) -> nw.Expr:
     """Leave the column unchanged; used to record a reviewed decision in a plan."""
-    return values.copy()
+    return nw.col(column)
 
 
 def redact(
-    values: pd.Series, context: TechniqueContext, *, replacement: str = "[REDACTED]"
-) -> pd.Series:
+    table: Table, column: str, context: TechniqueContext, *, replacement: str = "[REDACTED]"
+) -> nw.Expr:
     """Replace every present value with one constant string."""
-    return values.astype(object).where(values.isna(), replacement)
+    return nw.when(~nw.col(column).is_null()).then(nw.lit(replacement, dtype=nw.String))
 
 
-def suppress(values: pd.Series, context: TechniqueContext) -> pd.Series:
+def suppress(table: Table, column: str, context: TechniqueContext) -> nw.Expr:
     """Replace every value with a missing value."""
-    return pd.Series([None] * len(values), index=values.index, dtype=object, name=values.name)
+    return nw.lit(None, dtype=nw.String)
 
 
 def partial_mask(
-    values: pd.Series,
+    table: Table,
+    column: str,
     context: TechniqueContext,
     *,
     keep_first: int = 0,
     keep_last: int = 4,
     mask_char: str = "*",
-) -> pd.Series:
+) -> nw.Expr:
     """Hide the letters and digits of each value except the first and last few.
 
     Separators such as dots, dashes and spaces stay visible, so `529.982.247-25`
     becomes `***.***.**7-25` and keeps its familiar shape.
     """
-    return map_present(values, lambda text: _mask_text(text, keep_first, keep_last, mask_char))
+    return lookup_distinct(
+        table, column, lambda text: _mask_text(text, keep_first, keep_last, mask_char)
+    )
 
 
 def _mask_text(text: str, keep_first: int, keep_last: int, mask_char: str) -> str:
@@ -57,15 +61,16 @@ def _mask_text(text: str, keep_first: int, keep_last: int, mask_char: str) -> st
 
 
 def redact_entities(
-    values: pd.Series,
+    table: Table,
+    column: str,
     context: TechniqueContext,
     *,
     categories: list[str] | None = None,
-) -> pd.Series:
+) -> nw.Expr:
     """Replace personal data found inside free text with labels such as `<EMAIL>`."""
     wanted = None if categories is None else [DataCategory(item) for item in categories]
     recognizers = recognizers_for(wanted)
-    return map_present(values, lambda text: _redact_text(text, recognizers))
+    return lookup_distinct(table, column, lambda text: _redact_text(text, recognizers))
 
 
 def _redact_text(text: str, recognizers: tuple[ValueRecognizer, ...]) -> str:

@@ -31,27 +31,27 @@ from data_anonymizer.techniques.pseudonymization import (
 )
 
 
-def test_redact_keeps_missing_values_missing(context):
-    result = redact(pd.Series(["a", None, "b"]), context)
+def test_redact_keeps_missing_values_missing(run, context):
+    result = run(redact, pd.Series(["a", None, "b"]), context)
 
     assert result.iloc[0] == "[REDACTED]"
     assert pd.isna(result.iloc[1])
 
 
-def test_partial_mask_keeps_separators_and_the_last_digits(context):
-    result = partial_mask(pd.Series(["529.982.247-25"]), context, keep_last=3)
+def test_partial_mask_keeps_separators_and_the_last_digits(run, context):
+    result = run(partial_mask, pd.Series(["529.982.247-25"]), context, keep_last=3)
 
     assert result.iloc[0] == "***.***.**7-25"
 
 
-def test_partial_mask_hides_everything_when_too_short(context):
-    assert partial_mask(pd.Series(["1234"]), context, keep_last=4).iloc[0] == "****"
+def test_partial_mask_hides_everything_when_too_short(run, context):
+    assert run(partial_mask, pd.Series(["1234"]), context, keep_last=4).iloc[0] == "****"
 
 
-def test_redact_entities_labels_personal_data_inside_text(context):
+def test_redact_entities_labels_personal_data_inside_text(run, context):
     text = "Mail ana@example.com or call +55 21 98765-4321, CPF 529.982.247-25."
 
-    result = redact_entities(pd.Series([text]), context).iloc[0]
+    result = run(redact_entities, pd.Series([text]), context).iloc[0]
 
     assert result == "Mail <EMAIL> or call <PHONE>, CPF <CPF>."
 
@@ -69,18 +69,18 @@ def test_keyed_hash_is_consistent_and_depends_on_the_key(run, context):
     assert first.iloc[0] != other_key.iloc[0]
 
 
-def test_scramble_characters_keeps_the_format(context):
-    result = scramble_characters(pd.Series(["AB-1234", "AB-1234"]), context)
+def test_scramble_characters_keeps_the_format(run, context):
+    result = run(scramble_characters, pd.Series(["AB-1234", "AB-1234"]), context)
 
     assert result.iloc[0] == result.iloc[1]
     assert result.str.fullmatch(r"[A-Z]{2}-\d{4}").all()
     assert result.iloc[0] != "AB-1234"
 
 
-def test_surrogate_cpfs_are_valid_unique_and_keep_bare_digit_style(context):
+def test_surrogate_cpfs_are_valid_unique_and_keep_bare_digit_style(run, context):
     originals = pd.Series(["52998224725", "11144477735", "52998224725", None])
 
-    result = surrogate(originals, context, category="cpf")
+    result = run(surrogate, originals, context, category="cpf")
 
     assert result.iloc[0] == result.iloc[2]
     assert result.iloc[0] != result.iloc[1]
@@ -88,10 +88,10 @@ def test_surrogate_cpfs_are_valid_unique_and_keep_bare_digit_style(context):
     assert all(value.isdigit() and is_valid_cpf(value) for value in result.iloc[:3])
 
 
-def test_surrogate_never_maps_two_people_to_one_fake(context):
+def test_surrogate_never_maps_two_people_to_one_fake(run, context):
     originals = pd.Series([f"person {index}" for index in range(500)])
 
-    result = surrogate(originals, context, category="person_name")
+    result = run(surrogate, originals, context, category="person_name")
 
     assert result.nunique() == 500
 
