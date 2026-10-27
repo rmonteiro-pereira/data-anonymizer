@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+- **Mondrian k-anonymity.** A plan with `enforce_k_anonymity` can set
+  `"k_anonymity_method": "mondrian"` to cut the rows into groups of at least `k_target` and
+  replace each quasi-identifier with its group's range, midpoint (`"range_style"`), set of
+  categories or hierarchy ancestor. Local suppression stays the default.
+- **Generalization hierarchies.** The plan's `hierarchies` field and the new
+  `generalize_hierarchy` technique take levels, prefix lengths or the `{"preset": "cep"}`
+  Brazilian postal code prefix hierarchy.
+- **Joint microaggregation (MDAV).** The plan's `joint_microaggregation` replaces several numeric
+  columns together by the mean of groups of at least `group_size` records.
+- **t-closeness.** `assess_privacy(..., t_target=...)` and `oblitus.evaluation.t_closeness`
+  measure the earth mover's distance of each group from the table. A plan's `t_target` makes a
+  distant group a protection problem.
+- **l-diversity enforcement.** `enforce_l_diversity` in a plan blanks and merges groups that hold
+  fewer than `l_target` sensitive values.
+- **Attack-based risk.** `oblitus.evaluation.assess_attack_risks` and `oblitus apply
+  --attack-risks` run Anonymeter's singling-out, linkability and inference attacks and report
+  each risk with a confidence interval. They need `pip install "oblitus[anonymeter]"`.
+
 ## 0.3.0
 
 - **Renamed to oblitus.** The package is `oblitus` on PyPI (`pip install oblitus`), the import

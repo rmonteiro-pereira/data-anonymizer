@@ -98,7 +98,7 @@ flowchart LR
   proposal["proposal.py and untreated_columns.py<br/>the plan"]
   techniques["techniques/<br/>one expression per column"]
   table["table.py and engines.py<br/>pandas, Polars, DuckDB"]
-  suppression["local_suppression.py<br/>k-anonymity"]
+  suppression["anonymity_enforcement.py, local_suppression.py,<br/>mondrian.py, diversity_enforcement.py,<br/>joint_microaggregation.py: k-anonymity and l-diversity"]
   protection["protection.py, identifying_columns.py,<br/>evaluation/: the checks"]
   synthesis["synthesis/<br/>schemas, generation, challenges"]
   explorer["noise_explorer/<br/>sweep and page"]
@@ -131,8 +131,15 @@ The code map below names every module and what must not live in it.
 | `identifying_columns.py` | Released columns that single out rows or link an entity's rows: fingerprints and untreated entity keys (single or paired columns), counted on the whole table | Changing data |
 | `untreated_columns.py` | `treat_untreated_columns`: under anonymization, completes a proposed plan from the whole table's values (fresh codes for text keys, generalized fingerprint timestamps and numbers, low-cardinality columns as quasi-identifiers) | Applying techniques |
 | `row_order.py` | `shuffle_rows`: the fresh random row order of an anonymized release | Measuring privacy |
+| `anonymity_enforcement.py` | `enforce_plan_targets`: runs the plan's table-level steps on the released table, in order: joint microaggregation, k-anonymity (local suppression or Mondrian), l-diversity | The algorithms; it only decides which run |
+| `mondrian.py` | `enforce_k_anonymity_by_mondrian`: strict Mondrian partitioning on the distinct quasi-identifier combinations, and the write-back of each group's description | Measuring privacy |
+| `generalized_column.py` | `GeneralizedColumn`: one quasi-identifier column's order, relative width and group description (range, midpoint, set or hierarchy ancestor) | Choosing cuts |
+| `generalization_hierarchies.py` | `GeneralizationHierarchy`: levels or prefix lengths that make a value coarser, and the built-in `cep` preset | Applying a level to a column; that is the `generalize_hierarchy` technique |
+| `joint_microaggregation.py` | `microaggregate_jointly`: MDAV groups over several numeric columns, replaced by group means | Single-column microaggregation; that is a technique |
+| `diversity_enforcement.py` | `enforce_l_diversity`: blanks groups with too few sensitive values and merges them, on the whole table in its engine | Measuring privacy |
+| `group_rewrite.py` | `distinct_rows` and `overwrite_by_key`: the distinct combinations of columns with their counts, and new values written back to the rows that match a key, on the table's engine | Deciding what the new values are |
 | `local_suppression.py` | `enforce_k_anonymity`: blanks quasi-identifiers in rows of small groups, and the smallest complete group when blank rows stay below k, on the whole table in its engine | Measuring privacy |
-| `evaluation/` | `privacy.py` (k-anonymity, l-diversity, on the whole table), `aligned_sample.py` (the same at most 200,000 rows of the original and released table, as pandas, for the checks below), `utility.py` (mean/std change, KS, total variation, correlation change), `disclosure.py` (record linkage, joint linkage over several columns, interval disclosure and per-record shift for a noisy column), `dominance.py` (whether a released number still reveals a segment's dominant contributor) | Changing data |
+| `evaluation/` | `privacy.py` (k-anonymity, l-diversity, t-closeness, on the whole table), `attacks.py` (Anonymeter singling-out, linkability and inference attacks, behind the optional `anonymeter` extra), `aligned_sample.py` (the same at most 200,000 rows of the original and released table, as pandas, for the checks below), `utility.py` (mean/std change, KS, total variation, correlation change), `disclosure.py` (record linkage, joint linkage over several columns, interval disclosure and per-record shift for a noisy column), `dominance.py` (whether a released number still reveals a segment's dominant contributor) | Changing data |
 | `noise_explorer/` | `sweep.py` (runs noise techniques at increasing strengths and measures each), `page.py` and `template.html` (the self-contained interactive page) | Noise algorithms; they come from `techniques/` |
 | `synthesis/` | `schema.py` (`DatasetSchema`, columns, overrides, correlations, constraints, `Question`), `expressions.py` (the safe expression language), `marginals.py` (inverse distribution functions), `patterns.py` (conditions, formulas, outliers, exact statistics, gaps), `generator.py` (the four-step build and constraint filtering), `column_values.py` (the values of one column: uniforms, draw or formula, conditions, outliers), `panel.py` (a panel's settings, row layout, column levels and lags of a finished table), `panel_generation.py` (builds a panel period by period), `time_series.py` (the `time_series` section of an answer key), `draw_replay.py` (the uniform numbers behind every row, stored with it so a build can be replayed), `causal_graph.py` (the graph a schema declares, column roles and back-door adjustment sets), `interventions.py` (`do(treatment = value)` by replaying the stored numbers), `treatment_effects.py` (the `causal` section of an answer key), `unique_values.py` (unique integer keys and templates), `copula.py` (Gaussian copula learned from a reference, optionally per level), `latent_correlation.py` (correlation of the hidden normal variables behind categories and numbers), `inference.py` (schema from a table), `rare_values.py` (merges rare categories and pulls in extreme numbers so one record cannot reappear), `challenge.py` (train/test split, answer key and leakage flags), `drift.py` (shifted test rows and drift kind), `label_noise.py` (flipped or perturbed labels) | Detection rules; it calls `detection.scan` |
 | `anonymizer.py` | `Anonymizer`, the facade that wires the above together (`scan`, `propose`, `apply`, `reveal`, `synthesize`, `challenge`), and `AnonymizationResult` | Rules; it only orchestrates |
@@ -148,7 +155,7 @@ flowchart LR
   untreated --> plan[AnonymizationPlan JSON]
   plan --> apply[Anonymizer.apply]
   table --> apply
-  apply --> techniques[techniques catalogue] --> suppression[local_suppression]
+  apply --> techniques[techniques catalogue] --> suppression[anonymity_enforcement]
   suppression --> shuffle[row_order.shuffle_rows] --> result[AnonymizationResult]
   apply --> evaluation[evaluation and protection checks] --> result
   table --> infer[synthesis.infer_schema] --> schema[DatasetSchema]
@@ -202,6 +209,7 @@ flowchart LR
 | What the proposal suggests for a category | `_ATTRIBUTE_RULES` and `_ANONYMIZATION_RULES` in `proposal.py`; direct identifiers in `_direct_identifier_rule` |
 | A new kind of personal data | `DataCategory` in `taxonomy.py`; a check in `detection/checksums.py` and a recognizer in `detection/patterns.py`, or a hint in `detection/column_names.py`; a generator in `surrogates.py` if fakes are needed; `docs/detection.md` |
 | A new technique | a function in the matching `techniques/<family>.py` and a `Technique` entry in `techniques/catalogue.py` (`inverse=` when reversible, `linkable=True` when its output can be tied back to a person); `docs/techniques.md` |
+| A way to enforce k-anonymity or l-diversity | a module beside `mondrian.py`, chosen in `anonymity_enforcement.py` and a `KAnonymityMethod` value in `plan.py`; `docs/protection.md` |
 | A protection check | `protection.py` and `docs/protection.md` |
 | A privacy, utility or disclosure metric | `evaluation/` |
 | What the noise explorer sweeps or shows | `DEFAULT_SWEEPS` in `noise_explorer/sweep.py`; `noise_explorer/template.html` |

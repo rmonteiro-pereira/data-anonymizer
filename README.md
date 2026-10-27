@@ -6,7 +6,7 @@ tables that contain personal data. It:
 1. **detects** which columns hold personal or sensitive data. It reads column names and
    values, and checks the check digits of about 30 document formats, Brazilian and
    international;
-2. **proposes** a plan, a JSON file you can review and edit, that assigns one of 28
+2. **proposes** a plan, a JSON file you can review and edit, that assigns one of 29
    techniques to each flagged column;
 3. **applies** the plan as **pseudonymization** (keyed, re-linkable by whoever holds the key)
    or **true anonymization** (no link left, and checked; the default), keeping either the
@@ -35,7 +35,7 @@ and how far each record moved](https://raw.githubusercontent.com/rmonteiro-perei
 | Perturbation | Shuffling, rank swapping, univariate microaggregation, **randomized response** (local differential privacy) |
 | Business confidentiality | Opaque category codes in random order, with small segments merged. **Per-store indexing** by default, so no known value plus a public total gives the money back; recentring and rescaling (robust, z-score, min-max) when sizes must stay comparable; rank, log-ratio and growth too. Dominance and p% checks, so a segment's biggest contributor cannot be read from the release. See [docs/business-confidentiality.md](https://github.com/rmonteiro-pereira/oblitus/blob/main/docs/business-confidentiality.md) |
 | Protection modes | **Anonymization** (the default) or **pseudonymization**, each with `statistical` or `privacy` fidelity. Anonymization refuses linking techniques and runs under a throwaway key. Identifiers are checked on the data, not only by technique name, and unique columns released unchanged are flagged. Each result is labelled `anonymized`, `at_risk`, `pseudonymized` or `identifiable`, by checks named after the EDPB 2026 criteria: no record isolation, no linkage, no inference |
-| Privacy and risk | k-anonymity, l-diversity, k-anonymity enforcement by local suppression, whole-record uniqueness, distance-based record linkage, interval disclosure |
+| Privacy and risk | k-anonymity, l-diversity, t-closeness (earth mover's distance), k-anonymity enforcement by local suppression or by Mondrian generalization, l-diversity enforcement, generalization hierarchies (with a Brazilian CEP preset), joint microaggregation (MDAV), whole-record uniqueness, distance-based record linkage, interval disclosure, and attack-based risk (singling out, linkability, inference) with the optional Anonymeter extra |
 | Utility | Change in mean and standard deviation, Kolmogorov–Smirnov, Wasserstein / IQR, total variation distance, correlation change, per-record shift in standard deviations |
 | Noise explorer | A self-contained interactive HTML page per column. For every technique and strength it shows before/after distributions, original against released per record with an exposure band, and a risk-utility map. It works offline and follows light and dark themes |
 | Synthesis | Distributions (normal, lognormal, gamma, exponential, Poisson, uniform, quantile curves) truncated to bounds. Spearman correlations imposed through a Gaussian copula. Conditional overrides that keep correlations. Formula columns using a safe expression language with date and random functions. Outlier planting, exact statistics, row constraints, unique keys, null shares and templates. Learned Gaussian copula from a reference table |
@@ -60,12 +60,6 @@ Planned, not yet implemented:
 - **Tokenization with a vault**: random tokens with the mapping kept in a separate store.
 - **Multi-table consistency**: keep pseudonyms and date offsets consistent across several
   tables in one call.
-- **Stronger anonymization**:
-  - Mondrian multidimensional generalization;
-  - generalization hierarchies (postal code → region → state);
-  - multivariate microaggregation (MDAV) and t-closeness;
-  - l-diversity enforcement;
-  - attack-based checks with Anonymeter (singling out, linkability, inference).
 - **Differential privacy**: an optional OpenDP extra for DP aggregates, and DP synthesis
   (MST, AIM) with an ε budget across columns.
 - **Synthetic-data checks**: distance to the closest real record and membership inference.
@@ -81,6 +75,8 @@ Python 3.12 or later:
 pip install oblitus
 # with DuckDB support:
 pip install "oblitus[duckdb]"
+# with attack-based risk checks (Anonymeter):
+pip install "oblitus[anonymeter]"
 ```
 
 `uv add oblitus` works too. The package imports as `oblitus` and installs the `oblitus`
@@ -187,7 +183,7 @@ locale for fake values, such as `pt_BR`; default `en_US`). Tables can be `.csv` 
 |---|---|
 | `oblitus scan INPUT [--sample-size N]` | Prints each column's category, sensitivity, confidence and evidence |
 | `oblitus propose INPUT [--protection P] [--fidelity F] [-o PLAN]` | Writes a plan as JSON (stdout without `-o`) |
-| `oblitus apply INPUT -o OUTPUT [--plan PLAN] [--protection P] [--fidelity F] [--report REPORT] [--row-key COLUMN]` | Applies a plan, or proposes one first. Prints the protection level reached. `--report` writes privacy, utility and protection results as JSON. `--row-key` overrides the plan's `row_key` |
+| `oblitus apply INPUT -o OUTPUT [--plan PLAN] [--protection P] [--fidelity F] [--report REPORT] [--attack-risks] [--row-key COLUMN]` | Applies a plan, or proposes one first. Prints the protection level reached. `--report` writes privacy, utility and protection results as JSON. `--attack-risks` also runs the Anonymeter singling-out, linkability and inference attacks, prints each risk with its confidence interval and adds them to the report (needs `pip install "oblitus[anonymeter]"`). `--row-key` overrides the plan's `row_key` |
 | `oblitus reveal INPUT --plan PLAN -o OUTPUT [--row-key COLUMN]` | Decrypts the columns the plan encrypted and leaves one-way columns as they are |
 | `oblitus explore-noise INPUT --column NAME -o PAGE.html [--band SD] [--max-rows N]` | Writes the interactive noise explorer for one numeric column. Columns longer than `N` values (default 200,000) are explored on a random sample |
 | `oblitus infer-schema INPUT [--fidelity F] [-o SCHEMA]` | Learns a generation schema from a table |

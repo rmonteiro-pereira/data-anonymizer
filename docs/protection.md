@@ -25,6 +25,8 @@ to the person.
   combination is shared by at least `k_target` rows. Rows whose quasi-identifiers are all
   blank still form a group; when they number fewer than `k_target`, the smallest complete
   group is blanked too, so no row has to be dropped.
+  Mondrian generalization is the other way to reach `k_target`; see
+  [Choosing how k-anonymity is enforced](#choosing-how-k-anonymity-is-enforced).
 
 The result is then checked.
 
@@ -111,7 +113,7 @@ The checks follow the three criteria of the EDPB Guidelines 02/2026 on anonymisa
 |---|---|
 | No record isolation | Every quasi-identifier combination is shared by at least `k_target` rows (default 5). No row is unique across its discrete released columns, meaning those with at most 50 distinct values, excluding sensitive attributes. No column with at least 20 rows and 90% distinct values is released unchanged, since such a column is a fingerprint. A text column that a technique does not replace (such as `partial_mask`, or `redact_entities` on JSON) counts the same way. An untreated text, integer or whole-number float column (at least 99% of present values whole) outside the plan's lists, with at least 20 distinct values that group rows, is reported too, however many rows each value has: statistics cannot tell an account or card key from a product code, and anyone who knows their own value finds their rows. Pairs of such columns (the 10 with the most distinct values) are checked too: a pair with at least 100 distinct joint values and at most 10 rows on the typical pair is reported as a key that works only together. Replace the column (`scramble_categories` gives fresh codes that keep the grouping) or list it in the plan |
 | No linkage | No action uses a linking technique. For noise and perturbation columns, nearest-value matching re-links at most 1 record in `k_target`: no better odds than k-anonymity already accepts. The same limit applies to all perturbed numeric columns taken together, matching each released vector to its nearest original vector on standardized columns. `randomized_response` on a plan with an `entity_column` needs `by`, so a person's rows share one draw |
-| No inference | Within each quasi-identifier group, every sensitive attribute takes at least `l_target` distinct values (default 2). A sensitive column released entirely blank is skipped. A numeric sensitive column still in its original units must not let a segment's dominant contributor be read off (dominance and p% rules, see [business-confidentiality.md](business-confidentiality.md)) |
+| No inference | Within each quasi-identifier group, every sensitive attribute takes at least `l_target` distinct values (default 2). When the plan sets `t_target`, no group's distribution of a sensitive attribute may be farther than that from the whole table's (earth mover's distance). A sensitive column released entirely blank is skipped. A numeric sensitive column still in its original units must not let a segment's dominant contributor be read off (dominance and p% rules, see [business-confidentiality.md](business-confidentiality.md)) |
 
 | Level | Meaning |
 |---|---|
@@ -137,6 +139,157 @@ not sufficient:
 A contextual assessment, such as the ICO's motivated-intruder test or the ANPD's risk
 assessment, is still required.
 
+## Choosing how k-anonymity is enforced
+
+With `enforce_k_anonymity: true`, the plan's `k_anonymity_method` picks the way:
+
+| `k_anonymity_method` | What it does | Costs |
+|---|---|---|
+| `local_suppression` (the default) | Blanks quasi-identifier cells in rows of small groups, and nothing else | Blank cells, but the other rows keep their exact values |
+| `mondrian` | Cuts the rows into groups of at least `k_target` and replaces every quasi-identifier cell with its group's description | No blank cells, but every quasi-identifier column becomes coarser |
+
+Both run on the released table after the column actions, so they also cover columns the
+actions left alone. Either way, the table is then measured and the protection checks run on it.
+
+### Mondrian generalization
+
+Mondrian follows LeFevre, DeWitt and Ramakrishnan (2006), in its strict form:
+1. All rows start as one group.
+2. The group is cut at the median of the quasi-identifier that spreads the most across it,
+   relative to the whole table. Rows with the same value on that column stay on one side, so a
+   cut never separates equal values.
+3. A cut is allowed only when both halves keep at least `k_target` rows. If the widest column
+   cannot be cut, the next widest is tried. A group that no column can cut is final.
+4. Every cell of a final group gets the same description of the group.
+
+How a group is described, per column type:
+
+| Column | `range_style: "range"` (default) | `range_style: "midpoint"` |
+|---|---|---|
+| Number | `lo-hi`, or the value when all are equal | The midpoint, as a float |
+| Date or timestamp | `lo to hi` in ISO form, or the date when all are equal | The midpoint date, in the column's own type |
+| Category | The set `{A, B, C}`, or the value when all are equal. With a hierarchy for the column in the plan's `hierarchies`, the closest common ancestor instead | Same as `range` |
+
+A missing cell takes its group's description, so that every row of a group holds the same
+value. A group in which the column is missing everywhere keeps it missing. A column of dates
+stored as text is a category.
+
+A hierarchy also decides which categories sit next to each other when the group is cut, so a
+cut separates Southeast from Northeast states and not at random:
+
+```json
+{
+  "quasi_identifiers": ["age", "cep", "gender"],
+  "enforce_k_anonymity": true,
+  "k_anonymity_method": "mondrian",
+  "range_style": "range",
+  "hierarchies": {"cep": {"preset": "cep"}}
+}
+```
+
+Hierarchy forms and the Brazilian postal code preset are described in
+[techniques.md](techniques.md#generalization-hierarchies).
+
+The cut works on the distinct quasi-identifier combinations with their row counts, so it
+gives the same answer on pandas, Polars and DuckDB, and its cost depends on how many
+distinct combinations there are, not how many rows. A table with fewer than `k_target` rows
+becomes one group, which cannot meet the target; the protection check says so. Because the
+output of a numeric or date column is text under `range`, a model that needs the column as a
+number should use `midpoint`.
+
+### Joint microaggregation
+
+The plan's `joint_microaggregation` lists sets of numeric columns to replace together:
+
+```json
+{"joint_microaggregation": [{"columns": ["height", "weight"], "group_size": 5}]}
+```
+
+Records are grouped by their distance over all the listed columns, standardized so none
+dominates, with the MDAV method (Domingo-Ferrer and Torra, 2005). Every group holds at least
+`group_size` records, and each column holds its group's mean, so every released vector is
+shared by at least `group_size` records and every column keeps its mean. The step runs after
+the column actions and before k-anonymity is enforced, on the whole table, and it does not
+change a column's dtype: integers are rounded back to integers.
+
+Limits: a record with a missing value in any listed column is left as it is. The work grows
+with the square of the number of rows, so very large tables should be sampled or grouped
+first. Someone who knows all but one record of a group can subtract them from the mean to get
+the last one, as with `microaggregate`.
+
+### l-diversity enforcement
+
+`enforce_l_diversity: true` runs after k-anonymity. It finds the quasi-identifier groups that
+hold fewer than `l_target` distinct values of a sensitive attribute and blanks their
+quasi-identifiers, so those rows join the one group whose quasi-identifiers are all blank.
+When that group still holds fewer than `l_target` values, the smallest remaining groups join
+it until it does, as local suppression does for k. Whole groups are blanked, not single cells,
+because a group that keeps some cells keeps the values that identify it. A sensitive attribute
+that has fewer than `l_target` values in the whole table cannot reach it, and the protection
+check reports it as it did before.
+
+Enforcement costs cells, and the merged group is the least informative one in the release.
+Raise `l_target` only as far as the data needs.
+
+### t-closeness
+
+l-diversity counts how many sensitive values a group holds, not how they are spread: a group
+that holds 99 percent one diagnosis and 1 percent another passes `l_target: 2` and still tells
+an attacker the diagnosis. t-closeness (Li, Li and Venkatasubramanian, 2007) compares each
+group's distribution of a sensitive attribute with the whole table's and measures the distance
+with the earth mover's distance, from 0 (the same) to 1:
+- numbers and dates use the ordered distance, in which moving probability to a neighbouring
+  value costs little, so a group of salaries near the table's does not count as far;
+- other columns use the equal distance, half the total difference between the shares.
+
+Set `t_target` (a number above 0 and at most 1; null, the default, does not measure it). Then
+`result.privacy_after.t_closeness` holds the largest distance of any group per sensitive
+attribute, and any attribute above `t_target` is a problem that makes the release `at_risk`.
+It is also available alone as `oblitus.evaluation.t_closeness(frame, quasi_identifiers,
+sensitive_attributes)`, and `assess_privacy(..., t_target=...)` fills it in the report. Blank
+sensitive cells are left out of both distributions. A small `t_target` is hard to meet with
+small groups: nothing here enforces it, so the usual fixes are larger groups (a higher
+`k_target`), coarser quasi-identifiers or fewer sensitive attributes.
+
+## Attack-based risk with Anonymeter
+
+The checks above describe how a table is built. `assess_attack_risks` plays the attacker
+with [Anonymeter](https://github.com/statice/anonymeter) and reports how often each attack
+succeeds, with a confidence interval:
+
+```python
+from oblitus.evaluation import assess_attack_risks
+
+report = assess_attack_risks(
+    original_pandas,
+    released_pandas,
+    quasi_identifiers=["age", "cep", "gender"],
+    sensitive_attributes=["diagnosis"],
+    control=held_out_original_rows,  # optional
+    n_attacks=500,
+)
+for risk in report.risks:
+    print(risk.attack, risk.risk, risk.ci_low, risk.ci_high)
+```
+
+| Attack | What the attacker does |
+|---|---|
+| `singling_out` | Writes queries on the quasi-identifier and sensitive columns that each match one original record, using the released table |
+| `linkability` | Holds two halves of the quasi-identifiers, as if from two databases, and tries to tell which released records belong together. Needs two quasi-identifiers |
+| `inference:<column>` | Knows a person's quasi-identifiers and guesses the sensitive column from the nearest released records, one attack per sensitive attribute |
+
+A risk of 0 means the attacker did no better than guessing. A `control` table, original records
+that were not used to build the release, lets Anonymeter separate what the release reveals
+from what the population makes easy to guess; without it the risk is the raw success rate.
+An attack that cannot run is listed in `report.skipped` with the reason.
+
+The extra is optional: `pip install "oblitus[anonymeter]"`. Without it the function raises
+`MissingExtraError`, which names the extra. Anonymeter works on in-memory pandas tables and
+runs its attacks in Python, so use a sample for large tables. It adds no protection check:
+the numbers inform the contextual assessment and are not a pass or a fail.
+`oblitus apply --attack-risks` runs the attacks on the table it wrote and adds them to the
+`--report` file under `attack_risks`.
+
 ## Plan files
 
 ```json
@@ -160,6 +313,11 @@ assessment, is still required.
 Columns without an action are left unchanged. A plan is checked before anything runs.
 A missing column, an unknown technique, an unknown parameter, or a linking technique in
 an anonymization plan raises `PlanError`.
+
+The table-level fields, all optional, are `k_anonymity_method` (`local_suppression` or
+`mondrian`), `range_style` (`range` or `midpoint`), `hierarchies`, `joint_microaggregation`,
+`enforce_l_diversity` and `t_target`. Each is described above. Every one defaults to the
+behaviour before it existed.
 
 `shuffle_rows` says whether the released rows come back in a fresh random order with a fresh
 pandas index. `null` (the default) shuffles under anonymization, so the release cannot be lined
@@ -227,7 +385,10 @@ and still let someone who knows their own records follow those records:
 
 `Anonymizer` takes pandas, Polars and DuckDB tables and returns the kind it was given.
 - k-anonymity, l-diversity, local suppression, record isolation and fingerprint columns
-  are computed on the whole table by the engine that holds it.
+  are computed on the whole table by the engine that holds it. Mondrian, joint
+  microaggregation, l-diversity enforcement and t-closeness collect the distinct groups (or,
+  for microaggregation, the chosen columns) into memory, then write the result back on the
+  table's engine.
 - Utility, disclosure, dominance, surviving identifiers and noisy-value linkage compare each
   released value with its original. They run on the same at most 200,000 rows of both tables,
   picked by a keyed hash of the row key, so the sample is the same on every run and
