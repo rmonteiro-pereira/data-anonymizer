@@ -232,7 +232,7 @@ def test_lowercase_text_without_a_full_name_or_a_city_after_a_preposition_is_lef
         "Atendimento de {first}   {last} concluido ontem",
     ],
 )
-def test_notes_with_unusual_name_formats_lose_their_names_in_the_default_release(template):
+def test_notes_with_unusual_name_formats_lose_their_names_when_redacted(template):
     people = [("Ana", "Silva"), ("Maria", "Souza"), ("Pedro", "Santos"), ("Paulo", "Lima")]
     notes = []
     for first, last in people:
@@ -242,8 +242,11 @@ def test_notes_with_unusual_name_formats_lose_their_names_in_the_default_release
     frame = pd.DataFrame({"payload": notes, "diagnosis": ["D", "H"] * 10})
     anonymizer = Anonymizer(seed=1)
 
-    result = anonymizer.apply(frame, anonymizer.propose(frame))
+    # Anonymization drops prose columns by default, so the redaction is checked where it
+    # still runs: the pseudonymization proposal.
+    plan = anonymizer.propose(frame, protection=Protection.PSEUDONYMIZATION)
+    result = anonymizer.apply(frame, plan)
 
-    released = " ".join(result.data["payload"]).lower()
+    released = " ".join(result.data["payload"].dropna()).lower()
     for _, last in people:
         assert last.lower() not in released
