@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **Joint microaggregation columns count as quasi-identifiers.** The k-anonymity and skew
+  checks now group by the aggregated vector too, so five records that share one released vector
+  and one diagnosis make the release `at_risk`.
 - **Mondrian does not name rare categories.** A category held by fewer than `k_target` rows in
   the table reads `other` inside a released set instead of showing its name.
 - **`apply_many` checks the join.** Anonymized tables that release the same column with

@@ -8,6 +8,7 @@ from oblitus import AnonymizationPlan, Anonymizer, ColumnAction, Fidelity, PlanE
 from oblitus.engines import Engine
 from oblitus.joint_microaggregation import mdav_groups, microaggregate_jointly
 from oblitus.plan import JointMicroaggregation
+from oblitus.protection import ProtectionLevel
 
 
 def _measurements(rows: int = 100) -> pd.DataFrame:
@@ -175,3 +176,17 @@ def test_the_protection_check_counts_microaggregated_columns_even_with_many_dist
 
     assert problems
     assert "height" in problems[0]
+
+
+def test_a_group_of_missing_weight_records_that_all_share_a_diagnosis_is_flagged():
+    rng = np.random.default_rng(812)
+    frame = pd.DataFrame(rng.normal(size=(500, 2)), columns=["height", "weight"])
+    frame["diagnosis"] = ["D"] * 5 + ["H"] * 495
+    frame.loc[:4, "height"] = np.linspace(999.1, 999.5, 5)
+    frame.loc[:4, "weight"] = np.nan
+    plan = _plan(actions=[], row_key=None, sensitive_attributes=["diagnosis"], l_target=1)
+
+    result = Anonymizer(seed=1).apply(frame, plan)
+
+    assert result.protection.level is ProtectionLevel.AT_RISK
+    assert any("diagnosis" in problem for problem in result.protection.problems)

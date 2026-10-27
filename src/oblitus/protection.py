@@ -267,7 +267,7 @@ def _confident_inferences(plan: AnonymizationPlan, released: WorkingFrame) -> li
         return []
     findings = confident_inferences(
         released,
-        plan.quasi_identifiers,
+        plan.released_quasi_identifiers,
         plan.sensitive_attributes,
         confidence=plan.inference_confidence,
         gain=plan.inference_gain,

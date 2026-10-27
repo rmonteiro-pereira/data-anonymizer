@@ -517,7 +517,7 @@ class Anonymizer:
     def _privacy(self, frame: Any, plan: AnonymizationPlan) -> PrivacyReport:
         return assess_privacy(
             frame,
-            plan.quasi_identifiers,
+            plan.released_quasi_identifiers,
             plan.sensitive_attributes,
             k_target=plan.k_target,
             t_target=plan.t_target,
