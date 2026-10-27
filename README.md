@@ -69,7 +69,9 @@ Planned, not yet implemented:
 - **Differential privacy**: an optional OpenDP extra for DP aggregates, and DP synthesis
   (MST, AIM) with an ε budget across columns.
 - **Synthetic-data checks**: distance to the closest real record and membership inference.
-- **Scale**: Polars, and chunked processing for files larger than memory.
+- **Scale**: Spark tables through the same engine layer (see
+  [docs/adr/0001-dataframe-backends.md](docs/adr/0001-dataframe-backends.md)), and chunked
+  processing for files larger than memory.
 
 ## Quick start
 
@@ -122,10 +124,11 @@ and can test whether a guessed real value produces a given pseudonym.
 
 ## Command line
 
-All commands take `--seed N` (reproducible noise and synthesis) and `--locale` (Faker
+All commands take `--seed N` (reproducible noise and synthesis; with a secret key the
+noise is reproducible only for the key's holder, with a seed alone anyone who knows the
+seed can recompute it) and `--locale` (Faker
 locale for fake values, such as `pt_BR`; default `en_US`). Tables can be `.csv` or
-`.parquet`, read and written with Polars. The commands hand pandas only the pieces
-that need it, and that conversion needs `uv sync --extra parquet`.
+`.parquet`, read and written with Polars.
 
 | Command | What it does |
 |---|---|

@@ -198,11 +198,11 @@ def _run_sweeps(
             fixed = {**bounds, **fixed}
         runs = []
         for value in values:
-            # A fresh generator per level keeps each level reproducible on its own.
+            # The same key per level keeps each level reproducible on its own.
             context = TechniqueContext(
-                rng=np.random.default_rng(seed),
                 secret_key=b"noise-explorer",
                 surrogates=SurrogateFactory(),
+                randomness_key=f"noise-explorer:{seed}".encode(),
             )
             params = {**fixed, parameter: _parameter_value(value)}
             released = apply_to_series(technique, original.astype(float), context, params)

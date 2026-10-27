@@ -377,6 +377,7 @@ dependencies = [
     { name = "numpy" },
     { name = "pandas" },
     { name = "polars" },
+    { name = "pyarrow" },
     { name = "pydantic" },
     { name = "scipy" },
 ]
@@ -384,10 +385,6 @@ dependencies = [
 [package.optional-dependencies]
 duckdb = [
     { name = "duckdb" },
-    { name = "pyarrow" },
-]
-parquet = [
-    { name = "pyarrow" },
 ]
 
 [package.dev-dependencies]
@@ -411,12 +408,11 @@ requires-dist = [
     { name = "numpy", specifier = ">=1.26" },
     { name = "pandas", specifier = ">=2.1" },
     { name = "polars", specifier = ">=1.30" },
-    { name = "pyarrow", marker = "extra == 'duckdb'", specifier = ">=15.0" },
-    { name = "pyarrow", marker = "extra == 'parquet'", specifier = ">=15.0" },
+    { name = "pyarrow", specifier = ">=15.0" },
     { name = "pydantic", specifier = ">=2.6" },
     { name = "scipy", specifier = ">=1.11" },
 ]
-provides-extras = ["parquet", "duckdb"]
+provides-extras = ["duckdb"]
 
 [package.metadata.requires-dev]
 dev = [

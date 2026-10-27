@@ -23,7 +23,6 @@ from data_anonymizer.techniques import (
 )
 from data_anonymizer.techniques import pseudonymization as pseudo
 from data_anonymizer.techniques.context import TechniqueContext
-from data_anonymizer.techniques.pandas_bridge import pandas_column
 
 # A technique takes the table, the column's name, the run's context and its keyword
 # parameters, and returns an expression for the column's new values.

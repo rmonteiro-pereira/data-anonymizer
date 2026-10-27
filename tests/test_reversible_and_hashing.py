@@ -65,7 +65,7 @@ def test_encrypt_round_trips_and_keeps_gaps(run, context, deterministic):
 
 def test_tokens_do_not_decrypt_under_another_key(run, context):
     tokens = run(encrypt, pd.Series(["secret"]), context)
-    other = TechniqueContext(context.rng, b"another key", context.surrogates)
+    other = TechniqueContext(b"another key", context.surrogates, context.randomness_key)
 
     with pytest.raises(ValueError, match="does not decrypt"):
         run(decrypt, tokens, other)

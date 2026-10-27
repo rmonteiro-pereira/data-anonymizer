@@ -140,29 +140,6 @@ class Table:
         """
         return self._original_name(column)
 
-    def attach(self, values: nw.Series[Any]) -> nw.Expr:
-        """Add a column computed in Python, one value per row in row order.
-
-        Only in-memory tables have a row order to align with.
-        """
-        if self._engine.is_lazy:
-            raise ValueError("this technique runs on in-memory tables only")
-        name = self._helper_name()
-        ordered = collect(self._ordered())
-        self._frame = ordered.with_columns(values.alias(name))
-        return nw.col(name)
-
-    def original_pandas(self) -> Any:
-        """The user's columns as they were before any replacement, as a pandas frame.
-
-        For techniques still written for pandas columns, which group by other columns.
-        """
-        ordered = collect(self._ordered())
-        selected = ordered.select(
-            [nw.col(self._original_name(column)).alias(column) for column in self.columns]
-        )
-        return selected.to_pandas()
-
     def reorder_values(self, column: str, sort_key: nw.Expr) -> nw.Expr:
         """Hand the column's present values out again, in the order of `sort_key`.
 

@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- **Engines.**
+  - `scan`, `propose`, `validate`, `apply` and `reveal` accept pandas, Polars and DuckDB
+    tables, and return the same kind.
+  - Techniques are Narwhals expressions over a `Table`, so one implementation runs on
+    every engine.
+  - Noise and random choices come from keyed SHA-256 of a row key, so every engine
+    releases the same values for the same key.
+  - Plans take a `row_key`, and the CLI takes `--row-key`.
+  - Files are read and written with Polars.
+  - `apply` on 1.07 million rows went from 129 s to 20 s.
+  - Seeded outputs differ from earlier versions.
+  - `rank_swap` sorts by rank plus keyed noise within its window.
+  - Random-salt Argon2 and bcrypt now salt every row.
+  - `pyarrow` is required, and the `parquet` extra is gone; DuckDB is the `duckdb` extra.
+  - Custom techniques take `(table, column, context, **params)` and return an expression.
 - **pandas, Polars and DuckDB tables.**
   - `scan`, `propose`, `validate`, `apply` and `reveal` accept all three and return the same kind.
   - Plans have an optional `row_key`, set by `propose`; `apply` and `reveal` take `--row-key`.

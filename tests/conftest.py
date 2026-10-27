@@ -45,7 +45,6 @@ def people() -> pd.DataFrame:
 @pytest.fixture
 def context() -> TechniqueContext:
     return TechniqueContext(
-        rng=np.random.default_rng(0),
         secret_key=b"test-key",
         surrogates=SurrogateFactory("en_US"),
         randomness_key=b"test-randomness-key",

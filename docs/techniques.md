@@ -67,7 +67,13 @@ column's minimum and maximum would leak those two numbers.
 
 ## Your own techniques
 
-1. Write a function `(values, context, **params) -> Series`.
+1. Write a function `(table, column, context, **params)` that returns a Narwhals
+   expression for the column's new values, such as
+   `nw.col(column).str.to_uppercase()`. Build it from expressions, and it runs on pandas,
+   Polars and DuckDB alike. `Table` (in `data_anonymizer.table`) provides:
+   - statistics;
+   - keyed random numbers per row (`table.uniforms(context.stream_key(column, "mine"))`);
+   - lookups of values computed in Python (`value_mapping.lookup_distinct`).
 2. Wrap it in a `Technique`. If it is reversible, set `inverse=`. If its output can be tied
    back to a person, set `linkable=True`.
 3. Pass it as `Anonymizer(extra_techniques=[...])`. Plans can then name it.

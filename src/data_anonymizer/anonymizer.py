@@ -285,7 +285,6 @@ class Anonymizer:
     def _context(self, *, throwaway_key: bool = False) -> TechniqueContext:
         secret_key = secrets.token_bytes(32) if throwaway_key else self._secret_key
         return TechniqueContext(
-            rng=np.random.default_rng(self._seed),
             secret_key=secret_key,
             surrogates=SurrogateFactory(self._locale),
             randomness_key=self._randomness_key,

@@ -137,9 +137,7 @@ def test_the_table_comes_back_as_the_kind_it_was_given(context):
 
 
 def test_noise_depends_on_the_randomness_key(context):
-    other = context.__class__(
-        context.rng, context.secret_key, context.surrogates, randomness_key=b"another key"
-    )
+    other = context.__class__(context.secret_key, context.surrogates, b"another key")
 
     first = _released(Engine.POLARS, "gaussian_noise", "amount", {}, context)
     second = _released(Engine.POLARS, "gaussian_noise", "amount", {}, other)

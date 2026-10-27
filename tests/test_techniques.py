@@ -61,7 +61,7 @@ def test_keyed_hash_is_consistent_and_depends_on_the_key(run, context):
 
     first = run(keyed_hash, values, context)
     other_key = run(
-        keyed_hash, values, context.__class__(context.rng, b"other", context.surrogates)
+        keyed_hash, values, context.__class__(b"other", context.surrogates, context.randomness_key)
     )
 
     assert first.iloc[0] == first.iloc[2]

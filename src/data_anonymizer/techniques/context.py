@@ -4,7 +4,6 @@ import hmac
 from dataclasses import dataclass
 
 import numpy as np
-import pandas as pd
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
@@ -19,16 +18,11 @@ class TechniqueContext:
     impossible to reverse for anyone without the key. `randomness_key` drives every
     random draw: noise per row comes from keyed hashes of the row key, so a run is
     reproducible on any engine and nobody without the key can recompute the noise.
-
-    `rng` and `table` serve techniques that still work on pandas columns: a random
-    generator, and the original table for grouping by another column.
     """
 
-    rng: np.random.Generator
     secret_key: bytes
     surrogates: SurrogateFactory
-    table: pd.DataFrame | None = None
-    randomness_key: bytes = b""
+    randomness_key: bytes
 
     def stream_key(self, column: str, purpose: str) -> bytes:
         """Key the random numbers one technique draws for one column.
@@ -42,14 +36,6 @@ class TechniqueContext:
         """A seeded generator for random choices made in Python, such as shuffling codes."""
         seed = int.from_bytes(self.stream_key(column, purpose)[:8], "big")
         return np.random.default_rng(seed)
-
-    def group_keys(self, column: str) -> pd.Series:
-        """Return another column of the original table, for techniques that group rows by it."""
-        if self.table is None:
-            raise ValueError(f"grouping by {column!r} needs the original table")
-        if column not in self.table.columns:
-            raise ValueError(f"grouping column {column!r} is not in the table")
-        return self.table[column]
 
     def keyed_digest(self, value: str, algorithm: str = "sha256") -> bytes:
         """Return the HMAC of a value under the run's secret key, SHA-256 by default."""
