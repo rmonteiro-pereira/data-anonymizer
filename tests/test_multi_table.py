@@ -476,3 +476,45 @@ def test_columns_whose_values_all_occur_equally_often_are_not_paired_by_row_coun
     right = pd.Series(np.repeat(np.arange(20), 5))
 
     assert pair_by_frequency(left, right) == {}
+
+
+def test_a_pair_of_tables_that_singles_out_a_person_is_checked_beside_a_partial_third_table():
+    accounts = np.repeat(np.arange(100), 5)
+    bands = accounts % 10
+    bands[accounts < 5] = 0
+    frames = {
+        "residence": pd.DataFrame({"account": accounts, "district": accounts // 10}),
+        "clinic": pd.DataFrame({"account": accounts, "band": bands}),
+        "subset": pd.DataFrame({"account": accounts[accounts < 5]}),
+    }
+    plans = {
+        "residence": _plan_for(["account"], ["district"]),
+        "clinic": _plan_for(["account"], ["band"]),
+        "subset": _plan_for(["account"], []),
+    }
+
+    results = Anonymizer(secret_key=KEY).apply_many(frames, plans)
+
+    for name in ["residence", "clinic"]:
+        assert results[name].protection.level is ProtectionLevel.AT_RISK
+        assert any("joined with" in text for text in results[name].protection.problems)
+
+
+def test_a_column_copied_into_a_third_table_does_not_hide_its_count_link():
+    accounts = np.repeat(np.arange(10), np.arange(5, 15))
+    frames = {
+        "first": pd.DataFrame({"account": accounts, "district": accounts // 5}),
+        "second": pd.DataFrame({"patient": accounts, "band": accounts % 5}),
+        "copy": pd.DataFrame({"account": accounts}),
+    }
+    plans = {
+        "first": _plan_for(["account"], ["district"]),
+        "second": _plan_for(["patient"], ["band"]),
+        "copy": _plan_for(["account"], []),
+    }
+
+    results = Anonymizer(secret_key=KEY).apply_many(frames, plans)
+
+    for result in results.values():
+        assert result.protection.level is ProtectionLevel.AT_RISK
+        assert any("same row counts" in text for text in result.protection.problems)

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **`apply_many` checks every connected sub-join.** A third table holding only some of the
+  entities no longer hides a pair of tables that singles a person out. Groups of up to 6 tables
+  are checked in every connected subset, larger ones in every connected pair and the full join.
+- **Row-count links cover columns that are also in a named link.** A table that copies `account`
+  no longer hides the link between `account` and a differently named `patient` column.
 - **k-anonymity counts people when the plan has an `entity_column`.** The reported k and the
   rows-below-target figure count distinct entities per combination of every released
   quasi-identifier, joint microaggregation columns included, so a group the extra column

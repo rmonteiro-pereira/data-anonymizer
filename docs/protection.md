@@ -435,11 +435,16 @@ The join follows links through other tables. A bridge table holding an account a
 code joins a table that has only the account to a table that has only the case code, so the
 check joins every connected group of tables through all their links, and counts entities by
 the link with the fewest distinct values (the person, when the other links are visits or cases).
+A table that holds only some of the entities shrinks the inner join of the whole group, so
+every connected subset of two or more tables is joined and checked too, not only the full
+group. A group of up to 6 tables is checked in every connected subset; a larger group in every
+connected pair and the full join. A problem is reported on the tables of the subset where it
+appears.
 
 Two columns with different names are linked too when they code the same entities by how often
 they occur: if both hold at least five distinct values, at least 80% of their per-value row
 counts agree, and at least half of the values can be paired by a count that no other value has,
-the values are paired by count and the tables are joined on that pairing. The heuristic misses
+the values are paired by count and the tables are joined on that pairing. A column that is also in a named link (a third table copying `account`) is compared as well. The heuristic misses
 entities that occur equally often (every account has five rows), tables that were filtered or
 sampled so the counts differ, and counts changed by noise. Still not checked: joins through
 values you left readable (such as a date), and pseudonymized tables, which join by design. On the command line, `oblitus apply-many` reads a manifest:

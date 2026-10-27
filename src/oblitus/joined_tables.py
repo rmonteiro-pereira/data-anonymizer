@@ -14,8 +14,9 @@ Two kinds of link join tables:
 Tables that are linked, directly or through other tables, form one component. A bridge table
 that holds an account and a case code joins a table that has only the account to a table that
 has only the case code, though no single link spans all three. The tables of each component are
-joined through all their links, and two checks run on the result, counting entities and not
-rows:
+joined through all their links, and so is every connected subset of them (a table with only
+some of the entities shrinks the full join and could hide a pair that singles a person out).
+Two checks run on each join, counting entities and not rows:
 - k-anonymity: every combination of the tables' quasi-identifiers is shared by at least the
   largest `k_target` of those plans' entities;
 - inference: no combination lets a sensitive value of one table be guessed with high
@@ -27,6 +28,7 @@ The checks take the released tables and the plans and return problem texts.
 
 from collections.abc import Hashable, Mapping, Sequence
 from dataclasses import dataclass, field
+from itertools import combinations
 from typing import Any
 
 import narwhals as nw
@@ -40,6 +42,8 @@ from oblitus.plan import AnonymizationPlan, Protection
 # These leave a column's values the same from table to table within one anonymizing call.
 _CONSISTENT_TECHNIQUES = {"keep", "scramble_categories"}
 _DISCRETE_LIMIT = 50
+# Every connected subset of tables is joined and checked up to this many tables in a component.
+MAX_ENUMERATED_TABLES = 6
 _LINK_PREFIX = "__link"
 
 
@@ -77,22 +81,62 @@ def joined_table_problems(
         if plans[name].protection is Protection.ANONYMIZATION
     }
     links = _name_links(tables, plans)
-    links += _count_links(tables, plans, links)
+    links += _count_links(tables, plans)
     problems: dict[str, list[str]] = {}
-    for names in _components(list(tables), links):
-        component_links = [link for link in links if set(link.columns) <= set(names)]
-        found = _problems_of_join(
-            component_links,
-            {name: tables[name] for name in names},
-            {name: plans[name] for name in names},
-        )
-        through = ", ".join(link.description for link in component_links)
-        for name in names:
-            others = ", ".join(repr(other) for other in names if other != name)
-            problems.setdefault(name, []).extend(
-                f"joined with {others} on {through}: {text}" for text in found
+    for component in _components(list(tables), links):
+        for names in _connected_subsets(component, links):
+            subset_links = _links_within(names, links)
+            found = _problems_of_join(
+                subset_links,
+                {name: tables[name] for name in names},
+                {name: plans[name] for name in names},
             )
+            through = ", ".join(link.description for link in subset_links)
+            for name in names:
+                others = ", ".join(repr(other) for other in names if other != name)
+                problems.setdefault(name, []).extend(
+                    f"joined with {others} on {through}: {text}" for text in found
+                )
     return problems
+
+
+def _links_within(names: Sequence[str], links: Sequence[_Link]) -> list[_Link]:
+    """The links as they hold among `names` only, leaving out those that join fewer than two."""
+    chosen = set(names)
+    restricted = []
+    for link in links:
+        columns = {name: column for name, column in link.columns.items() if name in chosen}
+        if len(columns) < 2:
+            continue
+        recodes = {name: pairing for name, pairing in link.recodes.items() if name in chosen}
+        restricted.append(_Link(link.description, columns, recodes))
+    return restricted
+
+
+def _connected_subsets(component: list[str], links: Sequence[_Link]) -> list[list[str]]:
+    """Every set of two or more tables of a component that is joined by its own links.
+
+    A third table that holds only some of the entities shrinks the inner join of all three, so
+    the join of two of them can single out a person the full join hides. Components of up to
+    `MAX_ENUMERATED_TABLES` tables are checked in every connected subset; larger ones in every
+    connected pair and the full join, which keeps the work from doubling with each table.
+    """
+    every_size = len(component) <= MAX_ENUMERATED_TABLES
+    largest = len(component) if every_size else 2
+    subsets = [
+        list(chosen)
+        for size in range(2, largest + 1)
+        for chosen in combinations(component, size)
+        if _is_connected(chosen, links)
+    ]
+    if not every_size:
+        subsets.append(list(component))
+    return subsets
+
+
+def _is_connected(names: Sequence[str], links: Sequence[_Link]) -> bool:
+    groups = _components(list(names), _links_within(names, links))
+    return len(groups) == 1 and len(groups[0]) == len(names)
 
 
 def _released_as_pandas(data: Any) -> pd.DataFrame:
@@ -123,17 +167,17 @@ def _is_consistent(plan: AnonymizationPlan, column: str) -> bool:
 def _count_links(
     tables: Mapping[str, pd.DataFrame],
     plans: Mapping[str, AnonymizationPlan],
-    name_links: Sequence[_Link],
 ) -> list[_Link]:
-    """Links between differently named columns whose values occur equally often."""
-    linked = {(name, column) for link in name_links for name, column in link.columns.items()}
+    """Links between differently named columns whose values occur equally often.
+
+    A column that already sits in a named link is compared too: a third table that copies it
+    must not hide that it also matches a differently named column of another table.
+    """
     candidates = {
         name: [
             column
             for column in frame.columns
-            if _is_consistent(plans[name], column)
-            and (name, column) not in linked
-            and column not in _measured_columns(plans[name])
+            if _is_consistent(plans[name], column) and column not in _measured_columns(plans[name])
         ]
         for name, frame in tables.items()
     }
