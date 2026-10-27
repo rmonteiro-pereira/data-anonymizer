@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- **Differential privacy.** `Anonymizer.synthesize_private` and `oblitus dp-synthesize` build a
+  synthetic table with MST under a declared (epsilon, delta) or rho budget, and
+  `Anonymizer.aggregate_private` and `oblitus dp-aggregate` release noisy counts, sums and means
+  per group with OpenDP (new `opendp` extra), with the confidence-interval half-width of every
+  value. Column domains and bounds must be declared, never read from the data. Every release
+  returns an itemized budget report, and a spend above the declared budget raises
+  `PrivacyBudgetError`. See `docs/differential-privacy.md`.
+
 ## 0.3.0
 
 - **Renamed to oblitus.** The package is `oblitus` on PyPI (`pip install oblitus`), the import

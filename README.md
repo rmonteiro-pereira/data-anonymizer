@@ -66,8 +66,9 @@ Planned, not yet implemented:
   - multivariate microaggregation (MDAV) and t-closeness;
   - l-diversity enforcement;
   - attack-based checks with Anonymeter (singling out, linkability, inference).
-- **Differential privacy**: an optional OpenDP extra for DP aggregates, and DP synthesis
-  (MST, AIM) with an ε budget across columns.
+- **Differential privacy**: AIM synthesis. Its reference package pulls in PyTorch and JAX,
+  learns column domains from the data and keeps its budget accounting inside the library (see
+  [docs/differential-privacy.md](https://github.com/rmonteiro-pereira/oblitus/blob/main/docs/differential-privacy.md#limits)).
 - **Synthetic-data checks**: distance to the closest real record and membership inference.
 - **Scale**: Spark tables through the same engine layer (see
   [docs/adr/0001-dataframe-backends.md](https://github.com/rmonteiro-pereira/oblitus/blob/main/docs/adr/0001-dataframe-backends.md)), and chunked
@@ -81,6 +82,8 @@ Python 3.12 or later:
 pip install oblitus
 # with DuckDB support:
 pip install "oblitus[duckdb]"
+# with OpenDP, for differentially private aggregates:
+pip install "oblitus[opendp]"
 ```
 
 `uv add oblitus` works too. The package imports as `oblitus` and installs the `oblitus`
@@ -192,6 +195,8 @@ locale for fake values, such as `pt_BR`; default `en_US`). Tables can be `.csv` 
 | `oblitus explore-noise INPUT --column NAME -o PAGE.html [--band SD] [--max-rows N]` | Writes the interactive noise explorer for one numeric column. Columns longer than `N` values (default 200,000) are explored on a random sample |
 | `oblitus infer-schema INPUT [--fidelity F] [-o SCHEMA]` | Learns a generation schema from a table |
 | `oblitus synthesize -o OUTPUT [--rows N] [--schema SCHEMA] [--reference INPUT] [--fidelity F]` | Generates a synthetic table |
+| `oblitus dp-synthesize INPUT --domains DOMAINS.json -o OUTPUT (--epsilon E [--delta D] \| --rho R) [--rows N]` | Generates a differentially private synthetic copy with MST. The JSON file declares each column's public domain. Needs `--delta` or `--rho` (Gaussian noise). Prints the budget spent |
+| `oblitus dp-aggregate INPUT --spec SPEC.json -o OUTPUT (--epsilon E [--delta D] \| --rho R) [--confidence C] [--accuracy-output FILE]` | Releases noisy counts, sums and means per group with OpenDP (`oblitus[opendp]`). The JSON spec declares each group's values and each sum's bounds. Also writes the interval half-width of every value |
 | `oblitus challenge --schema SCHEMA [--rows N] -o FOLDER` | Generates a data-science challenge: `train.csv`, `test.csv`, `QUESTION.md`, and `answers/` with the answer key |
 | `oblitus techniques` | Lists every technique, its parameters and whether it is reversible |
 
@@ -216,6 +221,8 @@ Exit codes:
   page, and reading its metrics
 - [docs/synthesis.md](https://github.com/rmonteiro-pereira/oblitus/blob/main/docs/synthesis.md): schemas, planted patterns, synthesis from a
   sample, and data-science challenges
+- [docs/differential-privacy.md](https://github.com/rmonteiro-pereira/oblitus/blob/main/docs/differential-privacy.md): what epsilon means,
+  public bounds and domains, DP aggregates, MST synthesis and the budget report
 - [ARCHITECTURE.md](https://github.com/rmonteiro-pereira/oblitus/blob/main/ARCHITECTURE.md): C4-style system views, how the code is organised and
   where to change things
 - [CONTRIBUTING.md](https://github.com/rmonteiro-pereira/oblitus/blob/main/CONTRIBUTING.md): the project's standards for code, design, tests, docs,
