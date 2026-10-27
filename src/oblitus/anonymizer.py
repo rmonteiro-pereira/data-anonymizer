@@ -2,7 +2,7 @@
 
 import hashlib
 import secrets
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -76,7 +76,9 @@ class Anonymizer:
     key gives the same pseudonyms on every run, which lets tables anonymized
     separately still join. Without a key, a random one is drawn, so pseudonyms
     differ between Anonymizer instances. `seed` makes noise and synthesis
-    reproducible.
+    reproducible. Anonymization runs draw a throwaway key from `throwaway_key_source`,
+    which defaults to `secrets.token_bytes(32)`; pass
+    `lambda: generate_key(sources).key` to draw it from the mixed entropy pool instead.
     """
 
     def __init__(
@@ -86,6 +88,7 @@ class Anonymizer:
         seed: int | None = None,
         locale: str = "en_US",
         extra_techniques: Iterable[Technique] = (),
+        throwaway_key_source: Callable[[], bytes] = lambda: secrets.token_bytes(32),
     ) -> None:
         if isinstance(secret_key, str):
             secret_key = secret_key.encode("utf-8")
@@ -99,6 +102,7 @@ class Anonymizer:
         self._sample_key = hashlib.sha256(self._randomness_key + b"|evaluation sample").digest()
         self._seed = seed
         self._locale = locale
+        self._throwaway_key_source = throwaway_key_source
         self._techniques: dict[str, Technique] = dict(BUILTIN_TECHNIQUES)
         for technique in extra_techniques:
             self._techniques[technique.name] = technique
@@ -304,7 +308,7 @@ class Anonymizer:
         return build_challenge(schema, rows, rng=rng, surrogates=SurrogateFactory(self._locale))
 
     def _context(self, *, throwaway_key: bool = False) -> TechniqueContext:
-        secret_key = secrets.token_bytes(32) if throwaway_key else self._secret_key
+        secret_key = self._throwaway_key_source() if throwaway_key else self._secret_key
         return TechniqueContext(
             secret_key=secret_key,
             surrogates=SurrogateFactory(self._locale),

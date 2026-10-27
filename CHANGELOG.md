@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Key generation from several entropy sources.** `oblitus keygen [--source ...]` and `generate_key` mix `os.urandom` (always included) with hardware RNG, microphone, camera, CPU timing jitter and, opt-in, public randomness beacons, with a health check and a per-source report. New extras `audio` and `camera`. `Anonymizer(throwaway_key_source=...)` draws the anonymization throwaway key from the mix.
+
 ## 0.3.0
 
 - **Renamed to oblitus.** The package is `oblitus` on PyPI (`pip install oblitus`), the import

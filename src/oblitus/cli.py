@@ -6,6 +6,7 @@ variable. Without it, a random key is used and pseudonyms change on every run.
 """
 
 import argparse
+import base64
 import json
 import os
 import sys
@@ -16,7 +17,9 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from oblitus.anonymizer import AnonymizationResult, Anonymizer
+from oblitus.entropy_sources import sources_by_name
 from oblitus.errors import AnonymizerError, PlanError
+from oblitus.key_generation import GeneratedKey, SourceStatus, generate_key
 from oblitus.noise_explorer import explore_noise, save_page
 from oblitus.noise_explorer.sweep import DEFAULT_MAX_ROWS
 from oblitus.plan import AnonymizationPlan, Fidelity, Protection
@@ -38,6 +41,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Run the command line and return the process exit code."""
     parser = _build_parser()
     arguments = parser.parse_args(argv)
+    if arguments.command == "keygen":
+        return _keygen(arguments)
     secret_key = os.environ.get(SECRET_KEY_VARIABLE)
     if secret_key is None and arguments.command == "reveal":
         print(
@@ -147,9 +152,52 @@ def _build_parser() -> argparse.ArgumentParser:
     challenge_parser.add_argument("-o", "--output", type=Path, required=True, help="folder")
     challenge_parser.set_defaults(handler=_challenge)
 
+    keygen_parser = commands.add_parser(
+        "keygen", help="print a secret key mixed from several entropy sources"
+    )
+    keygen_parser.add_argument(
+        "--source",
+        action="append",
+        default=[],
+        metavar="NAME",
+        help="extra source: hardware, microphone, camera, timing or beacon; repeatable. "
+        "os is always included",
+    )
+    keygen_parser.add_argument("--format", choices=["hex", "base64"], default="hex")
+
     techniques_parser = commands.add_parser("techniques", help="list available techniques")
     techniques_parser.set_defaults(handler=_list_techniques)
     return parser
+
+
+def _keygen(arguments: argparse.Namespace) -> int:
+    try:
+        generated = generate_key(sources_by_name(arguments.source))
+    except AnonymizerError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 2
+    print(_encode_key(generated.key, arguments.format))
+    _print_key_report(generated)
+    return 0
+
+
+def _encode_key(key: bytes, key_format: str) -> str:
+    if key_format == "base64":
+        return base64.b64encode(key).decode("ascii")
+    return key.hex()
+
+
+def _print_key_report(generated: GeneratedKey) -> None:
+    for report in generated.sources:
+        note = f" ({report.note})" if report.note else ""
+        if report.status is SourceStatus.SKIPPED:
+            print(f"  {report.name:<11} skipped{note}", file=sys.stderr)
+            continue
+        print(
+            f"  {report.name:<11} used: {report.byte_count} bytes, "
+            f"min-entropy about {report.min_entropy_bits:.0f} bits{note}",
+            file=sys.stderr,
+        )
 
 
 def _add_fidelity(parser: argparse.ArgumentParser) -> None:

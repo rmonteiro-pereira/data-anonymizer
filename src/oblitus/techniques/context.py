@@ -30,7 +30,7 @@ class TechniqueContext:
         Each column and purpose gets independent numbers, so the noise of one column
         says nothing about another's.
         """
-        return _hkdf(self.randomness_key, f"stream:{purpose}:{column}", 32)
+        return hkdf_sha256(self.randomness_key, f"stream:{purpose}:{column}", 32)
 
     def choice_key(self, column: str, purpose: str) -> bytes:
         """Key random choices that stand in for values, such as category codes or fakes.
@@ -40,7 +40,7 @@ class TechniqueContext:
         replaces with a throwaway one. Codes and fakes are then fresh in every anonymized
         release, and reproducible for the key holder under pseudonymization.
         """
-        return _hkdf(self.secret_key + self.randomness_key, f"choice:{purpose}:{column}", 32)
+        return hkdf_sha256(self.secret_key + self.randomness_key, f"choice:{purpose}:{column}", 32)
 
     def generator(self, column: str, purpose: str) -> np.random.Generator:
         """A seeded generator for random choices made in Python, such as shuffling codes.
@@ -60,14 +60,14 @@ class TechniqueContext:
         Each purpose gets an independent key, so the encryption key cannot be
         recovered from pseudonyms made with the secret key, or the other way round.
         """
-        return _hkdf(self.secret_key, purpose, length)
+        return hkdf_sha256(self.secret_key, purpose, length)
 
     def keyed_seed(self, value: str) -> int:
         """Return a stable 63-bit seed derived from a value and the secret key."""
         return int.from_bytes(self.keyed_digest(value)[:8], "big") >> 1
 
 
-def _hkdf(material: bytes, purpose: str, length: int) -> bytes:
+def hkdf_sha256(material: bytes, purpose: str, length: int) -> bytes:
     derivation = HKDF(
         algorithm=hashes.SHA256(),
         length=length,
