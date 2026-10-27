@@ -1,0 +1,14 @@
+{
+  "columns": [
+    {"name": "customer_id", "kind": "integer", "minimum": 1, "unique": true},
+    {"name": "full_name", "kind": "text", "category": "person_name"},
+    {"name": "email", "kind": "text", "category": "email", "unique": true},
+    {"name": "cpf", "kind": "text", "category": "cpf", "unique": true},
+    {"name": "signup_date", "kind": "datetime", "start": "2022-01-01T00:00:00", "end": "2025-12-31T00:00:00"},
+    {"name": "age", "kind": "integer", "mean": 41, "std": 13, "minimum": 18, "maximum": 95},
+    {"name": "plan", "kind": "category", "choices": ["free", "basic", "pro"], "weights": [70, 22, 8]},
+    {"name": "monthly_spend", "kind": "float", "mean": 120.0, "std": 45.0, "minimum": 0},
+    {"name": "newsletter", "kind": "boolean", "true_share": 0.35},
+    {"name": "voucher", "kind": "text", "template": "VC-????-####", "null_fraction": 0.8}
+  ]
+}
