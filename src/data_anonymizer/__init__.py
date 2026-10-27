@@ -6,7 +6,8 @@ from data_anonymizer.anonymizer import AnonymizationResult, Anonymizer
 from data_anonymizer.detection import ColumnFinding
 from data_anonymizer.errors import AnonymizerError, PlanError, SchemaError, TableFormatError
 from data_anonymizer.evaluation import PrivacyReport, UtilityReport
-from data_anonymizer.plan import AnonymizationPlan, ColumnAction, Fidelity
+from data_anonymizer.plan import AnonymizationPlan, ColumnAction, Fidelity, Protection
+from data_anonymizer.protection import ProtectionAssessment, ProtectionLevel
 from data_anonymizer.synthesis import ColumnSchema, DatasetSchema, infer_schema
 from data_anonymizer.taxonomy import ColumnKind, DataCategory, Sensitivity
 from data_anonymizer.techniques import (
@@ -34,6 +35,9 @@ __all__ = [
     "Fidelity",
     "PlanError",
     "PrivacyReport",
+    "Protection",
+    "ProtectionAssessment",
+    "ProtectionLevel",
     "SchemaError",
     "Sensitivity",
     "StatisticalEffect",

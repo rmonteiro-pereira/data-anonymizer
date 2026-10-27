@@ -1,7 +1,7 @@
 import pandas as pd
 import pytest
 
-from data_anonymizer.detection import scan, scan_column
+from data_anonymizer.detection import checksums, scan, scan_column
 from data_anonymizer.detection.column_names import category_from_name, name_tokens
 from data_anonymizer.detection.patterns import (
     is_valid_cnpj,
@@ -103,3 +103,118 @@ def test_dates_stored_as_text_are_recognized_as_dates():
 
     assert finding.kind is ColumnKind.DATETIME
     assert finding.category is DataCategory.GENERIC_DATETIME
+
+
+@pytest.mark.parametrize(
+    ("validator", "valid", "invalid"),
+    [
+        (checksums.is_valid_cnpj, "12.ABC.345/01DE-35", "12.ABC.345/01DE-36"),
+        (checksums.is_valid_spanish_id, "12345678Z", "12345678A"),
+        (checksums.is_valid_spanish_id, "X1234567L", "X1234567M"),
+        (checksums.is_valid_portuguese_nif, "123456789", "123456788"),
+        (checksums.is_valid_dutch_bsn, "111222333", "111222334"),
+        (checksums.is_valid_fiscal_code, "RSSMRA85T10A562S", "RSSMRA85T10A562T"),
+        (checksums.is_valid_nino, "AB123456C", "DA123456C"),
+        (checksums.is_valid_imei, "490154203237518", "490154203237519"),
+        (checksums.is_valid_aadhaar, "234123412346", "234123412347"),
+        (checksums.is_valid_german_tax_id, "36574261809", "36574261808"),
+        (checksums.is_ip_address, "2001:db8::8a2e:370:7334", "12:30:00"),
+    ],
+)
+def test_international_and_new_brazilian_checksums(validator, valid, invalid):
+    assert validator(valid)
+    assert not validator(invalid)
+
+
+@pytest.mark.parametrize(
+    "validator",
+    [
+        checksums.is_valid_cnh,
+        checksums.is_valid_nis,
+        checksums.is_valid_renavam,
+        checksums.is_valid_voter_id,
+        checksums.is_valid_cns,
+        checksums.is_valid_invoice_key,
+    ],
+)
+def test_changing_any_digit_breaks_a_brazilian_document_number(validator):
+    length = {
+        checksums.is_valid_cns: 15,
+        checksums.is_valid_invoice_key: 44,
+        checksums.is_valid_voter_id: 12,
+    }.get(validator, 11)
+    valid = _first_valid(validator, length)
+    altered = [
+        valid[:position] + str((int(valid[position]) + step) % 10) + valid[position + 1 :]
+        for position in range(length)
+        for step in range(1, 10)
+    ]
+
+    # Mod-11 schemes miss a few changes by design, such as a digit whose weight is 11.
+    rejected = sum(not validator(number) for number in altered) / len(altered)
+    assert rejected > 0.8
+
+
+def _first_valid(validator, length: int) -> str:
+    seed = 7
+    for _ in range(200_000):
+        seed = (seed * 6364136223846793005 + 1442695040888963407) % 2**64
+        prefix = "7" if validator is checksums.is_valid_cns else ""
+        digits = (prefix + str(seed) * 6)[:length]
+        if validator is checksums.is_valid_voter_id:
+            digits = digits[:8] + "12" + digits[10:]
+        if validator(digits):
+            return digits
+    raise AssertionError("no valid number found")
+
+
+def test_timestamps_and_order_numbers_are_not_phones_or_documents():
+    epoch_seconds = pd.Series(range(1_700_000_000, 1_700_000_000 + 50 * 3_600, 3_600))
+    order_numbers = pd.Series([f"{index:012d}" for index in range(10**11, 10**11 + 50)])
+
+    assert scan_column("event_time", epoch_seconds).category is not DataCategory.PHONE
+    assert scan_column("order_number", order_numbers).category not in {
+        DataCategory.PHONE,
+        DataCategory.CPF,
+        DataCategory.CREDIT_CARD,
+    }
+
+
+def test_bare_brazilian_mobiles_are_phones():
+    mobiles = pd.Series([f"119{index:08d}" for index in range(40)])
+
+    assert scan_column("contato", mobiles).category is DataCategory.PHONE
+
+
+def _with_luhn_digit(prefix: str) -> str:
+    return next(
+        prefix + str(digit) for digit in range(10) if checksums.passes_luhn(prefix + str(digit))
+    )
+
+
+def test_imeis_are_not_credit_cards():
+    imeis = pd.Series([_with_luhn_digit(f"35{index:012d}") for index in range(30)])
+
+    assert scan_column("device", imeis).category is DataCategory.IMEI
+
+
+def test_integer_ids_with_lost_leading_zeros_are_still_recognized():
+    cpfs = pd.Series([int("01234567890"), int("00000000191")] * 15)
+
+    assert scan_column("documento", cpfs).category is DataCategory.CPF
+
+
+def test_name_hint_formats_need_their_name():
+    uuids = pd.Series(["123e4567-e89b-42d3-a456-426614174000"] * 25)
+
+    assert scan_column("chave_pix", uuids).category is DataCategory.PIX_KEY
+    assert scan_column("session", uuids).category is not DataCategory.PIX_KEY
+
+
+def test_birth_dates_are_recognized_from_their_values():
+    dates = pd.Series(pd.date_range("1950-01-01", "2005-01-01", periods=200).normalize())
+
+    finding = scan_column("dt", dates)
+
+    assert finding.category is DataCategory.DATE_OF_BIRTH
+    assert finding.confidence < 0.6

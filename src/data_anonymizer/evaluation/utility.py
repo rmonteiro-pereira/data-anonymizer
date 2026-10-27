@@ -83,13 +83,14 @@ def _compare_numeric(column: str, before: pd.Series, after: pd.Series) -> Column
     return ColumnUtility(
         column=column,
         comparison="numeric",
-        mean_change=_relative_change(float(before.mean()), float(after.mean())),
-        std_change=_relative_change(float(before.std()), float(after.std())),
+        mean_change=relative_change(float(before.mean()), float(after.mean())),
+        std_change=relative_change(float(before.std()), float(after.std())),
         ks_statistic=float(stats.ks_2samp(before, after).statistic),
     )
 
 
-def _relative_change(before: float, after: float) -> float:
+def relative_change(before: float, after: float) -> float:
+    """Return |after - before| / |before|, or |after| when before is zero."""
     if before == 0:
         return abs(after)
     return abs(after - before) / abs(before)

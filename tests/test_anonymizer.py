@@ -7,6 +7,8 @@ from data_anonymizer import (
     ColumnAction,
     Fidelity,
     PlanError,
+    Protection,
+    ProtectionLevel,
     StatisticalEffect,
     Technique,
     TechniqueFamily,
@@ -33,7 +35,7 @@ def test_statistical_plan_pseudonymizes_identifiers_and_keeps_statistics(people)
     assert "<EMAIL>" in data["notes"].iloc[0]
 
 
-def test_privacy_plan_reaches_the_k_anonymity_target(people):
+def test_privacy_pseudonymization_hashes_identifiers_and_reaches_k(people):
     anonymizer = Anonymizer(secret_key="key", seed=1)
     plan = anonymizer.propose(people, fidelity=Fidelity.PRIVACY)
 
@@ -43,8 +45,70 @@ def test_privacy_plan_reaches_the_k_anonymity_target(people):
     assert result.privacy_before.k_anonymity == 1
     assert result.privacy_after.share_below_target <= 0.01
     assert result.suppressed_cells > 0
-    assert (result.data["email"].dropna() == "[REDACTED]").all()
+    assert result.data["email"].str.fullmatch(r"[0-9a-f]{16}").all()
     assert result.data["age"].dropna().str.startswith("[").all()
+    assert result.protection.level is ProtectionLevel.PSEUDONYMIZED
+    assert result.protection.reached
+
+
+@pytest.mark.parametrize("fidelity", list(Fidelity))
+def test_anonymization_leaves_no_link_to_people(people, fidelity):
+    anonymizer = Anonymizer(secret_key="key", seed=1)
+    plan = anonymizer.propose(people, fidelity=fidelity, protection=Protection.ANONYMIZATION)
+
+    result = anonymizer.apply(people, plan)
+
+    assert plan.enforce_k_anonymity
+    assert not any("link" in problem for problem in result.protection.problems)
+    assert not result.data["email"].isin(people["email"]).any()
+    assert not result.data["cpf"].isin(people["cpf"]).any()
+    assert result.protection.reached == (result.protection.level is ProtectionLevel.ANONYMIZED)
+    assert result.privacy_after.share_below_target <= 0.01
+
+
+def test_random_surrogates_differ_for_the_same_person(people):
+    repeated = pd.concat([people.head(50)] * 2, ignore_index=True)
+    plan = AnonymizationPlan(
+        fidelity=Fidelity.STATISTICAL,
+        protection=Protection.ANONYMIZATION,
+        actions=[
+            ColumnAction(
+                column="email",
+                technique="surrogate",
+                params={"category": "email", "consistent": False},
+            )
+        ],
+        direct_identifiers=["email"],
+    )
+
+    emails = Anonymizer(seed=2).apply(repeated, plan).data["email"]
+
+    assert (emails.iloc[:50].to_numpy() != emails.iloc[50:].to_numpy()).mean() > 0.9
+
+
+def test_anonymization_refuses_linking_techniques(people):
+    plan = AnonymizationPlan(
+        fidelity=Fidelity.STATISTICAL,
+        protection=Protection.ANONYMIZATION,
+        actions=[ColumnAction(column="email", technique="keyed_hash")],
+    )
+
+    with pytest.raises(PlanError, match="keeps a link"):
+        Anonymizer().apply(people, plan)
+
+
+def test_an_untouched_direct_identifier_makes_the_result_identifiable(people):
+    plan = AnonymizationPlan(
+        fidelity=Fidelity.STATISTICAL,
+        actions=[ColumnAction(column="email", technique="keep")],
+        direct_identifiers=["email", "cpf"],
+    )
+
+    protection = Anonymizer().apply(people, plan).protection
+
+    assert protection.level is ProtectionLevel.IDENTIFIABLE
+    assert not protection.reached
+    assert len([problem for problem in protection.problems if "left as it was" in problem]) == 2
 
 
 def test_same_key_gives_the_same_pseudonyms_across_instances(people):

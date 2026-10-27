@@ -4,9 +4,10 @@ from dataclasses import dataclass
 
 import pandas as pd
 
-from data_anonymizer.detection.column_names import category_from_name
-from data_anonymizer.detection.kinds import infer_kind
-from data_anonymizer.detection.patterns import RECOGNIZERS
+from data_anonymizer.detection.column_names import category_from_name, has_negative_hint
+from data_anonymizer.detection.kinds import as_datetime, infer_kind
+from data_anonymizer.detection.patterns import RECOGNIZERS, TEXT_RECOGNIZERS
+from data_anonymizer.detection.value_evidence import decide_from_values, value_candidates
 from data_anonymizer.taxonomy import (
     NUMERIC_KINDS,
     ColumnKind,
@@ -14,9 +15,6 @@ from data_anonymizer.taxonomy import (
     Sensitivity,
     sensitivity_of,
 )
-
-# Share of sampled values that must match a recognizer for the whole column to count.
-_VALUE_MATCH_SHARE = 0.8
 
 # Free text is flagged when at least this share of values contains personal data.
 _EMBEDDED_MATCH_SHARE = 0.1
@@ -27,7 +25,12 @@ _IDENTIFIER_UNIQUE_SHARE = 0.98
 _NAME_ONLY_CONFIDENCE = 0.7
 _NAME_CONTRADICTED_CONFIDENCE = 0.4
 _UNIQUENESS_ONLY_CONFIDENCE = 0.5
-_AGREEMENT_BONUS = 0.15
+_BIRTH_DATE_CONFIDENCE = 0.5
+_FREE_TEXT_MIN_WORDS = 2
+
+# Birth dates lie in the past, within a human lifetime, and spread over decades.
+_OLDEST_AGE_YEARS = 120
+_BIRTH_YEAR_SPREAD = 8
 
 _GENDER_VALUES = {"m", "f", "male", "female", "masculino", "feminino", "man", "woman", "other"}
 
@@ -67,7 +70,9 @@ def scan_column(
     present = values.dropna()
     sample = _sample(present, sample_size, seed)
 
-    category, confidence, evidence = _classify(kind, name_category, present, sample)
+    category, confidence, evidence = _classify(
+        kind, name_category, present, sample, ignore_bare_digits=has_negative_hint(column)
+    )
     return ColumnFinding(
         column=column,
         kind=kind,
@@ -89,17 +94,32 @@ def _classify(
     name_category: DataCategory | None,
     present: pd.Series,
     sample: pd.Series,
+    *,
+    ignore_bare_digits: bool,
 ) -> tuple[DataCategory, float, str]:
     if sample.empty:
         return _from_name_or_generic(kind, name_category, "the column has no values")
 
     if kind in (ColumnKind.TEXT, ColumnKind.CATEGORY, ColumnKind.INTEGER):
-        by_value = _classify_by_values(sample, name_category)
+        candidates = value_candidates(
+            sample,
+            name_category=name_category,
+            integers=kind is ColumnKind.INTEGER,
+            ignore_bare_digits=ignore_bare_digits,
+        )
+        by_value = decide_from_values(candidates)
         if by_value is not None:
             return by_value
 
     if name_category is not None:
         return _from_name(name_category)
+
+    if kind is ColumnKind.DATETIME and _looks_like_birth_dates(sample):
+        return (
+            DataCategory.DATE_OF_BIRTH,
+            _BIRTH_DATE_CONFIDENCE,
+            "dates lie in the past and spread over decades, like birth dates",
+        )
 
     if kind in (ColumnKind.TEXT, ColumnKind.CATEGORY):
         embedded = _classify_free_text(sample)
@@ -116,28 +136,6 @@ def _classify(
             "nearly every row has its own value, so the column can single out a record",
         )
     return _generic(kind), 1.0, "no sign of personal data in the name or the values"
-
-
-def _classify_by_values(
-    sample: pd.Series, name_category: DataCategory | None
-) -> tuple[DataCategory, float, str] | None:
-    texts = sample.astype(str).str.strip()
-    best_category = None
-    best_share = 0.0
-    for recognizer in RECOGNIZERS:
-        share = float(texts.map(recognizer.matches).mean())
-        if share > best_share:
-            best_category = recognizer.category
-            best_share = share
-
-    if best_category is None or best_share < _VALUE_MATCH_SHARE:
-        return None
-
-    evidence = f"{best_share:.0%} of sampled values are valid {best_category.value} values"
-    if best_category == name_category:
-        confidence = min(1.0, best_share + _AGREEMENT_BONUS)
-        return best_category, confidence, evidence + " and the column name agrees"
-    return best_category, best_share, evidence
 
 
 def _from_name(name_category: DataCategory) -> tuple[DataCategory, float, str]:
@@ -157,6 +155,9 @@ def _from_name_or_generic(
 
 def _classify_free_text(sample: pd.Series) -> tuple[DataCategory, float, str] | None:
     texts = sample.astype(str)
+    # One identifier per cell is a column of identifiers, not prose that mentions one.
+    if texts.map(lambda text: len(text.split())).mean() < _FREE_TEXT_MIN_WORDS:
+        return None
     contains_any = texts.map(_contains_personal_data)
     share = float(contains_any.mean())
     if share < _EMBEDDED_MATCH_SHARE:
@@ -166,7 +167,20 @@ def _classify_free_text(sample: pd.Series) -> tuple[DataCategory, float, str] | 
 
 
 def _contains_personal_data(text: str) -> bool:
-    return any(recognizer.find_spans(text) for recognizer in RECOGNIZERS)
+    return any(recognizer.find_spans(text) for recognizer in TEXT_RECOGNIZERS)
+
+
+def _looks_like_birth_dates(sample: pd.Series) -> bool:
+    dates = as_datetime(sample).dropna()
+    if len(dates) < 20:
+        return False
+    if dates.dt.tz is not None:
+        dates = dates.dt.tz_localize(None)
+    today = pd.Timestamp.today().normalize()
+    oldest = today - pd.DateOffset(years=_OLDEST_AGE_YEARS)
+    in_lifetime = bool(dates.between(oldest, today).all())
+    no_time_of_day = bool((dates == dates.dt.normalize()).all())
+    return in_lifetime and no_time_of_day and dates.dt.year.std() >= _BIRTH_YEAR_SPREAD
 
 
 def _looks_like_gender(sample: pd.Series) -> bool:

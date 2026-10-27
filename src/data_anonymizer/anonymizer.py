@@ -16,11 +16,18 @@ from data_anonymizer.evaluation import (
     compare_tables,
 )
 from data_anonymizer.local_suppression import enforce_k_anonymity
-from data_anonymizer.plan import AnonymizationPlan, ColumnAction, Fidelity
+from data_anonymizer.plan import AnonymizationPlan, ColumnAction, Fidelity, Protection
 from data_anonymizer.proposal import propose_plan
+from data_anonymizer.protection import (
+    ProtectionAssessment,
+    assess_protection,
+    linking_actions,
+)
 from data_anonymizer.surrogates import SurrogateFactory
 from data_anonymizer.synthesis import (
+    Challenge,
     DatasetSchema,
+    build_challenge,
     generate_from_reference,
     generate_from_schema,
     infer_schema,
@@ -42,6 +49,7 @@ class AnonymizationResult:
     privacy_before: PrivacyReport
     privacy_after: PrivacyReport
     utility: UtilityReport
+    protection: ProtectionAssessment
 
 
 class Anonymizer:
@@ -85,17 +93,25 @@ class Anonymizer:
         frame: pd.DataFrame,
         *,
         fidelity: Fidelity = Fidelity.STATISTICAL,
+        protection: Protection = Protection.PSEUDONYMIZATION,
         findings: list[ColumnFinding] | None = None,
     ) -> AnonymizationPlan:
         """Scan the table, unless findings are given, and propose a plan for it."""
         if findings is None:
             findings = self.scan(frame)
-        return propose_plan(findings, fidelity=fidelity, techniques=self._techniques)
+        return propose_plan(
+            findings, fidelity=fidelity, protection=protection, techniques=self._techniques
+        )
 
     def apply(self, frame: pd.DataFrame, plan: AnonymizationPlan) -> AnonymizationResult:
-        """Run a plan on a table and measure the result against the original."""
+        """Run a plan on a table and measure the result against the original.
+
+        An anonymization plan that names a linking technique is refused before
+        anything runs, and runs under a throwaway key so nothing it produces can be
+        re-linked later.
+        """
         self.validate(frame, plan)
-        context = self._context()
+        context = self._context(throwaway_key=plan.protection is Protection.ANONYMIZATION)
         anonymized = frame.copy()
         for action in plan.actions:
             technique = self._techniques[action.technique]
@@ -112,13 +128,15 @@ class Anonymizer:
             anonymized = outcome.data
             suppressed_cells = outcome.suppressed_cells
 
+        privacy_after = self._privacy(anonymized, plan)
         return AnonymizationResult(
             data=anonymized,
             plan=plan,
             suppressed_cells=suppressed_cells,
             privacy_before=self._privacy(frame, plan),
-            privacy_after=self._privacy(anonymized, plan),
+            privacy_after=privacy_after,
             utility=compare_tables(frame, anonymized),
+            protection=assess_protection(plan, self._techniques, privacy_after, frame, anonymized),
         )
 
     def reveal(self, frame: pd.DataFrame, plan: AnonymizationPlan) -> pd.DataFrame:
@@ -149,6 +167,8 @@ class Anonymizer:
             for action in plan.actions
             if (problem := self._problem_with(frame, action)) is not None
         ]
+        if not problems and plan.protection is Protection.ANONYMIZATION:
+            problems = linking_actions(plan, self._techniques)
         if problems:
             raise PlanError("; ".join(problems))
 
@@ -195,10 +215,20 @@ class Anonymizer:
             reference, schema, rows, fidelity=fidelity, rng=rng, surrogates=surrogates
         )
 
-    def _context(self) -> TechniqueContext:
+    def challenge(self, schema: DatasetSchema, rows: int) -> Challenge:
+        """Generate a data-science challenge from a schema with a `question`.
+
+        Returns the training table, the test features, the test answers and an
+        answer key with the true drivers and the best achievable scores.
+        """
+        rng = np.random.default_rng(self._seed)
+        return build_challenge(schema, rows, rng=rng, surrogates=SurrogateFactory(self._locale))
+
+    def _context(self, *, throwaway_key: bool = False) -> TechniqueContext:
+        secret_key = secrets.token_bytes(32) if throwaway_key else self._secret_key
         return TechniqueContext(
             rng=np.random.default_rng(self._seed),
-            secret_key=self._secret_key,
+            secret_key=secret_key,
             surrogates=SurrogateFactory(self._locale),
         )
 

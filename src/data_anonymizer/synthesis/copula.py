@@ -162,10 +162,10 @@ def _correlation(scores: np.ndarray) -> np.ndarray:
     # A constant column has no defined correlation; treat it as independent.
     correlation = np.nan_to_num(correlation, nan=0.0)
     np.fill_diagonal(correlation, 1.0)
-    return _nearest_positive_definite(correlation)
+    return nearest_positive_definite(correlation)
 
 
-def _nearest_positive_definite(matrix: np.ndarray) -> np.ndarray:
+def nearest_positive_definite(matrix: np.ndarray) -> np.ndarray:
     eigenvalues, eigenvectors = np.linalg.eigh(matrix)
     raised = np.maximum(eigenvalues, _MIN_EIGENVALUE)
     rebuilt = eigenvectors @ np.diag(raised) @ eigenvectors.T

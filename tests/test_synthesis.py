@@ -116,3 +116,48 @@ def test_example_schema_generates_a_table():
         column.name for column in DatasetSchema.load(schema_path).columns
     ]
     assert frame["email"].is_unique
+
+
+def test_a_challenge_withholds_the_truth_and_scores_the_optimum(tmp_path):
+    schema_path = Path(__file__).parent.parent / "examples" / "churn_challenge.json"
+    schema = DatasetSchema.load(schema_path)
+
+    challenge = Anonymizer(seed=4).challenge(schema, 3000)
+    key = challenge.answer_key
+
+    assert "churn_probability" not in challenge.train.columns
+    assert "churned" not in challenge.test_features.columns
+    assert len(challenge.test_features) == len(challenge.test_answers)
+    assert set(key["features"]["true_drivers"]) == {
+        "plan",
+        "tenure_months",
+        "monthly_spend",
+        "support_tickets",
+    }
+    assert "age" in key["features"]["correlated_but_not_causal"]
+    assert "region" in key["features"]["distractors"]
+    assert 0.6 < key["best_achievable"]["roc_auc"] < 0.95
+
+
+def test_regression_challenge_optimum_matches_the_planted_noise():
+    schema = DatasetSchema.model_validate(
+        {
+            "columns": [
+                {"name": "x", "kind": "float", "mean": 0, "std": 1},
+                {"name": "noise_col", "kind": "float", "mean": 0, "std": 1},
+                {"name": "y", "kind": "float", "formula": "3 * x + 1", "noise_std": 0.5},
+            ],
+            "question": {
+                "title": "Fit y",
+                "prompt": "Predict y.",
+                "target": "y",
+                "task": "regression",
+            },
+        }
+    )
+
+    key = Anonymizer(seed=1).challenge(schema, 5000).answer_key
+
+    assert key["best_achievable"]["rmse"] == pytest.approx(0.5, rel=0.08)
+    assert key["features"]["true_drivers"] == ["x"]
+    assert key["features"]["distractors"] == ["noise_col"]

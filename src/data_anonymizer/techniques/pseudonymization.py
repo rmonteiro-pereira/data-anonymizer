@@ -15,7 +15,7 @@ from argon2.low_level import Type, hash_secret
 
 from data_anonymizer.taxonomy import DataCategory
 from data_anonymizer.techniques.context import TechniqueContext
-from data_anonymizer.techniques.value_mapping import map_distinct
+from data_anonymizer.techniques.value_mapping import map_distinct, map_present
 
 _DIGITS = "0123456789"
 _LOWERCASE = "abcdefghijklmnopqrstuvwxyz"
@@ -164,13 +164,22 @@ def surrogate(
     *,
     category: str,
     unique: bool = True,
+    consistent: bool = True,
 ) -> pd.Series:
     """Replace each value with a realistic fake of the given category, such as an email.
 
-    With `unique`, two different real values never share a fake value, which keeps
-    distinct counts exact.
+    With `consistent`, the fake is derived from the value and the secret key, so the
+    same person gets the same fake everywhere: a pseudonym. Without it, every cell
+    gets an unrelated random fake and nothing links back to the person. With
+    `unique` and `consistent`, two different real values never share a fake value,
+    which keeps distinct counts exact.
     """
     data_category = DataCategory(category)
+    if not consistent:
+        return map_present(
+            values, lambda original: _random_surrogate(context, data_category, original)
+        )
+
     present = values.dropna().astype(str)
     mapping: dict[str, str] = {}
     used: set[str] = set()
@@ -182,6 +191,11 @@ def surrogate(
     result = values.astype(object).copy()
     result[values.notna()] = present.map(mapping)
     return result
+
+
+def _random_surrogate(context: TechniqueContext, category: DataCategory, original: str) -> str:
+    seed = int(context.rng.integers(0, 2**63 - 1))
+    return context.surrogates.value_for(category, seed, like=original)
 
 
 def _surrogate_for(

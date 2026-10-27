@@ -1,0 +1,32 @@
+{
+  "columns": [
+    {"name": "customer_id", "kind": "integer", "minimum": 1, "unique": true},
+    {"name": "age", "kind": "integer", "mean": 41, "std": 12, "minimum": 18, "maximum": 90},
+    {"name": "plan", "kind": "category", "choices": ["free", "basic", "pro"], "weights": [55, 30, 15]},
+    {"name": "region", "kind": "category", "choices": ["north", "south", "east", "west"]},
+    {"name": "tenure_months", "kind": "integer", "distribution": "gamma", "mean": 24, "std": 18, "minimum": 1, "maximum": 120},
+    {
+      "name": "monthly_spend", "kind": "float", "distribution": "lognormal", "mean": 60, "std": 35, "minimum": 0,
+      "conditions": [{"when": "plan == 'pro'", "mean": 180, "std": 60}]
+    },
+    {"name": "support_tickets", "kind": "integer", "distribution": "poisson", "mean": 1.5},
+    {"name": "newsletter", "kind": "boolean", "true_share": 0.4},
+    {
+      "name": "churn_probability", "kind": "float",
+      "formula": "sigmoid(-1.2 + 0.55 * support_tickets - 0.04 * tenure_months + where(plan == 'free', 0.8, 0) - 0.004 * monthly_spend)"
+    },
+    {"name": "churned", "kind": "boolean", "formula": "bernoulli(churn_probability)"}
+  ],
+  "correlations": [
+    {"columns": ["age", "tenure_months"], "value": 0.45},
+    {"columns": ["support_tickets", "newsletter"], "value": 0.3}
+  ],
+  "question": {
+    "title": "Who is about to churn?",
+    "prompt": "Predict which customers churn in the next month. Score: ROC AUC on the test set.",
+    "target": "churned",
+    "task": "classification",
+    "hidden_columns": ["churn_probability"],
+    "truth_column": "churn_probability"
+  }
+}

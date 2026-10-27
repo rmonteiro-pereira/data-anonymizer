@@ -1,0 +1,658 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Noise explorer</title>
+<style>
+  :root {
+    color-scheme: light;
+    --surface: #fcfcfb;
+    --surface-raised: #ffffff;
+    --text-primary: #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted: #77766f;
+    --grid: #e4e3df;
+    --border: #d6d5d0;
+    --series-1: #2a78d6;
+    --series-2: #eb6834;
+    --series-3: #1baf7a;
+    --series-4: #eda100;
+    --series-5: #e87ba4;
+    --band: rgba(235, 104, 52, 0.12);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) {
+      color-scheme: dark;
+      --surface: #1a1a19;
+      --surface-raised: #232322;
+      --text-primary: #f0efec;
+      --text-secondary: #c3c2b7;
+      --text-muted: #9a998f;
+      --grid: #34342f;
+      --border: #44443e;
+      --series-1: #3987e5;
+      --series-2: #d95926;
+      --series-3: #199e70;
+      --series-4: #c98500;
+      --series-5: #d55181;
+      --band: rgba(217, 89, 38, 0.18);
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --surface: #1a1a19;
+    --surface-raised: #232322;
+    --text-primary: #f0efec;
+    --text-secondary: #c3c2b7;
+    --text-muted: #9a998f;
+    --grid: #34342f;
+    --border: #44443e;
+    --series-1: #3987e5;
+    --series-2: #d95926;
+    --series-3: #199e70;
+    --series-4: #c98500;
+    --series-5: #d55181;
+    --band: rgba(217, 89, 38, 0.18);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--surface);
+    color: var(--text-primary);
+    font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  main { max-width: 1120px; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { font-size: 1.5rem; margin: 0 0 4px; }
+  h2 { font-size: 1.05rem; margin: 0 0 2px; }
+  .lede, .note { color: var(--text-secondary); margin: 0 0 16px; }
+  .note { font-size: 0.85rem; }
+  .controls {
+    display: flex; flex-wrap: wrap; gap: 16px 24px; align-items: center;
+    padding: 12px 0 16px; border-bottom: 1px solid var(--border); margin-bottom: 16px;
+  }
+  label { color: var(--text-secondary); font-size: 0.9rem; }
+  select, input[type="range"] { margin-left: 8px; vertical-align: middle; }
+  select {
+    background: var(--surface-raised); color: var(--text-primary);
+    border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; font: inherit;
+  }
+  input[type="range"] { width: min(320px, 60vw); accent-color: var(--series-2); }
+  .strength { font-variant-numeric: tabular-nums; color: var(--text-primary); }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
+  .tile {
+    background: var(--surface-raised); border: 1px solid var(--border); border-radius: 10px;
+    padding: 12px 14px;
+  }
+  .tile .value { font-size: 1.45rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .tile .label { color: var(--text-secondary); font-size: 0.85rem; }
+  .tile .hint { color: var(--text-muted); font-size: 0.78rem; }
+  .charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 24px; }
+  figure { margin: 24px 0 0; }
+  svg { width: 100%; height: auto; display: block; overflow: visible; }
+  .axis text { fill: var(--text-muted); font-size: 11px; }
+  .axis line, .grid line { stroke: var(--grid); }
+  .legend { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 6px 0; font-size: 0.85rem; }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; color: var(--text-secondary); }
+  .key { display: inline-block; width: 16px; height: 3px; border-radius: 2px; }
+  .key.dot { width: 9px; height: 9px; border-radius: 50%; }
+  .tooltip {
+    position: fixed; pointer-events: none; background: var(--surface-raised);
+    border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; font-size: 0.82rem;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.15); display: none; z-index: 10;
+  }
+  .tooltip strong { font-variant-numeric: tabular-nums; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.85rem; margin-top: 8px; }
+  th, td {
+    text-align: right; padding: 6px 8px; border-bottom: 1px solid var(--grid); white-space: nowrap;
+  }
+  th:first-child, td:first-child { text-align: left; }
+  th { color: var(--text-secondary); font-weight: 600; }
+  tr.current td { font-weight: 600; background: var(--band); }
+  .table-wrap { overflow-x: auto; }
+</style>
+</head>
+<body>
+<main>
+  <h1 id="title">Noise explorer</h1>
+  <p class="lede" id="lede"></p>
+
+  <div class="controls">
+    <label>Technique<select id="technique"></select></label>
+    <label>Strength <span class="strength" id="strength-label"></span>
+      <input type="range" id="strength" min="0" max="0" step="1" value="0">
+    </label>
+  </div>
+
+  <section class="tiles" id="tiles" aria-label="Metrics at the selected strength"></section>
+
+  <div class="charts">
+    <figure>
+      <h2>The distribution moves this much</h2>
+      <p class="note">Share of rows per value band, original against released.</p>
+      <div class="legend">
+        <span><i class="key" style="background: var(--series-1)"></i>Original</span>
+        <span><i class="key" style="background: var(--series-2)"></i>Released</span>
+      </div>
+      <svg id="distribution" role="img"
+           aria-label="Histogram of original and released values"></svg>
+    </figure>
+    <figure>
+      <h2>Each record moves this much</h2>
+      <p class="note" id="scatter-note"></p>
+      <div class="legend">
+        <span><i class="key dot" style="background: var(--series-2)"></i>
+          True value still inside the band (exposed)</span>
+        <span><i class="key dot" style="background: var(--series-1)"></i>Moved out of the band</span>
+      </div>
+      <svg id="scatter" role="img"
+           aria-label="Original against released value per record"></svg>
+    </figure>
+  </div>
+
+  <figure>
+    <h2>Risk against information loss, every technique</h2>
+    <p class="note">Each line is one technique from weak to strong noise. Lower and further left
+      is better. The ring marks the selected setting. The dashed line is pure chance:
+      an attacker guessing at random.</p>
+    <div class="legend" id="ru-legend"></div>
+    <svg id="risk-utility" role="img"
+         aria-label="Linkage risk against median shift for each technique and strength"></svg>
+  </figure>
+
+  <figure>
+    <h2>All strengths of the selected technique</h2>
+    <div class="table-wrap"><table id="table"></table></div>
+  </figure>
+</main>
+<div class="tooltip" id="tooltip" role="status"></div>
+
+<script id="data" type="application/json">/*__DATA__*/</script>
+<script>
+  "use strict";
+
+  const DATA = JSON.parse(document.getElementById("data").textContent);
+  const SVG_NS = "http://www.w3.org/2000/svg";
+  const SERIES = ["--series-1", "--series-2", "--series-3", "--series-4", "--series-5"];
+  const state = { technique: 0, level: 0 };
+  const compactNumber = new Intl.NumberFormat(undefined, {
+    notation: "compact",
+    maximumSignificantDigits: 3,
+  });
+
+  // Charts are drawn at their real width, so text keeps its size on a phone.
+  function sizeChart(svg, height) {
+    const width = Math.max(300, Math.round(svg.parentElement.clientWidth));
+    svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+    svg.setAttribute("height", String(height));
+    svg.replaceChildren();
+    return width;
+  }
+
+  function formatTick(value) {
+    return compactNumber.format(value);
+  }
+
+  function element(tag, attributes = {}, parent = null) {
+    const node = document.createElementNS(SVG_NS, tag);
+    for (const [name, value] of Object.entries(attributes)) {
+      node.setAttribute(name, value);
+    }
+    if (parent) {
+      parent.appendChild(node);
+    }
+    return node;
+  }
+
+  function linearScale(domainLow, domainHigh, rangeLow, rangeHigh) {
+    const span = domainHigh - domainLow || 1;
+    return (value) => rangeLow + ((value - domainLow) / span) * (rangeHigh - rangeLow);
+  }
+
+  function niceTicks(low, high, count) {
+    const raw = (high - low) / count || 1;
+    const magnitude = Math.pow(10, Math.floor(Math.log10(raw)));
+    const step = [1, 2, 5, 10].map((factor) => factor * magnitude).find((s) => s >= raw);
+    const ticks = [];
+    for (let tick = Math.ceil(low / step) * step; tick <= high + step * 1e-9; tick += step) {
+      ticks.push(Number(tick.toPrecision(12)));
+    }
+    return ticks;
+  }
+
+  function formatNumber(value) {
+    const size = Math.abs(value);
+    if (size >= 1e6 || (size > 0 && size < 1e-3)) {
+      return value.toExponential(1);
+    }
+    return Number(value.toPrecision(3)).toLocaleString();
+  }
+
+  function formatPercent(value) {
+    if (value > 0 && value < 0.001) {
+      return "<0.1%";
+    }
+    return (value * 100).toFixed(value < 0.1 ? 1 : 0) + "%";
+  }
+
+  const tooltip = document.getElementById("tooltip");
+
+  function showTooltip(event, rows) {
+    tooltip.replaceChildren();
+    for (const [label, value] of rows) {
+      const line = document.createElement("div");
+      const strong = document.createElement("strong");
+      strong.textContent = value;
+      line.append(strong, " " + label);
+      tooltip.appendChild(line);
+    }
+    tooltip.style.display = "block";
+    const x = Math.min(event.clientX + 14, window.innerWidth - tooltip.offsetWidth - 8);
+    tooltip.style.left = x + "px";
+    tooltip.style.top = event.clientY + 14 + "px";
+  }
+
+  function hideTooltip() {
+    tooltip.style.display = "none";
+  }
+
+  function attachTooltip(node, rows) {
+    node.addEventListener("pointermove", (event) => showTooltip(event, rows));
+    node.addEventListener("pointerleave", hideTooltip);
+    node.addEventListener("focus", (event) => {
+      const box = node.getBoundingClientRect();
+      showTooltip({ clientX: box.right, clientY: box.top }, rows);
+    });
+    node.addEventListener("blur", hideTooltip);
+  }
+
+  function drawAxes(svg, frame, xTicks, yTicks, xScale, yScale, formatX, formatY) {
+    const grid = element("g", { class: "grid" }, svg);
+    const axis = element("g", { class: "axis" }, svg);
+    for (const tick of yTicks) {
+      const y = yScale(tick);
+      element("line", { x1: frame.left, x2: frame.right, y1: y, y2: y }, grid);
+      const label = element("text", { x: frame.left - 6, y: y + 4, "text-anchor": "end" }, axis);
+      label.textContent = formatY(tick);
+    }
+    for (const tick of xTicks) {
+      const x = xScale(tick);
+      const label = element("text", { x, y: frame.bottom + 16, "text-anchor": "middle" }, axis);
+      label.textContent = formatX(tick);
+    }
+    element("line", {
+      x1: frame.left, x2: frame.right, y1: frame.bottom, y2: frame.bottom,
+    }, axis);
+  }
+
+  function axisTitle(svg, text, x, y, rotate = false) {
+    const attributes = { x, y, "text-anchor": "middle", class: "axis" };
+    if (rotate) {
+      attributes.transform = `rotate(-90 ${x} ${y})`;
+    }
+    const group = element("g", { class: "axis" }, svg);
+    const label = element("text", attributes, group);
+    label.textContent = text;
+  }
+
+  function currentSweep() {
+    return DATA.sweeps[state.technique];
+  }
+
+  function currentLevel() {
+    return currentSweep().levels[state.level];
+  }
+
+  function renderControls() {
+    const select = document.getElementById("technique");
+    DATA.sweeps.forEach((sweep, index) => {
+      const option = document.createElement("option");
+      option.value = String(index);
+      option.textContent = sweep.technique.replaceAll("_", " ");
+      select.appendChild(option);
+    });
+    select.addEventListener("change", onTechniqueChange);
+    document.getElementById("strength").addEventListener("input", onStrengthChange);
+  }
+
+  function onTechniqueChange(event) {
+    state.technique = Number(event.target.value);
+    state.level = Math.floor(currentSweep().levels.length / 2);
+    renderAll();
+  }
+
+  function onStrengthChange(event) {
+    state.level = Number(event.target.value);
+    renderAll();
+  }
+
+  function renderStrength() {
+    const sweep = currentSweep();
+    const slider = document.getElementById("strength");
+    slider.max = String(sweep.levels.length - 1);
+    slider.value = String(state.level);
+    const label = `${sweep.parameter.replaceAll("_", " ")} = ${currentLevel().value}`;
+    document.getElementById("strength-label").textContent = label;
+  }
+
+  function renderTiles() {
+    const metrics = currentLevel().metrics;
+    const chance = metrics.linkage_baseline;
+    const tiles = [
+      [formatPercent(metrics.mean_change), "mean change", "how far the average moved"],
+      [formatPercent(metrics.std_change), "spread change", "change in standard deviation"],
+      [formatNumber(metrics.median_deviation_sd) + " SD", "typical record shift",
+        "median |released − true|, in standard deviations"],
+      [formatPercent(metrics.linkage_rate), "re-linked records",
+        `nearest original is the true one; chance is ${formatPercent(chance)}`],
+      [formatPercent(metrics.interval_disclosure), "values still exposed",
+        `true value within ±${DATA.band_sd} SD of the released one`],
+      [formatNumber(metrics.ks_statistic), "distribution distance (KS)",
+        "0 means identical, 1 means disjoint"],
+    ];
+    const container = document.getElementById("tiles");
+    container.replaceChildren();
+    for (const [value, label, hint] of tiles) {
+      const tile = document.createElement("div");
+      tile.className = "tile";
+      for (const [className, text] of [["value", value], ["label", label], ["hint", hint]]) {
+        const line = document.createElement("div");
+        line.className = className;
+        line.textContent = text;
+        tile.appendChild(line);
+      }
+      container.appendChild(tile);
+    }
+  }
+
+  function renderDistribution() {
+    const svg = document.getElementById("distribution");
+    const width = sizeChart(svg, 300);
+    const frame = { left: 48, right: width - 12, top: 12, bottom: 268 };
+    const edges = currentSweep().histogram_edges;
+    const released = currentLevel().histogram;
+    const toShare = (counts) => counts.map((count) => count / DATA.rows);
+    const before = toShare(currentSweep().original_histogram);
+    const after = toShare(released);
+    const highest = Math.max(...before, ...after);
+    const xScale = linearScale(edges[0], edges[edges.length - 1], frame.left, frame.right);
+    const yScale = linearScale(0, highest * 1.08, frame.bottom, frame.top);
+    drawAxes(svg, frame, niceTicks(edges[0], edges[edges.length - 1], 5),
+      niceTicks(0, highest, 4), xScale, yScale, formatTick, formatPercent);
+
+    for (const [shares, token] of [[before, "--series-1"], [after, "--series-2"]]) {
+      let path = `M ${xScale(edges[0])} ${yScale(0)}`;
+      shares.forEach((share, index) => {
+        path += ` L ${xScale(edges[index])} ${yScale(share)}`;
+        path += ` L ${xScale(edges[index + 1])} ${yScale(share)}`;
+      });
+      path += ` L ${xScale(edges[edges.length - 1])} ${yScale(0)}`;
+      element("path", {
+        d: path, fill: "none", stroke: `var(${token})`, "stroke-width": 2,
+        "stroke-linejoin": "round",
+      }, svg);
+    }
+
+    before.forEach((share, index) => {
+      const hit = element("rect", {
+        x: xScale(edges[index]), y: frame.top,
+        width: Math.max(1, xScale(edges[index + 1]) - xScale(edges[index])),
+        height: frame.bottom - frame.top, fill: "transparent", tabindex: 0,
+      }, svg);
+      const band = `${formatNumber(edges[index])} to ${formatNumber(edges[index + 1])}`;
+      attachTooltip(hit, [
+        ["value band", band],
+        ["of original rows", formatPercent(share)],
+        ["of released rows", formatPercent(after[index])],
+      ]);
+    });
+  }
+
+  function renderScatter() {
+    const svg = document.getElementById("scatter");
+    const width = sizeChart(svg, 300);
+    const frame = { left: 70, right: width - 12, top: 12, bottom: 262 };
+    const xs = DATA.scatter_original;
+    const ys = currentLevel().scatter_released;
+    const low = Math.min(...xs, ...ys);
+    const high = Math.max(...xs, ...ys);
+    const xScale = linearScale(low, high, frame.left, frame.right);
+    const yScale = linearScale(low, high, frame.bottom, frame.top);
+    const ticks = niceTicks(low, high, 5);
+    drawAxes(svg, frame, ticks, ticks, xScale, yScale, formatTick, formatTick);
+    axisTitle(svg, "true value", (frame.left + frame.right) / 2, frame.bottom + 34);
+    axisTitle(svg, "released value", 12, (frame.top + frame.bottom) / 2, true);
+
+    const spread = standardDeviation(xs);
+    const half = DATA.band_sd * spread;
+    const band = [
+      [low, low + half], [high, high + half], [high, high - half], [low, low - half],
+    ].map(([x, y]) => `${xScale(x)},${yScale(y)}`).join(" ");
+    element("polygon", { points: band, fill: "var(--band)" }, svg);
+    element("line", {
+      x1: xScale(low), y1: yScale(low), x2: xScale(high), y2: yScale(high),
+      stroke: "var(--text-muted)", "stroke-dasharray": "4 4",
+    }, svg);
+
+    xs.forEach((x, index) => {
+      const exposed = Math.abs(ys[index] - x) <= half;
+      element("circle", {
+        cx: xScale(x), cy: yScale(ys[index]), r: 2.4,
+        fill: exposed ? "var(--series-2)" : "var(--series-1)", "fill-opacity": 0.7,
+      }, svg);
+    });
+    const exposedShare = currentLevel().metrics.interval_disclosure;
+    const note = `${formatPercent(exposedShare)} of all records stay inside the shaded band, ` +
+      `±${DATA.band_sd} SD around their true value. Points on the dashed line did not move.`;
+    document.getElementById("scatter-note").textContent = note;
+  }
+
+  function standardDeviation(values) {
+    const mean = values.reduce((sum, value) => sum + value, 0) / values.length;
+    const variance = values.reduce((sum, value) => sum + (value - mean) ** 2, 0) / values.length;
+    return Math.sqrt(variance) || 1;
+  }
+
+  function renderRiskUtility() {
+    const svg = document.getElementById("risk-utility");
+    const width = sizeChart(svg, 340);
+    const frame = { left: 70, right: width - 16, top: 14, bottom: 296 };
+    const points = DATA.sweeps.flatMap((sweep) => sweep.levels.map((level) => level.metrics));
+    const chance = points[0].linkage_baseline;
+    const shifts = points.map((metrics) => metrics.median_deviation_sd).filter((v) => v > 0);
+    // Both axes are logarithmic: shifts and risks span several orders of magnitude.
+    const xFloor = Math.min(...shifts) / 1.5;
+    const toLogX = (value) => Math.log10(Math.max(value, xFloor));
+    const toLogY = (value) => Math.log10(Math.max(value, chance / 2));
+    const xScale = linearScale(toLogX(xFloor), toLogX(Math.max(...shifts) * 1.5),
+      frame.left, frame.right);
+    const yScale = linearScale(toLogY(chance / 2), 0, frame.bottom, frame.top);
+    const xTicks = integerRange(Math.ceil(toLogX(xFloor)), Math.floor(toLogX(Math.max(...shifts))));
+    const yTicks = integerRange(Math.ceil(toLogY(chance / 2)), 0);
+    drawAxes(svg, frame, xTicks, yTicks, xScale, yScale,
+      (exponent) => formatTick(Math.pow(10, exponent)),
+      (exponent) => formatPercent(Math.pow(10, exponent)));
+    axisTitle(svg, "information loss: typical record shift, in standard deviations (log)",
+      (frame.left + frame.right) / 2, frame.bottom + 34);
+    axisTitle(svg, "re-linked records (log)", 12, (frame.top + frame.bottom) / 2, true);
+
+    const chanceY = yScale(toLogY(chance));
+    element("line", {
+      x1: frame.left, x2: frame.right, y1: chanceY, y2: chanceY,
+      stroke: "var(--text-muted)", "stroke-dasharray": "5 4",
+    }, svg);
+    const chanceLabel = element("text", {
+      x: frame.right, y: chanceY - 6, "text-anchor": "end",
+      fill: "var(--text-muted)", "font-size": 11,
+    }, svg);
+    chanceLabel.textContent = "chance";
+
+    const placed = [];
+    const order = DATA.sweeps.map((_, index) => index).filter((i) => i !== state.technique);
+    order.push(state.technique);
+    for (const index of order) {
+      const sweep = DATA.sweeps[index];
+      const coordinates = sweep.levels.map((level) => [
+        xScale(toLogX(level.metrics.median_deviation_sd)),
+        yScale(toLogY(level.metrics.linkage_rate)),
+      ]);
+      drawRiskLine(svg, sweep, index, coordinates);
+      coordinates.forEach(([x, y], levelIndex) => placed.push({ x, y, index, levelIndex }));
+    }
+    addNearestPointLayer(svg, frame, placed);
+    renderRiskLegend();
+  }
+
+  function integerRange(first, last) {
+    const values = [];
+    for (let value = first; value <= last; value += 1) {
+      values.push(value);
+    }
+    return values;
+  }
+
+  function drawRiskLine(svg, sweep, index, coordinates) {
+    const selected = index === state.technique;
+    const color = `var(${SERIES[index % SERIES.length]})`;
+    element("polyline", {
+      points: coordinates.map((pair) => pair.join(",")).join(" "), fill: "none",
+      stroke: color, "stroke-width": selected ? 2.5 : 1.75, "stroke-opacity": selected ? 1 : 0.75,
+    }, svg);
+    coordinates.forEach(([x, y], levelIndex) => {
+      const isCurrent = selected && levelIndex === state.level;
+      element("circle", {
+        cx: x, cy: y, r: isCurrent ? 6.5 : 3.5, fill: isCurrent ? "var(--surface)" : color,
+        stroke: isCurrent ? color : "var(--surface)", "stroke-width": isCurrent ? 3 : 1.5,
+      }, svg);
+    });
+  }
+
+  // One transparent layer finds the point nearest the pointer, so close points from
+  // different techniques never steal each other's hover; the selected technique wins ties.
+  function addNearestPointLayer(svg, frame, placed) {
+    const layer = element("rect", {
+      x: frame.left, y: frame.top, width: frame.right - frame.left,
+      height: frame.bottom - frame.top, fill: "transparent",
+    }, svg);
+    const nearestTo = (event) => {
+      const point = svg.createSVGPoint();
+      point.x = event.clientX;
+      point.y = event.clientY;
+      const local = point.matrixTransform(svg.getScreenCTM().inverse());
+      let best = null;
+      let bestDistance = 24;
+      for (const candidate of placed) {
+        const distance = Math.hypot(candidate.x - local.x, candidate.y - local.y);
+        const preferSelected = candidate.index === state.technique ? 2 : 0;
+        if (distance - preferSelected < bestDistance) {
+          best = candidate;
+          bestDistance = distance - preferSelected;
+        }
+      }
+      return best;
+    };
+    layer.addEventListener("pointermove", (event) => {
+      const best = nearestTo(event);
+      if (!best) {
+        hideTooltip();
+        return;
+      }
+      const sweep = DATA.sweeps[best.index];
+      const level = sweep.levels[best.levelIndex];
+      showTooltip(event, [
+        ["", sweep.technique.replaceAll("_", " ")],
+        [sweep.parameter.replaceAll("_", " "), String(level.value)],
+        ["re-linked", formatPercent(level.metrics.linkage_rate)],
+        ["typical shift (SD)", formatNumber(level.metrics.median_deviation_sd)],
+      ]);
+    });
+    layer.addEventListener("pointerleave", hideTooltip);
+    layer.addEventListener("click", (event) => {
+      const best = nearestTo(event);
+      if (best) {
+        selectPoint(best.index, best.levelIndex);
+      }
+    });
+  }
+
+  function selectPoint(techniqueIndex, levelIndex) {
+    state.technique = techniqueIndex;
+    state.level = levelIndex;
+    document.getElementById("technique").value = String(techniqueIndex);
+    renderAll();
+  }
+
+  function renderRiskLegend() {
+    const legend = document.getElementById("ru-legend");
+    legend.replaceChildren();
+    DATA.sweeps.forEach((sweep, index) => {
+      const item = document.createElement("span");
+      const key = document.createElement("i");
+      key.className = "key";
+      key.style.background = `var(${SERIES[index % SERIES.length]})`;
+      item.append(key, sweep.technique.replaceAll("_", " "));
+      legend.appendChild(item);
+    });
+  }
+
+  function renderTable() {
+    const sweep = currentSweep();
+    const table = document.getElementById("table");
+    table.replaceChildren();
+    const columns = [
+      [sweep.parameter.replaceAll("_", " "), (level) => String(level.value)],
+      ["mean change", (level) => formatPercent(level.metrics.mean_change)],
+      ["spread change", (level) => formatPercent(level.metrics.std_change)],
+      ["KS", (level) => formatNumber(level.metrics.ks_statistic)],
+      ["Wasserstein / IQR", (level) => formatNumber(level.metrics.wasserstein_iqr)],
+      ["median shift (SD)", (level) => formatNumber(level.metrics.median_deviation_sd)],
+      ["95th pct shift (SD)", (level) => formatNumber(level.metrics.p95_deviation_sd)],
+      ["re-linked", (level) => formatPercent(level.metrics.linkage_rate)],
+      ["exposed", (level) => formatPercent(level.metrics.interval_disclosure)],
+    ];
+    const head = table.createTHead().insertRow();
+    for (const [title] of columns) {
+      const cell = document.createElement("th");
+      cell.textContent = title;
+      head.appendChild(cell);
+    }
+    const body = table.createTBody();
+    sweep.levels.forEach((level, index) => {
+      const row = body.insertRow();
+      if (index === state.level) {
+        row.className = "current";
+      }
+      for (const [, format] of columns) {
+        row.insertCell().textContent = format(level);
+      }
+    });
+  }
+
+  function renderAll() {
+    // Redrawing removes the hovered element, so its pointerleave never fires.
+    hideTooltip();
+    renderStrength();
+    renderTiles();
+    renderDistribution();
+    renderScatter();
+    renderRiskUtility();
+    renderTable();
+  }
+
+  document.getElementById("title").textContent = `Noise explorer: ${DATA.column}`;
+  document.getElementById("lede").textContent =
+    `${DATA.rows.toLocaleString()} values. Pick a technique and slide its strength to see ` +
+    "how far the distribution and each record move, and how many records an attacker " +
+    "could still re-link.";
+  renderControls();
+  state.level = Math.floor(currentSweep().levels.length / 2);
+  renderAll();
+
+  let resizeFrame = 0;
+  window.addEventListener("resize", () => {
+    cancelAnimationFrame(resizeFrame);
+    resizeFrame = requestAnimationFrame(renderAll);
+  });
+</script>
+</body>
+</html>

@@ -13,7 +13,18 @@ from data_anonymizer.taxonomy import DataCategory
 # "birth" matches `birth_date` and `dateOfBirth`; "ip" does not match `zip`.
 _HINTS: dict[DataCategory, tuple[str, ...]] = {
     DataCategory.EMAIL: ("email", "e_mail", "mail"),
-    DataCategory.PHONE: ("phone", "telephone", "mobile", "cell", "celular", "telefone", "fone"),
+    DataCategory.PHONE: (
+        "phone",
+        "telephone",
+        "mobile",
+        "cell",
+        "celular",
+        "telefone",
+        "fone",
+        "tel",
+        "cel",
+        "whatsapp",
+    ),
     DataCategory.PERSON_NAME: (
         "first_name",
         "last_name",
@@ -31,6 +42,32 @@ _HINTS: dict[DataCategory, tuple[str, ...]] = {
         "nome_cliente",
     ),
     DataCategory.CPF: ("cpf",),
+    DataCategory.CNH: ("cnh", "carteira_motorista", "drivers_license", "driver_license"),
+    DataCategory.NIS: ("pis", "pasep", "nis", "nit"),
+    DataCategory.HEALTH_CARD: ("cns", "cartao_sus", "sus"),
+    DataCategory.VOTER_ID: ("titulo_eleitor", "titulo_eleitoral", "voter_id", "voter"),
+    DataCategory.VEHICLE_REGISTRATION: ("renavam",),
+    DataCategory.VEHICLE_PLATE: ("placa", "plate", "license_plate", "licence_plate"),
+    DataCategory.PIX_KEY: ("pix", "chave_pix"),
+    DataCategory.INVOICE_KEY: ("nfe", "nf_e", "chave_nfe", "chave_acesso", "access_key"),
+    DataCategory.IMEI: ("imei",),
+    DataCategory.MAC_ADDRESS: ("mac", "mac_address"),
+    DataCategory.NATIONAL_ID: (
+        "rg",
+        "identidade",
+        "national_id",
+        "dni",
+        "nie",
+        "nif",
+        "nino",
+        "bsn",
+        "aadhaar",
+        "itin",
+        "steuer_id",
+        "codice_fiscale",
+        "passport",
+        "passaporte",
+    ),
     DataCategory.CNPJ: ("cnpj",),
     DataCategory.SSN: ("ssn", "social_security"),
     DataCategory.CREDIT_CARD: ("credit_card", "card_number", "cc_number", "cartao"),
@@ -39,13 +76,14 @@ _HINTS: dict[DataCategory, tuple[str, ...]] = {
     DataCategory.URL: ("url", "website", "link"),
     DataCategory.POSTAL_CODE: ("zip", "zipcode", "zip_code", "postal_code", "postcode", "cep"),
     DataCategory.STREET_ADDRESS: ("address", "street", "endereco", "logradouro"),
-    DataCategory.CITY: ("city", "cidade", "municipio", "town"),
+    DataCategory.CITY: ("city", "cidade", "municipio", "town", "mun"),
     DataCategory.DATE_OF_BIRTH: (
         "dob",
         "birth",
         "birthdate",
         "birthday",
         "nascimento",
+        "nasc",
     ),
     DataCategory.AGE: ("age", "idade"),
     DataCategory.GENDER: ("gender", "sex", "sexo", "genero"),
@@ -62,6 +100,29 @@ _EXACT_NAMES: dict[str, DataCategory] = {
 
 _ID_TOKENS = {"id", "uuid", "guid"}
 
+# Names of columns that hold business codes, counters or timestamps. Bare digit
+# strings in these columns are not treated as document numbers or phones.
+_NEGATIVE_TOKENS = {
+    "order",
+    "pedido",
+    "protocolo",
+    "protocol",
+    "nsu",
+    "sku",
+    "ts",
+    "timestamp",
+    "epoch",
+    "produto",
+    "product",
+    "item",
+    "lote",
+    "batch",
+    "version",
+    "versao",
+    "serial",
+    "invoice_number",
+}
+
 
 def name_tokens(column_name: str) -> list[str]:
     """Split a column name into lowercase ASCII tokens on separators and camelCase."""
@@ -75,6 +136,13 @@ def name_tokens(column_name: str) -> list[str]:
 def _contains_sequence(tokens: list[str], hint_tokens: list[str]) -> bool:
     width = len(hint_tokens)
     return any(tokens[start : start + width] == hint_tokens for start in range(len(tokens)))
+
+
+def has_negative_hint(column_name: str) -> bool:
+    """True when the name says the column holds business codes, counters or timestamps."""
+    tokens = name_tokens(column_name)
+    joined = "_".join(tokens)
+    return any(token in _NEGATIVE_TOKENS for token in tokens) or joined in _NEGATIVE_TOKENS
 
 
 def category_from_name(column_name: str) -> DataCategory | None:

@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 import pandas as pd
 
@@ -13,7 +14,8 @@ def test_propose_then_apply_with_a_reviewed_plan(people, tmp_path, capsys, monke
     output = tmp_path / "out.csv"
     report = tmp_path / "report.json"
 
-    assert main(["propose", str(source), "-o", str(plan_path), "--fidelity", "privacy"]) == 0
+    propose = ["propose", str(source), "-o", str(plan_path), "--fidelity", "privacy"]
+    assert main(propose + ["--protection", "anonymization"]) == 0
     plan = json.loads(plan_path.read_text())
     plan["actions"] = [action for action in plan["actions"] if action["column"] != "city"]
     plan_path.write_text(json.dumps(plan))
@@ -23,10 +25,11 @@ def test_propose_then_apply_with_a_reviewed_plan(people, tmp_path, capsys, monke
         + ["--report", str(report)]
     )
 
-    assert exit_code == 0
-    anonymized = pd.read_csv(output)
-    assert anonymized["email"].dropna().eq("[REDACTED]").all()
-    assert "privacy_after" in json.loads(report.read_text())
+    written = json.loads(report.read_text())
+    expected_exit = 0 if written["protection"]["reached"] else 3
+    assert exit_code == expected_exit
+    assert pd.read_csv(output)["email"].isna().all()
+    assert "privacy_after" in written
 
 
 def test_scan_prints_one_line_per_column(people, tmp_path, capsys):
@@ -60,3 +63,22 @@ def test_infer_schema_then_synthesize(people, tmp_path):
 def test_errors_exit_with_code_two(tmp_path, capsys):
     assert main(["scan", str(tmp_path / "data.xlsx")]) == 2
     assert "supported" in capsys.readouterr().err
+
+
+def test_challenge_command_writes_public_and_private_files(tmp_path):
+    schema = Path(__file__).parent.parent / "examples" / "churn_challenge.json"
+    folder = tmp_path / "churn"
+
+    assert (
+        main(
+            ["--seed", "3", "challenge", "--schema", str(schema), "--rows", "500"]
+            + ["-o", str(folder)]
+        )
+        == 0
+    )
+
+    assert {"train.csv", "test.csv", "QUESTION.md", "answers"} <= {
+        path.name for path in folder.iterdir()
+    }
+    assert "churned" not in pd.read_csv(folder / "test.csv").columns
+    assert json.loads((folder / "answers" / "answer_key.json").read_text())["target"] == "churned"

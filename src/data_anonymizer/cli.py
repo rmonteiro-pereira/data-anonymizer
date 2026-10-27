@@ -1,17 +1,8 @@
-"""The `anonymize` command: scan, propose, apply, infer-schema, synthesize and techniques.
+"""The `anonymize` command line.
 
-Usage:
-    anonymize scan INPUT [--sample-size N]
-    anonymize propose INPUT [--fidelity statistical|privacy] [-o PLAN.json]
-    anonymize apply INPUT -o OUTPUT [--plan PLAN.json | --fidelity F] [--report REPORT.json]
-    anonymize reveal INPUT --plan PLAN.json -o OUTPUT
-    anonymize infer-schema INPUT [-o SCHEMA.json] [--fidelity F]
-    anonymize synthesize -o OUTPUT --rows N [--schema SCHEMA.json] [--reference INPUT]
-    anonymize techniques
-
-Every command also takes --seed and --locale. Pseudonyms are keyed by the
-ANONYMIZER_SECRET_KEY environment variable; without it, a random key is used and
-pseudonyms change on every run.
+The commands and their flags are listed in the README's command table and in
+`anonymize --help`. Pseudonyms are keyed by the ANONYMIZER_SECRET_KEY environment
+variable. Without it, a random key is used and pseudonyms change on every run.
 """
 
 import argparse
@@ -25,12 +16,20 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from data_anonymizer.anonymizer import AnonymizationResult, Anonymizer
-from data_anonymizer.errors import AnonymizerError
-from data_anonymizer.plan import AnonymizationPlan, Fidelity
+from data_anonymizer.errors import AnonymizerError, PlanError
+from data_anonymizer.noise_explorer import explore_noise, save_page
+from data_anonymizer.plan import AnonymizationPlan, Fidelity, Protection
 from data_anonymizer.synthesis import DatasetSchema, infer_schema
 from data_anonymizer.table_files import read_table, write_table
 
 SECRET_KEY_VARIABLE = "ANONYMIZER_SECRET_KEY"
+
+# Exit code when the output was written but does not meet the plan's protection target.
+EXIT_PROTECTION_NOT_REACHED = 3
+
+
+class ProtectionNotReachedError(Exception):
+    """The table was written, but it is less protected than the plan asked for."""
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -58,6 +57,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     except (AnonymizerError, ValidationError, FileNotFoundError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 2
+    except ProtectionNotReachedError as error:
+        print(f"warning: {error}", file=sys.stderr)
+        return EXIT_PROTECTION_NOT_REACHED
     return 0
 
 
@@ -78,6 +80,7 @@ def _build_parser() -> argparse.ArgumentParser:
     propose_parser = commands.add_parser("propose", help="write a reviewable plan")
     propose_parser.add_argument("input", type=Path)
     _add_fidelity(propose_parser)
+    _add_protection(propose_parser)
     propose_parser.add_argument("-o", "--output", type=Path, help="plan file; stdout if absent")
     propose_parser.set_defaults(handler=_propose)
 
@@ -86,6 +89,7 @@ def _build_parser() -> argparse.ArgumentParser:
     apply_parser.add_argument("-o", "--output", type=Path, required=True)
     apply_parser.add_argument("--plan", type=Path, help="reviewed plan; proposed if absent")
     _add_fidelity(apply_parser)
+    _add_protection(apply_parser)
     apply_parser.add_argument("--report", type=Path, help="write privacy and utility metrics")
     apply_parser.set_defaults(handler=_apply)
 
@@ -109,6 +113,25 @@ def _build_parser() -> argparse.ArgumentParser:
     _add_fidelity(synth_parser)
     synth_parser.set_defaults(handler=_synthesize)
 
+    noise_parser = commands.add_parser(
+        "explore-noise", help="write an interactive page showing how noise moves a column"
+    )
+    noise_parser.add_argument("input", type=Path)
+    noise_parser.add_argument("--column", required=True)
+    noise_parser.add_argument("-o", "--output", type=Path, required=True, help="HTML file")
+    noise_parser.add_argument(
+        "--band", type=float, default=0.1, help="exposure band, in standard deviations"
+    )
+    noise_parser.set_defaults(handler=_explore_noise)
+
+    challenge_parser = commands.add_parser(
+        "challenge", help="generate a data-science challenge with a known answer"
+    )
+    challenge_parser.add_argument("--schema", type=Path, required=True)
+    challenge_parser.add_argument("--rows", type=int, required=True)
+    challenge_parser.add_argument("-o", "--output", type=Path, required=True, help="folder")
+    challenge_parser.set_defaults(handler=_challenge)
+
     techniques_parser = commands.add_parser("techniques", help="list available techniques")
     techniques_parser.set_defaults(handler=_list_techniques)
     return parser
@@ -124,6 +147,16 @@ def _add_fidelity(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_protection(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--protection",
+        type=Protection,
+        choices=list(Protection),
+        default=Protection.PSEUDONYMIZATION,
+        help="pseudonymization keeps keyed links; anonymization removes every link and checks it",
+    )
+
+
 def _scan(anonymizer: Anonymizer, arguments: argparse.Namespace) -> None:
     findings = anonymizer.scan(read_table(arguments.input), sample_size=arguments.sample_size)
     print(f"{'column':<24} {'category':<20} {'sensitivity':<18} {'conf':>5}  evidence")
@@ -135,7 +168,11 @@ def _scan(anonymizer: Anonymizer, arguments: argparse.Namespace) -> None:
 
 
 def _propose(anonymizer: Anonymizer, arguments: argparse.Namespace) -> None:
-    plan = anonymizer.propose(read_table(arguments.input), fidelity=arguments.fidelity)
+    plan = anonymizer.propose(
+        read_table(arguments.input),
+        fidelity=arguments.fidelity,
+        protection=arguments.protection,
+    )
     _emit(plan.to_json(), arguments.output)
 
 
@@ -144,7 +181,9 @@ def _apply(anonymizer: Anonymizer, arguments: argparse.Namespace) -> None:
     if arguments.plan is not None:
         plan = AnonymizationPlan.load(arguments.plan)
     else:
-        plan = anonymizer.propose(frame, fidelity=arguments.fidelity)
+        plan = anonymizer.propose(
+            frame, fidelity=arguments.fidelity, protection=arguments.protection
+        )
 
     result = anonymizer.apply(frame, plan)
     write_table(result.data, arguments.output)
@@ -152,8 +191,13 @@ def _apply(anonymizer: Anonymizer, arguments: argparse.Namespace) -> None:
         arguments.report.write_text(_report_json(result) + "\n", encoding="utf-8")
     print(
         f"wrote {len(result.data)} rows to {arguments.output}; "
-        f"k-anonymity {result.privacy_before.k_anonymity} -> {result.privacy_after.k_anonymity}"
+        f"k-anonymity {result.privacy_before.k_anonymity} -> {result.privacy_after.k_anonymity}; "
+        f"result is {result.protection.level.value}"
     )
+    for problem in result.protection.problems:
+        print(f"  - {problem}")
+    if not result.protection.reached:
+        raise ProtectionNotReachedError(f"the {plan.protection.value} target was not reached")
 
 
 def _report_json(result: AnonymizationResult) -> str:
@@ -161,6 +205,7 @@ def _report_json(result: AnonymizationResult) -> str:
         "plan": result.plan.model_dump(mode="json"),
         "privacy_before": asdict(result.privacy_before),
         "privacy_after": asdict(result.privacy_after),
+        "protection": asdict(result.protection),
         "utility": asdict(result.utility),
     }
     return json.dumps(report, indent=2)
@@ -188,6 +233,45 @@ def _synthesize(anonymizer: Anonymizer, arguments: argparse.Namespace) -> None:
     )
     write_table(frame, arguments.output)
     print(f"wrote {len(frame)} rows to {arguments.output}")
+
+
+def _explore_noise(anonymizer: Anonymizer, arguments: argparse.Namespace) -> None:
+    frame = read_table(arguments.input)
+    try:
+        exploration = explore_noise(
+            frame, arguments.column, seed=arguments.seed or 0, band_sd=arguments.band
+        )
+    except ValueError as error:
+        raise PlanError(str(error)) from error
+    save_page(exploration, arguments.output)
+    print(f"wrote {arguments.output}; open it in a browser")
+
+
+def _challenge(anonymizer: Anonymizer, arguments: argparse.Namespace) -> None:
+    challenge = anonymizer.challenge(DatasetSchema.load(arguments.schema), arguments.rows)
+    folder: Path = arguments.output
+    folder.mkdir(parents=True, exist_ok=True)
+    write_table(challenge.train, folder / "train.csv")
+    write_table(challenge.test_features, folder / "test.csv")
+    private = folder / "answers"
+    private.mkdir(exist_ok=True)
+    write_table(challenge.test_answers, private / "test_answers.csv")
+    key_path = private / "answer_key.json"
+    key_path.write_text(json.dumps(challenge.answer_key, indent=2, default=str) + "\n")
+    (folder / "QUESTION.md").write_text(_question_page(challenge), encoding="utf-8")
+    print(f"wrote the challenge to {folder}; keep {private} away from participants")
+
+
+def _question_page(challenge) -> str:
+    key = challenge.answer_key
+    columns = "\n".join(f"- `{name}`" for name in challenge.train.columns)
+    return (
+        f"# {key['title']}\n\n{key['prompt']}\n\n"
+        f"Task: {key['task']}. Target column: `{key['target']}`.\n\n"
+        f"Files: `train.csv` ({key['rows']['train']} rows, with the target) and "
+        f"`test.csv` ({key['rows']['test']} rows, without it).\n\n"
+        f"## Columns\n\n{columns}\n"
+    )
 
 
 def _list_techniques(anonymizer: Anonymizer, arguments: argparse.Namespace) -> None:

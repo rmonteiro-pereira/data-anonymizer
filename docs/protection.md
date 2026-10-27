@@ -1,0 +1,114 @@
+# Pseudonymization and anonymization
+
+Every plan has a **protection** target and a **fidelity**.
+
+| | `statistical` fidelity | `privacy` fidelity |
+|---|---|---|
+| **`pseudonymization`** | Realistic fakes, consistent per person. Light perturbation. Joins and distributions survive | Keyed hashes for identifiers, generalized quasi-identifiers, k-anonymity enforced |
+| **`anonymization`** | Random fakes per cell. Quasi-identifiers generalized only as far as k-anonymity needs. Means kept | Identifiers suppressed. Quasi-identifiers generalized. Sensitive values randomized |
+
+**Pseudonymization** replaces identifiers with stand-ins that the key holder can re-link
+or reveal. Under GDPR Article 4(5) and the LGPD, the output is still personal data. Its
+value is that one dataset can be joined to another, and an authorized team can get back
+to the person.
+
+**Anonymization** removes every link to people:
+- A plan that names a linking technique is refused before anything runs. That covers
+  keyed hashes, Argon2 and bcrypt, consistent surrogates, scrambling and encryption.
+  Argon2 and bcrypt with a random salt are refused too, because anyone can test a
+  guessed value against the published hash.
+- The plan runs under a throwaway key.
+- Quasi-identifiers are generalized, and local suppression then blanks cells until each
+  combination is shared by at least `k_target` rows.
+
+The result is then checked.
+
+## Default proposals
+
+Every direct identifier follows the row for its protection and fidelity:
+
+| | `statistical` | `privacy` |
+|---|---|---|
+| pseudonymization | `surrogate` (realistic, consistent); `keyed_hash` for record IDs and identifiers without a fake generator | `keyed_hash` |
+| anonymization | `surrogate` with `consistent: false` (random per cell); `suppress` for record IDs | `suppress` |
+
+Free text with personal data always gets `redact_entities`.
+
+The other categories:
+
+| Category | pseudonymization, statistical | pseudonymization, privacy | anonymization, statistical | anonymization, privacy |
+|---|---|---|---|---|
+| url | `surrogate` | `keyed_hash` | random `surrogate` | `suppress` |
+| postal_code | keep 3 characters | keep 2 | keep 3 | keep 2 |
+| city | `keep` | `suppress_rare` below 10 | `keep` | `suppress_rare` below 10 |
+| date_of_birth | `date_shift` ±30 days | year only | year only | year only |
+| age | `microaggregate` groups of 5 | decades | `microaggregate` groups of 5 | decades |
+| gender | `keep` | `keep` | `keep` | `keep` |
+| geo_coordinate | Gaussian noise about 1 km | 1 decimal | 2 decimals | 1 decimal |
+| income | `rank_swap` within 5% | quintiles | `microaggregate` groups of 5 | quintiles |
+| health | `keep` | `randomized_response` p = 0.75 | `keep` | `randomized_response` p = 0.75 |
+
+k-anonymity is enforced in every mode except pseudonymization with statistical fidelity.
+When a technique cannot handle a column's storage kind, such as dates stored as text,
+the proposal falls back:
+- anonymization: `suppress`;
+- pseudonymization: `keyed_hash` for identifiers, and `keep` with "choose a technique by
+  hand" for everything else.
+
+## The protection checks
+
+`result.protection` holds the outcome:
+- `level`;
+- `reached`, which is true when the level meets the plan's target;
+- `problems`;
+- `caveats`.
+
+The checks follow the three criteria of the EDPB Guidelines 02/2026 on anonymisation.
+
+| Criterion | Check |
+|---|---|
+| No record isolation | Every quasi-identifier combination is shared by at least `k_target` rows (default 5). No row is unique across its discrete released columns, meaning those with at most 50 distinct values, excluding sensitive attributes |
+| No linkage | No action uses a linking technique. For noise and perturbation columns, nearest-value matching re-links at most 1 record in `k_target`: no better odds than k-anonymity already accepts |
+| No inference | Within each quasi-identifier group, every sensitive attribute takes at least `l_target` distinct values (default 2) |
+
+| Level | Meaning |
+|---|---|
+| `anonymized` | No link to people, and every check passed |
+| `at_risk` | No link to people, but a record can still be isolated or a sensitive value inferred |
+| `pseudonymized` | Identifiers replaced, but a linking technique lets the key holder re-link them |
+| `identifiable` | A direct identifier was left as it was |
+
+The `anonymized` level also comes with caveats, because these checks are necessary but
+not sufficient:
+- columns the detector missed are not treated;
+- free text can hide names;
+- quasi-identifiers outside the plan, or outside data an attacker holds, are not counted;
+- whether the output is anonymous for a given recipient depends on the context. The CJEU
+  ruled in *EDPS v SRB* (C-413/23 P, 2025) that pseudonymized data may be anonymous for a
+  recipient who has no means to re-identify it.
+
+A contextual assessment, such as the ICO's motivated-intruder test or the ANPD's risk
+assessment, is still required.
+
+## Plan files
+
+```json
+{
+  "fidelity": "privacy",
+  "protection": "anonymization",
+  "actions": [
+    {"column": "email", "technique": "suppress", "params": {}, "reason": "email (direct_identifier): removed"},
+    {"column": "age", "technique": "bin_numeric", "params": {"width": 10}, "reason": "age (quasi_identifier): ages in decades"}
+  ],
+  "direct_identifiers": ["email"],
+  "quasi_identifiers": ["age", "cep", "gender"],
+  "sensitive_attributes": ["diagnosis"],
+  "k_target": 5,
+  "l_target": 2,
+  "enforce_k_anonymity": true
+}
+```
+
+Columns without an action are left unchanged. A plan is checked before anything runs.
+A missing column, an unknown technique, an unknown parameter, or a linking technique in
+an anonymization plan raises `PlanError`.

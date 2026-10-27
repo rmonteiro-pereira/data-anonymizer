@@ -23,6 +23,20 @@ class Fidelity(StrEnum):
     PRIVACY = "privacy"
 
 
+class Protection(StrEnum):
+    """Whether the result may still be tied back to people by whoever holds the key.
+
+    `pseudonymization` replaces identifiers with keyed or encrypted stand-ins: the
+    key holder can re-link or reveal records, so under GDPR and LGPD the output is
+    still personal data. `anonymization` removes every link: no keyed, consistent
+    or reversible technique is allowed, quasi-identifiers are generalized until each
+    combination is shared by at least `k_target` rows, and the result is checked.
+    """
+
+    PSEUDONYMIZATION = "pseudonymization"
+    ANONYMIZATION = "anonymization"
+
+
 class ColumnAction(BaseModel):
     """One technique applied to one column, with the reason it was chosen."""
 
@@ -35,19 +49,24 @@ class ColumnAction(BaseModel):
 
 
 class AnonymizationPlan(BaseModel):
-    """The column actions, plus the quasi-identifiers and sensitive attributes they protect.
+    """The column actions, plus the identifiers and attributes they protect.
 
     With `enforce_k_anonymity`, after the column actions run, quasi-identifier cells
     are blanked in rows whose combination is shared by fewer than `k_target` rows.
+    `l_target` is the fewest distinct sensitive values each such group must hold for
+    the result to count as anonymized.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     fidelity: Fidelity
+    protection: Protection = Protection.PSEUDONYMIZATION
     actions: list[ColumnAction]
+    direct_identifiers: list[str] = Field(default_factory=list)
     quasi_identifiers: list[str] = Field(default_factory=list)
     sensitive_attributes: list[str] = Field(default_factory=list)
     k_target: int = Field(default=5, ge=1)
+    l_target: int = Field(default=2, ge=1)
     enforce_k_anonymity: bool = False
 
     @model_validator(mode="after")

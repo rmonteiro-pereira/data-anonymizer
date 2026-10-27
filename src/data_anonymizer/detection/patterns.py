@@ -1,30 +1,51 @@
 """Recognizers that decide whether a value looks like a known kind of personal data.
 
-Each recognizer pairs a regular expression with an optional checksum validator. The
-validator removes most false positives: eleven random digits match the CPF shape, but
-only about one in a hundred also passes the CPF check digits.
+Each recognizer pairs a regular expression with an optional checksum from
+`checksums.py`. Two flags limit where a recognizer may fire:
+- `in_text`: whether it is searched for inside free text. Bare-digit formats such
+  as NIS or CNH are left out, because prose is full of numbers that fit them.
+- `needs_name_hint`: whether a matching column also needs a column name that
+  points to the category, for formats with no checksum that ordinary codes share,
+  such as UUIDs, which may be PIX keys or plain record keys.
 """
 
 import re
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 
+from data_anonymizer.detection import checksums
 from data_anonymizer.taxonomy import DataCategory
+
+# Re-exported so callers keep importing the validators from here.
+is_valid_cpf = checksums.is_valid_cpf
+is_valid_cnpj = checksums.is_valid_cnpj
+is_valid_iban = checksums.is_valid_iban
+passes_luhn = checksums.passes_luhn
 
 
 @dataclass(frozen=True, slots=True)
 class ValueRecognizer:
-    """A pattern, plus an optional validator, for one category of personal data."""
+    """A pattern, plus an optional validator, for one kind of personal data."""
 
     category: DataCategory
+    label: str
     pattern: re.Pattern[str]
     validator: Callable[[str], bool] | None = None
+    in_text: bool = True
+    needs_name_hint: bool = False
+    digit_length: int | None = None
 
     def matches(self, value: str) -> bool:
-        """Return True when the whole value is an instance of this category."""
+        """Return True when the whole value is an instance of this kind."""
         if self.pattern.fullmatch(value) is None:
             return False
         return self._is_valid(value)
+
+    def matches_padded(self, value: str) -> bool:
+        """Like `matches`, but restores leading zeros lost when numbers were stored as integers."""
+        if self.digit_length is not None and value.isdigit() and len(value) < self.digit_length:
+            value = value.zfill(self.digit_length)
+        return self.matches(value)
 
     def find_spans(self, text: str) -> list[tuple[int, int]]:
         """Return the start and end of every valid occurrence inside free text."""
@@ -40,135 +61,192 @@ class ValueRecognizer:
         return self.validator(value)
 
 
-def _digits(value: str) -> list[int]:
-    return [int(character) for character in value if character.isdigit()]
+def _recognizer(
+    category: DataCategory,
+    label: str,
+    pattern: str,
+    validator: Callable[[str], bool] | None = None,
+    *,
+    in_text: bool = True,
+    needs_name_hint: bool = False,
+    digit_length: int | None = None,
+) -> ValueRecognizer:
+    return ValueRecognizer(
+        category,
+        label,
+        re.compile(pattern),
+        validator,
+        in_text=in_text,
+        needs_name_hint=needs_name_hint,
+        digit_length=digit_length,
+    )
 
 
-def is_valid_cpf(value: str) -> bool:
-    """Check the two CPF verification digits (Brazilian individual taxpayer number)."""
-    digits = _digits(value)
-    if len(digits) != 11 or len(set(digits)) == 1:
-        return False
-    for position in (9, 10):
-        weights = range(position + 1, 1, -1)
-        total = sum(
-            digit * weight for digit, weight in zip(digits[:position], weights, strict=True)
-        )
-        expected = (total * 10) % 11 % 10
-        if digits[position] != expected:
-            return False
-    return True
+_C = DataCategory
 
-
-def is_valid_cnpj(value: str) -> bool:
-    """Check the two CNPJ verification digits (Brazilian company taxpayer number)."""
-    digits = _digits(value)
-    if len(digits) != 14 or len(set(digits)) == 1:
-        return False
-    first_weights = [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]
-    second_weights = [6, *first_weights]
-    for position, weights in ((12, first_weights), (13, second_weights)):
-        total = sum(
-            digit * weight for digit, weight in zip(digits[:position], weights, strict=True)
-        )
-        remainder = total % 11
-        expected = 0 if remainder < 2 else 11 - remainder
-        if digits[position] != expected:
-            return False
-    return True
-
-
-def passes_luhn(value: str) -> bool:
-    """Check the Luhn checksum that every payment card number carries."""
-    digits = _digits(value)
-    if not 13 <= len(digits) <= 19:
-        return False
-    total = 0
-    for index, digit in enumerate(reversed(digits)):
-        if index % 2 == 1:
-            digit *= 2
-            if digit > 9:
-                digit -= 9
-        total += digit
-    return total % 10 == 0
-
-
-def is_valid_iban(value: str) -> bool:
-    """Check the ISO 13616 mod-97 checksum of an IBAN."""
-    compact = value.replace(" ", "").upper()
-    rearranged = compact[4:] + compact[:4]
-    numeric = "".join(str(int(character, 36)) for character in rearranged)
-    return int(numeric) % 97 == 1
-
-
-def is_plausible_ssn(value: str) -> bool:
-    """Reject US Social Security numbers in ranges that are never issued."""
-    area, group, serial = value.split("-")
-    if area in {"000", "666"} or area.startswith("9"):
-        return False
-    return group != "00" and serial != "0000"
-
-
-def has_phone_length(value: str) -> bool:
-    """Accept numbers with an area code: 10 to 13 digits including the country code."""
-    return 10 <= len(_digits(value)) <= 13
-
-
-# Order matters when several recognizers match the same value: the earlier, more
-# specific one wins. CPF comes before phone because eleven bare digits fit both.
+# Order breaks exact ties between recognizers: earlier and more specific wins.
 RECOGNIZERS: tuple[ValueRecognizer, ...] = (
-    ValueRecognizer(
-        DataCategory.EMAIL,
-        re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"),
+    _recognizer(_C.EMAIL, "email", r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"),
+    _recognizer(
+        _C.CNPJ,
+        "CNPJ",
+        r"\b[0-9A-Z]{2}\.?[0-9A-Z]{3}\.?[0-9A-Z]{3}/?[0-9A-Z]{4}-?\d{2}\b",
+        checksums.is_valid_cnpj,
+        digit_length=14,
     ),
-    ValueRecognizer(
-        DataCategory.CNPJ,
-        re.compile(r"\b\d{2}\.?\d{3}\.?\d{3}/?\d{4}-?\d{2}\b"),
-        is_valid_cnpj,
+    _recognizer(
+        _C.CPF,
+        "CPF",
+        r"\b\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b",
+        checksums.is_valid_cpf,
+        digit_length=11,
     ),
-    ValueRecognizer(
-        DataCategory.CPF,
-        re.compile(r"\b\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b"),
-        is_valid_cpf,
+    _recognizer(
+        _C.CNH, "CNH", r"\b\d{11}\b", checksums.is_valid_cnh, in_text=False, digit_length=11
     ),
-    ValueRecognizer(
-        DataCategory.CREDIT_CARD,
-        re.compile(r"\b(?:\d[ -]?){12,18}\d\b"),
-        passes_luhn,
+    _recognizer(
+        _C.NIS,
+        "PIS/PASEP/NIS",
+        r"\b\d{3}\.?\d{5}\.?\d{2}-?\d\b",
+        checksums.is_valid_nis,
+        in_text=False,
+        digit_length=11,
     ),
-    ValueRecognizer(
-        DataCategory.SSN,
-        re.compile(r"\b\d{3}-\d{2}-\d{4}\b"),
-        is_plausible_ssn,
+    _recognizer(
+        _C.VEHICLE_REGISTRATION,
+        "RENAVAM",
+        r"\b\d{11}\b",
+        checksums.is_valid_renavam,
+        in_text=False,
+        needs_name_hint=True,
+        digit_length=11,
     ),
-    ValueRecognizer(
-        DataCategory.IBAN,
-        re.compile(r"\b[A-Z]{2}\d{2}[A-Z0-9]{11,30}\b"),
-        is_valid_iban,
+    _recognizer(
+        _C.HEALTH_CARD,
+        "CNS",
+        r"\b\d{3}\s?\d{4}\s?\d{4}\s?\d{4}\b",
+        checksums.is_valid_cns,
+        in_text=False,
     ),
-    ValueRecognizer(
-        DataCategory.IP_ADDRESS,
-        re.compile(r"\b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)\b"),
+    _recognizer(
+        _C.VOTER_ID,
+        "Título de Eleitor",
+        r"\b\d{4}\s?\d{4}\s?\d{4}\b",
+        checksums.is_valid_voter_id,
+        in_text=False,
+        digit_length=12,
     ),
-    ValueRecognizer(
-        DataCategory.URL,
-        re.compile(r"https?://[^\s/$.?#][^\s]*"),
+    _recognizer(
+        _C.INVOICE_KEY,
+        "NF-e access key",
+        r"\b(?:\d{4}\s?){10}\d{4}\b",
+        checksums.is_valid_invoice_key,
     ),
-    ValueRecognizer(
-        DataCategory.POSTAL_CODE,
-        re.compile(r"\b\d{5}-\d{3}\b"),
+    _recognizer(
+        _C.VEHICLE_PLATE,
+        "vehicle plate",
+        r"\b[A-Z]{3}-?\d[A-Z0-9]\d{2}\b",
+        in_text=False,
+        needs_name_hint=True,
     ),
-    ValueRecognizer(
-        DataCategory.PHONE,
-        re.compile(r"(?:\+\d{1,3}[\s.-]?)?\(?\b\d{2,3}\)?[\s.-]?\d{4,5}[\s.-]?\d{4}\b"),
-        has_phone_length,
+    _recognizer(
+        _C.PIX_KEY,
+        "PIX random key",
+        r"\b[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b",
+        in_text=False,
+        needs_name_hint=True,
+    ),
+    _recognizer(_C.IMEI, "IMEI", r"\b\d{2}-?\d{6}-?\d{6}-?\d\b", checksums.is_valid_imei),
+    _recognizer(
+        _C.CREDIT_CARD, "payment card", r"\b(?:\d[ -]?){12,18}\d\b", checksums.is_valid_card
+    ),
+    _recognizer(_C.SSN, "US SSN", r"\b\d{3}-\d{2}-\d{4}\b", checksums.is_plausible_ssn),
+    _recognizer(_C.NATIONAL_ID, "US ITIN", r"\b9\d{2}-\d{2}-\d{4}\b", checksums.is_plausible_itin),
+    _recognizer(
+        _C.IBAN,
+        "IBAN",
+        r"\b[A-Z]{2}\d{2}(?:\s?[A-Z0-9]{4}){2,7}\s?[A-Z0-9]{1,4}\b",
+        checksums.is_valid_iban,
+    ),
+    _recognizer(
+        _C.IP_ADDRESS,
+        "IPv4 address",
+        r"\b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)\b",
+    ),
+    _recognizer(
+        _C.IP_ADDRESS,
+        "IPv6 address",
+        r"(?:[0-9A-Fa-f]{0,4}:){2,7}[0-9A-Fa-f]{0,4}",
+        checksums.is_ip_address,
+    ),
+    _recognizer(
+        _C.MAC_ADDRESS,
+        "MAC address",
+        r"\b(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}\b",
+    ),
+    _recognizer(_C.URL, "URL", r"https?://[^\s/$.?#][^\s]*"),
+    _recognizer(_C.POSTAL_CODE, "CEP", r"\b\d{5}-\d{3}\b"),
+    _recognizer(
+        _C.PHONE,
+        "phone number",
+        r"(?:\+\d{1,3}[\s.-]?)?\(?\b\d{2,3}\)?[\s.-]?\d{4,5}[\s.-]?\d{4}\b",
+        checksums.is_phone_number,
+    ),
+    _recognizer(
+        _C.NATIONAL_ID,
+        "Aadhaar",
+        r"\b[2-9]\d{3}\s?\d{4}\s?\d{4}\b",
+        checksums.is_valid_aadhaar,
+        in_text=False,
+    ),
+    _recognizer(
+        _C.NATIONAL_ID,
+        "Spanish DNI/NIE",
+        r"\b[0-9XYZ]\d{7}-?[A-Z]\b",
+        checksums.is_valid_spanish_id,
+    ),
+    _recognizer(
+        _C.NATIONAL_ID,
+        "Portuguese NIF",
+        r"\b[1-9]\d{8}\b",
+        checksums.is_valid_portuguese_nif,
+        in_text=False,
+    ),
+    _recognizer(
+        _C.NATIONAL_ID,
+        "Dutch BSN",
+        r"\b\d{9}\b",
+        checksums.is_valid_dutch_bsn,
+        in_text=False,
+        digit_length=9,
+    ),
+    _recognizer(
+        _C.NATIONAL_ID,
+        "German tax ID",
+        r"\b[1-9]\d{10}\b",
+        checksums.is_valid_german_tax_id,
+        in_text=False,
+    ),
+    _recognizer(
+        _C.NATIONAL_ID,
+        "UK National Insurance number",
+        r"\b[A-Z]{2}\s?\d{2}\s?\d{2}\s?\d{2}\s?[A-D]\b",
+        checksums.is_valid_nino,
+    ),
+    _recognizer(
+        _C.NATIONAL_ID,
+        "Italian codice fiscale",
+        r"\b[A-Z]{6}[0-9LMNPQRSTUV]{2}[A-EHLMPR-T][0-9LMNPQRSTUV]{2}[A-Z][0-9LMNPQRSTUV]{3}[A-Z]\b",
+        checksums.is_valid_fiscal_code,
     ),
 )
 
+TEXT_RECOGNIZERS = tuple(recognizer for recognizer in RECOGNIZERS if recognizer.in_text)
+
 
 def recognizers_for(categories: Iterable[DataCategory] | None) -> tuple[ValueRecognizer, ...]:
-    """Return the recognizers for the given categories, or all of them for None."""
+    """Return the free-text recognizers for the given categories, or all of them for None."""
     if categories is None:
-        return RECOGNIZERS
+        return TEXT_RECOGNIZERS
     wanted = set(categories)
-    return tuple(recognizer for recognizer in RECOGNIZERS if recognizer.category in wanted)
+    return tuple(recognizer for recognizer in TEXT_RECOGNIZERS if recognizer.category in wanted)

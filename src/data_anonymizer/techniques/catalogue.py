@@ -55,11 +55,28 @@ class Technique:
     function: TechniqueFunction
     summary: str
     inverse: TechniqueFunction | None = None
+    linkable: bool = False
+    unlinking_flag: str | None = None
 
     @property
     def reversible(self) -> bool:
         """True when the secret key's holder can recover the original values."""
         return self.inverse is not None
+
+    def keeps_link(self, params: Mapping[str, Any]) -> bool:
+        """True when the output can still be tied back to the person.
+
+        Reversible techniques always keep the link. Linkable techniques give the same
+        output for the same person, or let anyone test a guessed value against the
+        output, unless their `unlinking_flag` parameter is set to False.
+        """
+        if self.reversible:
+            return True
+        if not self.linkable:
+            return False
+        if self.unlinking_flag is None:
+            return True
+        return bool(params.get(self.unlinking_flag, True))
 
     def parameter_names(self) -> list[str]:
         """Return the keyword parameters the technique accepts."""
@@ -140,7 +157,8 @@ _BUILTINS = (
         _RELATIONSHIPS,
         _ALL_KINDS,
         pseudo.keyed_hash,
-        "Replace with an HMAC-SHA256 digest; consistent under one secret key.",
+        "Replace with a keyed HMAC digest (SHA-2, SHA-3 or BLAKE2); consistent per key.",
+        linkable=True,
     ),
     Technique(
         "scramble_characters",
@@ -149,6 +167,7 @@ _BUILTINS = (
         _TEXT_LIKE,
         pseudo.scramble_characters,
         "Replace digits with digits and letters with letters, keeping the format.",
+        linkable=True,
     ),
     Technique(
         "surrogate",
@@ -156,7 +175,9 @@ _BUILTINS = (
         _RELATIONSHIPS,
         _TEXT_LIKE,
         pseudo.surrogate,
-        "Replace with a realistic fake value, the same fake for the same real value.",
+        "Replace with a realistic fake; consistent per value, or random per cell.",
+        linkable=True,
+        unlinking_flag="consistent",
     ),
     Technique(
         "argon2_hash",
@@ -164,7 +185,8 @@ _BUILTINS = (
         _RELATIONSHIPS,
         _ALL_KINDS,
         pseudo.argon2_hash,
-        "Replace with a slow, memory-hard Argon2id hash; keyed salt keeps joins.",
+        "Replace with a slow, memory-hard Argon2id hash; a keyed salt keeps joins.",
+        linkable=True,
     ),
     Technique(
         "bcrypt_hash",
@@ -172,7 +194,8 @@ _BUILTINS = (
         _RELATIONSHIPS,
         _ALL_KINDS,
         pseudo.bcrypt_hash,
-        "Replace with a slow bcrypt hash; keyed salt keeps joins.",
+        "Replace with a slow bcrypt hash; a keyed salt keeps joins.",
+        linkable=True,
     ),
     Technique(
         "encrypt",

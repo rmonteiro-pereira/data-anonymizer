@@ -31,6 +31,17 @@ class DataCategory(StrEnum):
     IP_ADDRESS = "ip_address"
     URL = "url"
     STREET_ADDRESS = "street_address"
+    CNH = "cnh"
+    NIS = "nis"
+    HEALTH_CARD = "health_card"
+    VOTER_ID = "voter_id"
+    VEHICLE_REGISTRATION = "vehicle_registration"
+    VEHICLE_PLATE = "vehicle_plate"
+    PIX_KEY = "pix_key"
+    INVOICE_KEY = "invoice_key"
+    NATIONAL_ID = "national_id"
+    IMEI = "imei"
+    MAC_ADDRESS = "mac_address"
     RECORD_ID = "record_id"
     FREE_TEXT_WITH_PII = "free_text_with_pii"
     POSTAL_CODE = "postal_code"
@@ -72,6 +83,17 @@ _DIRECT_IDENTIFIERS = {
     DataCategory.IBAN,
     DataCategory.IP_ADDRESS,
     DataCategory.STREET_ADDRESS,
+    DataCategory.CNH,
+    DataCategory.NIS,
+    DataCategory.HEALTH_CARD,
+    DataCategory.VOTER_ID,
+    DataCategory.VEHICLE_REGISTRATION,
+    DataCategory.VEHICLE_PLATE,
+    DataCategory.PIX_KEY,
+    DataCategory.INVOICE_KEY,
+    DataCategory.NATIONAL_ID,
+    DataCategory.IMEI,
+    DataCategory.MAC_ADDRESS,
     DataCategory.RECORD_ID,
     DataCategory.FREE_TEXT_WITH_PII,
 }
