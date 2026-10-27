@@ -82,3 +82,24 @@ def test_challenge_command_writes_public_and_private_files(tmp_path):
     }
     assert "churned" not in pd.read_csv(folder / "test.csv").columns
     assert json.loads((folder / "answers" / "answer_key.json").read_text())["target"] == "churned"
+
+
+def test_apply_and_reveal_take_a_row_key_that_overrides_the_plan(people, tmp_path, monkeypatch):
+    monkeypatch.setenv("ANONYMIZER_SECRET_KEY", "cli-key-for-tests-0123456789")
+    source = tmp_path / "people.parquet"
+    people.to_parquet(source, index=False)
+    plan_path = tmp_path / "plan.json"
+    assert (
+        main(["propose", str(source), "-o", str(plan_path), "--protection", "pseudonymization"])
+        == 0
+    )
+    assert json.loads(plan_path.read_text())["row_key"] == "customer_id"
+    output = tmp_path / "out.parquet"
+
+    apply_arguments = ["--seed", "1", "apply", str(source), "--plan", str(plan_path)]
+    assert main(apply_arguments + ["-o", str(output), "--row-key", "cep"]) == 0
+    assert (
+        main(["reveal", str(output), "--plan", str(plan_path), "-o", str(tmp_path / "back.csv")])
+        == 0
+    )
+    assert main(apply_arguments + ["-o", str(output), "--row-key", "missing"]) == 2

@@ -118,6 +118,7 @@ assessment, is still required.
     {"column": "age", "technique": "bin_numeric", "params": {"width": 10}, "reason": "age (quasi_identifier): ages in decades"}
   ],
   "direct_identifiers": ["email"],
+  "row_key": "customer_id",
   "quasi_identifiers": ["age", "cep", "gender"],
   "sensitive_attributes": ["diagnosis"],
   "k_target": 5,
@@ -129,3 +130,29 @@ assessment, is still required.
 Columns without an action are left unchanged. A plan is checked before anything runs.
 A missing column, an unknown technique, an unknown parameter, or a linking technique in
 an anonymization plan raises `PlanError`.
+
+`row_key` names the column that identifies each row, such as a record ID. `propose`
+sets it to the first column found to hold a different value in nearly every row. It does
+three things:
+- Random numbers for noise are keyed on it, so the same row gets the same noise on
+  pandas, Polars and DuckDB, and on every run with the same keys.
+- A DuckDB table needs it, and its values must be unique, because a DuckDB table has no
+  fixed row order. pandas and Polars tables without one use the row position.
+- It lines up the original and released rows when utility and the value-by-value protection
+  checks compare them. The key holds the original values even when the plan replaces
+  the column.
+
+`anonymize apply` and `anonymize reveal` take `--row-key COLUMN`, which overrides the
+plan's `row_key`.
+
+## Large tables
+
+`Anonymizer` takes pandas, Polars and DuckDB tables and returns the kind it was given.
+- k-anonymity, l-diversity, local suppression, record isolation and fingerprint columns
+  are computed on the whole table by the engine that holds it.
+- Utility, disclosure, dominance, surviving identifiers and noisy-value linkage compare each
+  released value with its original. They run on the same at most 200,000 rows of both tables,
+  picked by a keyed hash of the row key, so the sample is the same on every run and
+  engine. Smaller tables are compared whole.
+- Dominance sums only the sampled rows of each contributor, so for a table above the limit
+  the shares are estimates.

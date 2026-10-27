@@ -7,10 +7,18 @@ risk metrics, so a reader can slide the strength and watch the trade-off move.
 
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, field
+from typing import Any
 
+import narwhals as nw
 import numpy as np
 import pandas as pd
 
+from data_anonymizer.engines import (
+    column_names,
+    first_row,
+    sample_to_pandas,
+    to_working_frame,
+)
 from data_anonymizer.evaluation.disclosure import deflection_metrics
 from data_anonymizer.surrogates import SurrogateFactory
 from data_anonymizer.techniques import BUILTIN_TECHNIQUES, TechniqueContext
@@ -92,7 +100,7 @@ class NoiseExploration:
 
 
 def explore_noise(
-    frame: pd.DataFrame,
+    frame: Any,
     column: str,
     *,
     seed: int = 0,
@@ -100,14 +108,15 @@ def explore_noise(
     sweeps: Mapping[str, tuple[str, Sequence[float], Mapping[str, float]]] = DEFAULT_SWEEPS,
     max_rows: int = DEFAULT_MAX_ROWS,
 ) -> NoiseExploration:
-    """Sweep every technique in `sweeps` over one numeric column of `frame`.
+    """Sweep every technique in `sweeps` over one numeric column of a table.
 
-    Columns with more than `max_rows` numeric values are explored on a random sample.
+    The table may be a pandas, Polars or DuckDB frame. Columns with more than `max_rows`
+    numeric values are explored on a random sample, which is the only part brought to pandas.
     """
-    if column not in frame.columns:
+    if column not in column_names(frame):
         raise ValueError(f"column {column!r} is not in the table")
-    numeric = pd.to_numeric(frame[column], errors="coerce").dropna()
-    if len(numeric) < 10:
+    numeric, total_rows = _numeric_values(frame, column, max_rows, seed)
+    if total_rows < 10:
         raise ValueError(f"column {column!r} needs at least 10 numeric values")
 
     rng = np.random.default_rng(seed)
@@ -144,11 +153,25 @@ def explore_noise(
     return NoiseExploration(
         column=column,
         rows=len(original),
-        total_rows=len(numeric),
+        total_rows=total_rows,
         band_sd=band_sd,
         scatter_original=_rounded(original.to_numpy()[scatter_rows]),
         sweeps=technique_sweeps,
     )
+
+
+def _numeric_values(frame: Any, column: str, max_rows: int, seed: int) -> tuple[pd.Series, int]:
+    """The column's numeric values, at most about `max_rows` of them, and how many there are."""
+    if isinstance(frame, pd.DataFrame):
+        numeric = pd.to_numeric(frame[column], errors="coerce").dropna()
+        return numeric, len(numeric)
+    working, _engine = to_working_frame(frame)
+    present = working.select(column).drop_nulls()
+    total_rows = int(first_row(present.select(nw.len().alias("rows")))["rows"])
+    if max_rows < 10:
+        raise ValueError("max_rows must be at least 10")
+    sampled = sample_to_pandas(present, [column], max_rows, seed)
+    return pd.to_numeric(sampled[column], errors="coerce").dropna(), total_rows
 
 
 def _sample(values: pd.Series, max_rows: int, rng: np.random.Generator) -> pd.Series:

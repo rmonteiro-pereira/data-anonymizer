@@ -215,6 +215,7 @@ def propose_plan(
         actions=actions,
         direct_identifiers=_columns_with(findings, Sensitivity.DIRECT_IDENTIFIER),
         entity_column=entity_column,
+        row_key=_record_id_column(findings),
         quasi_identifiers=_columns_with(findings, Sensitivity.QUASI_IDENTIFIER),
         sensitive_attributes=_columns_with(findings, Sensitivity.SENSITIVE),
         enforce_k_anonymity=enforce_k,
@@ -283,8 +284,15 @@ def _columns_with(findings: Sequence[ColumnFinding], sensitivity: Sensitivity) -
 
 def _entity_column(findings: Sequence[ColumnFinding]) -> str | None:
     """The column that says whose row it is: a company, else the first record key."""
-    for category in (DataCategory.ORGANIZATION, DataCategory.RECORD_ID):
-        for finding in findings:
-            if finding.category is category:
-                return finding.column
+    for finding in findings:
+        if finding.category is DataCategory.ORGANIZATION:
+            return finding.column
+    return _record_id_column(findings)
+
+
+def _record_id_column(findings: Sequence[ColumnFinding]) -> str | None:
+    """The first column found to hold a different value in nearly every row."""
+    for finding in findings:
+        if finding.category is DataCategory.RECORD_ID:
+            return finding.column
     return None
