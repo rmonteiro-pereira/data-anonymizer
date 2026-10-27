@@ -24,6 +24,7 @@ from enum import StrEnum
 import narwhals as nw
 import pandas as pd
 
+from oblitus.detection.named_entities import NamedEntityBackend, load_named_entity_backend
 from oblitus.detection.patterns import TEXT_RECOGNIZERS
 from oblitus.detection.text_entities import holds_entities
 from oblitus.engines import WorkingFrame, first_row
@@ -163,7 +164,8 @@ def _untreated_identifiers(
             problems.append(f"{column} is a direct identifier its technique does not replace")
             continue
         if action.technique == "redact_entities":
-            remaining = _share_still_holding_entities(released[column])
+            backend = _entity_backend(action)
+            remaining = _share_still_holding_entities(released[column], backend)
             if remaining > _SURVIVING_LIMIT:
                 problems.append(
                     f"{column}: {remaining:.0%} of texts still hold recognizable personal data"
@@ -175,11 +177,18 @@ def _untreated_identifiers(
     return problems
 
 
-def _share_still_holding_entities(texts: pd.Series) -> float:
+def _entity_backend(action: ColumnAction) -> NamedEntityBackend | None:
+    entity_model = action.params.get("entity_model")
+    if entity_model is None:
+        return None
+    return load_named_entity_backend(entity_model)
+
+
+def _share_still_holding_entities(texts: pd.Series, backend: NamedEntityBackend | None) -> float:
     present = texts.dropna().astype(str)
     if present.empty:
         return 0.0
-    holding = present.map(lambda text: holds_entities(text, TEXT_RECOGNIZERS))
+    holding = present.map(lambda text: holds_entities(text, TEXT_RECOGNIZERS, backend))
     return float(holding.mean())
 
 
@@ -372,14 +381,23 @@ def _jointly_relinkable_columns(
 
 
 def _free_text_leftovers(plan: AnonymizationPlan) -> list[str]:
-    # No pattern finds a name written into a sentence or a JSON field, so a cleaned text
-    # column is never proven free of personal data.
-    return [
-        f"{action.column}: redact_entities labels emails, document numbers and phones, but "
-        "names and other free-text details may remain"
-        for action in plan.actions
-        if action.technique == "redact_entities"
-    ]
+    # Patterns cannot find a name written into a sentence, and a model can miss one, so a
+    # cleaned text column is never proven free of personal data.
+    problems = []
+    for action in plan.actions:
+        if action.technique != "redact_entities":
+            continue
+        if action.params.get("entity_model") is None:
+            problems.append(
+                f"{action.column}: redact_entities labels emails, document numbers and phones, "
+                "but names and other free-text details may remain"
+            )
+        else:
+            problems.append(
+                f"{action.column}: redact_entities also uses a model for names and addresses, "
+                "but a model can miss some"
+            )
+    return problems
 
 
 def _independent_draws(plan: AnonymizationPlan) -> list[str]:
