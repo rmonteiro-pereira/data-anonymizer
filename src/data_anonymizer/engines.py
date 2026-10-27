@@ -11,11 +11,12 @@ lazy: the work becomes SQL that DuckDB runs.
 """
 
 import hashlib
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Collection, Iterator, Mapping, Sequence
 from enum import StrEnum
 from typing import Any
 
 import narwhals as nw
+import pandas as pd
 import polars as pl
 
 # Each SHA-256 digest yields four uniform numbers of 52 bits, one per 13 hex digits.
@@ -58,7 +59,7 @@ def to_working_frame(native: Any) -> tuple[WorkingFrame, Engine]:
     """Wrap a user's frame for processing, and say which engine it came from."""
     engine = engine_of(native)
     if engine is Engine.PANDAS:
-        return nw.from_native(pl.from_pandas(native), eager_only=True), engine
+        return nw.from_native(_polars_from_pandas(native), eager_only=True), engine
     if engine is Engine.POLARS and isinstance(native, pl.LazyFrame):
         return nw.from_native(native.collect(), eager_only=True), engine
     return nw.from_native(native), engine
@@ -119,6 +120,72 @@ def sample_to_pandas(frame: WorkingFrame, columns: Sequence[str], size: int, see
 
 def _collected_polars(native: Any) -> pl.DataFrame:
     return native.collect() if isinstance(native, pl.LazyFrame) else native
+
+
+def _polars_from_pandas(native: Any) -> pl.DataFrame:
+    duplicated = sorted({str(name) for name in native.columns[native.columns.duplicated()]})
+    if duplicated:
+        raise ValueError(f"the table has duplicate column names: {', '.join(duplicated)}")
+    columns = [_polars_column(str(name), native[name]) for name in native.columns]
+    return pl.DataFrame(columns)
+
+
+def _polars_column(name: str, values: Any) -> pl.Series:
+    try:
+        return pl.from_pandas(values.reset_index(drop=True)).rename(name)
+    except (TypeError, ValueError, pl.exceptions.PolarsError):
+        # Python objects of mixed types have no single column type, and text holds them all.
+        # The user gets the original column back when no action changes it.
+        texts = [None if _is_missing(item) else str(item) for item in values.tolist()]
+        return pl.Series(name, texts, dtype=pl.String)
+
+
+def _is_missing(item: Any) -> bool:
+    return item is None or (isinstance(item, float) and item != item)
+
+
+def to_pandas_like(frame: WorkingFrame, original: Any, changed: Collection[str]) -> Any:
+    """Return an in-memory frame as pandas, shaped like the user's original pandas table.
+
+    Columns no action changed are the user's own columns, with their dtype and values.
+    Changed integer and boolean columns with gaps keep nullable pandas types, so large
+    integers stay exact. The original index is restored.
+    """
+    released = collect(frame).to_native()
+    columns = {}
+    for name in released.columns:
+        if name in changed or name not in original.columns:
+            columns[name] = _pandas_column(released.get_column(name), original.get(name))
+        else:
+            columns[name] = original[name].reset_index(drop=True)
+    result = pd.DataFrame(columns)
+    if len(result) == len(original):
+        result.index = original.index
+    return result
+
+
+def _pandas_column(values: pl.Series, original: Any) -> Any:
+    if values.dtype.is_integer() and values.null_count():
+        converted = pd.Series(pd.array(values.to_list(), dtype="Int64"))
+    elif values.dtype == pl.Boolean and values.null_count():
+        converted = pd.Series(pd.array(values.to_list(), dtype="boolean"))
+    else:
+        converted = values.to_pandas()
+    if original is None:
+        return converted
+    return _with_original_extension_type(converted, original.dtype)
+
+
+def _with_original_extension_type(converted: Any, original_dtype: Any) -> Any:
+    # A nullable or text column that a technique left in the same kind keeps its pandas type.
+    kind = str(original_dtype)
+    if kind == "Int64" and pd.api.types.is_integer_dtype(converted.dtype):
+        return converted.astype("Int64")
+    if kind == "boolean" and pd.api.types.is_bool_dtype(converted.dtype):
+        return converted.astype("boolean")
+    if kind.startswith("string") and not pd.api.types.is_numeric_dtype(converted.dtype):
+        return converted.astype(original_dtype)
+    return converted
 
 
 def to_native(frame: WorkingFrame, engine: Engine) -> Any:

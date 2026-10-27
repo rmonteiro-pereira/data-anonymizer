@@ -478,3 +478,55 @@ def test_a_row_key_that_repeats_or_has_gaps_is_refused(engine, ids):
 
     with pytest.raises(ValueError, match="row key 'id'"):
         Table.from_native(_native(frame, engine), row_key="id")
+
+
+def _messy_pandas() -> pd.DataFrame:
+    frame = pd.DataFrame(
+        {
+            "id": pd.array([2**60 + 1, 2**60 + 2, 2**60 + 3, 2**60 + 4], dtype="Int64"),
+            "mixed": [1, "x", None, 2.5],
+            "flag": pd.array([True, None, False, True], dtype="boolean"),
+            "amount": pd.array([10, None, 30, 40], dtype="Int64"),
+        },
+        index=["a", "b", "c", "d"],
+    )
+    return frame
+
+
+def test_untouched_pandas_columns_come_back_exactly(context):
+    frame = _messy_pandas()
+    table = Table.from_native(frame)
+
+    BUILTIN_TECHNIQUES["gaussian_noise"].apply(table, "amount", context, {})
+    released = table.to_native()
+
+    pd.testing.assert_series_equal(released["mixed"], frame["mixed"])
+    pd.testing.assert_series_equal(released["flag"], frame["flag"])
+    pd.testing.assert_series_equal(released["id"], frame["id"])
+    assert list(released.index) == ["a", "b", "c", "d"]
+
+
+def test_changed_nullable_integers_stay_nullable_integers(context):
+    table = Table.from_native(_messy_pandas())
+
+    BUILTIN_TECHNIQUES["gaussian_noise"].apply(table, "amount", context, {})
+    released = table.to_native()
+
+    assert str(released["amount"].dtype) == "Int64"
+    assert released["amount"].isna().tolist() == [False, True, False, False]
+
+
+def test_large_integer_row_keys_stay_exact(context):
+    frame = _messy_pandas()
+    table = Table.from_native(frame, row_key="id")
+
+    BUILTIN_TECHNIQUES["gaussian_noise"].apply(table, "amount", context, {})
+
+    assert table.to_native()["id"].tolist() == frame["id"].tolist()
+
+
+def test_duplicate_pandas_column_names_are_refused():
+    frame = pd.DataFrame([[1, 2]], columns=["a", "a"])
+
+    with pytest.raises(ValueError, match="duplicate column names: a"):
+        Table.from_native(frame)

@@ -1,5 +1,7 @@
 """Techniques that make values coarser so more records share each value."""
 
+import math
+
 import narwhals as nw
 import numpy as np
 
@@ -199,8 +201,21 @@ def top_bottom_code(
     found = table.statistics(**limits) if limits else {}
     lower_limit = found.get("lower", lower)
     upper_limit = found.get("upper", upper)
+    dtype = table.dtype(column)
+    if dtype.is_integer():
+        # Integers are clipped as integers: above 2**53 a float cannot hold them exactly.
+        return nw.col(column).clip(
+            lower_bound=_whole_limit(lower_limit), upper_bound=_whole_limit(upper_limit)
+        )
     clipped = values.clip(lower_bound=lower_limit, upper_bound=upper_limit)
-    return in_original_type(clipped, table.dtype(column))
+    return in_original_type(clipped, dtype)
+
+
+def _whole_limit(limit: float | None) -> int | None:
+    # Halves round away from zero, as everywhere else in the library.
+    if limit is None:
+        return None
+    return int(math.copysign(math.floor(abs(limit) + 0.5), limit))
 
 
 def suppress_rare(

@@ -33,6 +33,12 @@
 | `microaggregate` | perturbation | no | no | preserves distribution | float, integer | `group_size` | Replace values with the mean of groups of at least k; exact mean. |
 | `randomized_response` | perturbation | no | no | distorts | boolean, category | `keep_probability` | Randomly replace some categories; deniable, local differential privacy. |
 
+Numeric techniques compute in 64-bit floating point, so integers above 2^53 (about
+9 × 10^15) lose precision when a numeric technique transforms them. Use a key technique
+such as `keyed_hash` for very large identifiers. Columns no action changes, and row keys,
+come back exactly. For pandas tables, untouched columns come back as the user's own
+columns, with their dtype and index.
+
 What the effects mean:
 
 - **preserves relationships**: distinct counts, joins and links to other columns survive.

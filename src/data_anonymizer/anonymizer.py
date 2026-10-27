@@ -15,7 +15,6 @@ from data_anonymizer.engines import (
     column_names,
     engine_of,
     pandas_columns,
-    to_native,
     to_working_frame,
 )
 from data_anonymizer.errors import PlanError, SchemaError
@@ -170,16 +169,19 @@ class Anonymizer:
         released = table.released_frame()
 
         suppressed_cells = 0
+        suppressed_columns: list[str] = []
         if plan.enforce_k_anonymity:
             outcome = enforce_k_anonymity(released, plan.quasi_identifiers, plan.k_target)
             released = outcome.data
             suppressed_cells = outcome.suppressed_cells
+            if suppressed_cells:
+                suppressed_columns = list(plan.quasi_identifiers)
 
         privacy_after = self._privacy(released, plan)
         sample = align_sample(original, released, engine, key=self._sample_key)
         released_table = released.drop(ROW_KEY_COLUMN)
         return AnonymizationResult(
-            data=to_native(released_table, engine),
+            data=table.as_user_frame(released_table, also_changed=suppressed_columns),
             plan=plan,
             suppressed_cells=suppressed_cells,
             privacy_before=self._privacy(original, plan),

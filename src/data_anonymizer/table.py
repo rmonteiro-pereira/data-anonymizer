@@ -8,7 +8,7 @@ values computed in Python, and one-row statistics.
 Helper columns get the `__da_` prefix and are dropped when the table is handed back.
 """
 
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from itertools import count
 from typing import Any
 
@@ -22,6 +22,7 @@ from data_anonymizer.engines import (
     collect,
     lookup_frame,
     to_native,
+    to_pandas_like,
     to_working_frame,
 )
 
@@ -46,6 +47,8 @@ class Table:
             if problem is not None:
                 raise ValueError(problem)
         self._engine = engine
+        # A pandas table is handed back with the user's own untouched columns and index.
+        self._pandas_original: Any = None
         self._original_columns = list(frame.columns)
         self._names = count()
         if isinstance(frame, nw.DataFrame):
@@ -59,7 +62,10 @@ class Table:
     def from_native(cls, native: Any, *, row_key: str | None = None) -> "Table":
         """Wrap a pandas, Polars or DuckDB frame."""
         frame, engine = to_working_frame(native)
-        return cls(frame, engine, row_key=row_key)
+        table = cls(frame, engine, row_key=row_key)
+        if engine is Engine.PANDAS:
+            table._pandas_original = native
+        return table
 
     @property
     def engine(self) -> Engine:
@@ -207,7 +213,26 @@ class Table:
 
     def to_native(self) -> Any:
         """Hand the table back in the user's form, without helper columns."""
-        return to_native(self.released_frame(keep_row_key=False), self._engine)
+        return self.as_user_frame(self.released_frame(keep_row_key=False))
+
+    def as_user_frame(self, frame: WorkingFrame, *, also_changed: Collection[str] = ()) -> Any:
+        """Return a released frame in the user's form.
+
+        For pandas, columns that no action replaced, and that are not in `also_changed`,
+        come back as the user's own columns.
+        """
+        if self._pandas_original is None:
+            return to_native(frame, self._engine)
+        changed = set(self.replaced_columns()) | set(also_changed)
+        return to_pandas_like(frame, self._pandas_original, changed)
+
+    def replaced_columns(self) -> list[str]:
+        """The user's columns that an action has replaced."""
+        return [
+            column
+            for column in self._original_columns
+            if _ORIGINAL_PREFIX + column in self._frame.columns
+        ]
 
     def original_frame(self) -> WorkingFrame:
         """The user's columns as they were before any replacement, plus `ROW_KEY_COLUMN`.
