@@ -26,6 +26,10 @@ import pandas as pd
 
 _NANOSECONDS_PER_DAY = 86_400 * 10**9
 
+# Limits that keep a schema from someone else from using unbounded time or memory.
+MAX_EXPRESSION_LENGTH = 2000
+MAX_EXPRESSION_DEPTH = 100
+
 Functions = dict[str, Callable[..., Any]]
 
 
@@ -86,14 +90,52 @@ def _random_functions(rng: np.random.Generator, rows: int) -> dict[str, Callable
 
 CONSTANTS = {"pi": np.pi, "e": np.e}
 
+
+def _is_plain_number(value: Any) -> bool:
+    return isinstance(value, int | float | np.integer | np.floating)
+
+
+def _is_text_like(value: Any) -> bool:
+    if isinstance(value, str | list | tuple):
+        return True
+    if isinstance(value, np.ndarray):
+        if value.dtype.kind in "US":
+            return True
+        return value.dtype.kind == "O" and any(isinstance(item, str) for item in value)
+    return False
+
+
+def _power(base: Any, exponent: Any) -> Any:
+    # Python integers grow without limit, so powers of plain numbers run in float64.
+    if _is_plain_number(base) and _is_plain_number(exponent):
+        with np.errstate(over="ignore", invalid="ignore"):
+            result = np.float64(base) ** np.float64(exponent)
+        if not np.isfinite(result):
+            raise ExpressionError(f"{base} ** {exponent} is too large")
+        return result
+    return operator.pow(base, exponent)
+
+
+def _multiply(left: Any, right: Any) -> Any:
+    if _is_text_like(left) or _is_text_like(right):
+        raise ExpressionError("* does not repeat text or lists")
+    return operator.mul(left, right)
+
+
+def _remainder(left: Any, right: Any) -> Any:
+    if _is_text_like(left):
+        raise ExpressionError("% does not format text")
+    return operator.mod(left, right)
+
+
 _BINARY = {
     ast.Add: operator.add,
     ast.Sub: operator.sub,
-    ast.Mult: operator.mul,
+    ast.Mult: _multiply,
     ast.Div: operator.truediv,
     ast.FloorDiv: operator.floordiv,
-    ast.Mod: operator.mod,
-    ast.Pow: operator.pow,
+    ast.Mod: _remainder,
+    ast.Pow: _power,
 }
 
 _COMPARISONS = {
@@ -107,18 +149,39 @@ _COMPARISONS = {
 
 
 class ExpressionError(ValueError):
-    """An expression uses syntax, a name or a function the language does not allow."""
+    """An expression is not allowed, or cannot be evaluated."""
 
 
 def parse(text: str) -> ast.Expression:
     """Parse an expression and check that it only uses allowed syntax."""
+    if len(text) > MAX_EXPRESSION_LENGTH:
+        raise ExpressionError(
+            f"expression has {len(text)} characters; the limit is {MAX_EXPRESSION_LENGTH}"
+        )
     try:
         tree = ast.parse(text, mode="eval")
     except SyntaxError as error:
         raise ExpressionError(f"cannot parse {text!r}: {error.msg}") from error
+    except (RecursionError, MemoryError, ValueError) as error:
+        raise ExpressionError(f"cannot parse {text!r}: it is too deeply nested") from error
+    if _depth(tree) > MAX_EXPRESSION_DEPTH:
+        raise ExpressionError(
+            f"{text[:40]!r}... is too deeply nested; the limit is {MAX_EXPRESSION_DEPTH} levels"
+        )
     for node in ast.walk(tree):
         _check_node(node, text)
     return tree
+
+
+def _depth(tree: ast.AST) -> int:
+    # Counted with a stack because a recursive count would fail on the input it guards against.
+    deepest = 0
+    pending = [(tree, 1)]
+    while pending:
+        node, level = pending.pop()
+        deepest = max(deepest, level)
+        pending.extend((child, level + 1) for child in ast.iter_child_nodes(node))
+    return deepest
 
 
 def referenced_columns(text: str) -> set[str]:
@@ -152,7 +215,14 @@ def evaluate(text: str, frame: pd.DataFrame, rng: np.random.Generator | None = N
     functions = dict(FUNCTIONS)
     if rng is not None:
         functions.update(_random_functions(rng, len(frame)))
-    result = _evaluate(tree.body, frame, functions)
+    try:
+        result = _evaluate(tree.body, frame, functions)
+    except ExpressionError:
+        raise
+    except (ArithmeticError, TypeError, ValueError, RecursionError, MemoryError) as error:
+        raise ExpressionError(
+            f"cannot evaluate {text!r}: {type(error).__name__}: {error}"
+        ) from error
     if np.ndim(result) == 0:
         return np.full(len(frame), result)
     return np.asarray(result)

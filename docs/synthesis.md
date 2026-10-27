@@ -81,7 +81,12 @@ on top. Formulas run after the columns they read, and a cycle is rejected.
     `poisson(rate)`, `uniform(low, high)`.
 
 Expressions are parsed and evaluated node by node, never with `eval`, so a schema
-file from someone else cannot run code.
+file from someone else cannot run code. They also cannot use unbounded time or memory:
+- an expression is at most 2000 characters long and 100 levels deep;
+- powers of plain numbers run in floating point, and one that overflows is an error;
+- `*` does not repeat text or lists, and `%` does not format text;
+- any arithmetic or type error during evaluation is reported as an `ExpressionError` that
+  names the expression.
 
 **Outliers.** `outlier_fraction` pushes that share of rows `outlier_scale` standard
 deviations (default 6) into either tail, ignoring the bounds.

@@ -226,3 +226,46 @@ def test_outliers_are_planted_far_from_the_mean():
 def test_inconsistent_pattern_schemas_are_rejected(schema, message):
     with pytest.raises(ValueError, match=message):
         DatasetSchema.model_validate(schema)
+
+
+@pytest.mark.parametrize(
+    "expression",
+    [
+        "a + 9 ** 9 ** 9",
+        "10 ** 10 ** 8",
+        "'a' * 1000000000",
+        "[1, 2] * 1000000000",
+        "('9' * 4000) ** 5000",
+        "'%1000000000d' % 1",
+        "-" * 1500 + "1",
+        "+".join(["1"] * 3000),
+        "1 // 0",
+        "1 / 0",
+        "1 % 0",
+        "sin(1, 2, 3, 4)",
+        "round(a, 10 ** 12)",
+        "normal(0, -1)",
+        "clip(a, 'x', 'y')",
+        "days('notadate')",
+    ],
+)
+def test_hostile_expressions_fail_with_an_expression_error(expression):
+    frame = pd.DataFrame({"a": [1.0, 2.0]})
+
+    with pytest.raises(ExpressionError):
+        evaluate(expression, frame, np.random.default_rng(0))
+
+
+def test_deeply_nested_schema_expressions_are_rejected_when_the_schema_loads():
+    deep = "-" * 150 + "a"
+
+    with pytest.raises(ValueError, match="nested"):
+        ColumnSchema(name="b", kind=ColumnKind.FLOAT, formula=deep)
+
+
+def test_ordinary_arithmetic_still_works_in_the_sandbox():
+    frame = pd.DataFrame({"a": [1.0, 2.0], "n": [2, 3]})
+
+    assert evaluate("2 ** 10 + a ** 2", frame).tolist() == [1025.0, 1028.0]
+    assert evaluate("n ** 2", frame).tolist() == [4, 9]
+    assert evaluate("round(a, 1) * 3 % 2", frame).tolist() == [1.0, 0.0]

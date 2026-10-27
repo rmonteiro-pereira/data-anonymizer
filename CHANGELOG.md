@@ -25,6 +25,9 @@
   - Spearman correlations, conditional overrides and formula columns, with a safe
     expression language that includes date and random functions;
   - outliers, exact statistics and row constraints.
+- Synthesis fixes:
+  - the expression language rejects huge powers, text repetition and over-long or deeply
+    nested expressions, and reports evaluation errors as `ExpressionError`;
 - Data-science challenges, from `challenge`: train and test files, plus an answer key
   with the true drivers and the best achievable scores.
 
