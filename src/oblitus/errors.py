@@ -28,3 +28,7 @@ class EntropySourceUnavailableError(AnonymizerError):
 class PrivacyBudgetError(AnonymizerError):
     """A differential-privacy request lacks a declared bound or domain, or would spend more
     privacy budget than was declared."""
+
+
+class MissingExtraError(AnonymizerError, ImportError):
+    """A feature needs an optional dependency that is not installed."""

@@ -22,6 +22,7 @@
 | `round_numeric` | generalization | no | no | preserves distribution | float, integer | `decimals`, `base` | Round to decimals or to a multiple of a base. |
 | `truncate_date` | generalization | no | no | distorts | datetime | `unit` | Cut dates to the start of their year, month, week or day. |
 | `truncate_string` | generalization | no | no | distorts | category, integer, text | `keep`, `pad_char` | Keep only the first characters, such as a postal code's region. |
+| `generalize_hierarchy` | generalization | no | no | distorts | boolean, category, integer, text | `hierarchy`, `level` | Replace each value with its stand-in at a level of a hierarchy, such as a postal code's region. See [Generalization hierarchies](#generalization-hierarchies). |
 | `top_bottom_code` | generalization | no | no | preserves distribution | float, integer | `lower_quantile`, `upper_quantile`, `lower`, `upper` | Clip outliers to quantile or fixed limits. |
 | `suppress_rare` | generalization | no | no | distorts | boolean, category, integer, text | `min_count`, `replacement` | Replace categories seen fewer than a minimum number of times. |
 | `gaussian_noise` | noise | no | no | preserves distribution | float, integer | `relative_scale`, `scale`, `preserve_variance` | Add normal noise, rescaled to keep the mean and standard deviation. |
@@ -52,6 +53,38 @@ What the effects mean:
 **Keeps a link** means the output can be tied back to the person by the key holder, or by
 anyone testing a guess against a published hash. Anonymization plans refuse those
 techniques.
+
+## Generalization hierarchies
+
+A hierarchy says how a value becomes coarser, level by level. Level 0 is the value, level 1 the
+first stand-in, and the level after the last one is `*`. Write it in one of three forms:
+
+```json
+{"levels": [{"Santos": "Baixada", "Bauru": "Interior"}, {"Santos": "SP", "Bauru": "SP"}]}
+{"prefix_lengths": [5, 3], "digits_only": true}
+{"preset": "cep"}
+```
+
+- `levels` holds one mapping per level, each from the original value to its stand-in at that
+  level. A value a mapping does not list stays as it is at that level.
+- `prefix_lengths` keeps the first characters and stars the rest, from specific to general and
+  strictly decreasing. `digits_only` drops separators first.
+- `{"preset": "cep"}` is the Brazilian postal code form of the second: `01310-100` becomes
+  `01310***`, `013*****`, `01******` and `0*******` by keeping 5, 3, 2 and 1 digits. It needs
+  no external data, so it names a delivery area and a region by prefix, not a city or a state.
+
+The `generalize_hierarchy` technique applies one level to a column:
+`{"technique": "generalize_hierarchy", "params": {"hierarchy": {"preset": "cep"}, "level": 2}}`.
+The plan's `hierarchies` field maps a column to the same definition, for Mondrian to describe a
+group of categories (see [protection.md](protection.md#mondrian-generalization)).
+
+## Joint microaggregation
+
+`microaggregate` protects one column at a time. A record's vector over several columns can
+still be rare, so the plan's `joint_microaggregation` list groups records by their distance
+over several numeric columns at once (the MDAV method) and gives each column its group's mean.
+It is a plan step, because a technique sees one column. See
+[protection.md](protection.md#joint-microaggregation).
 
 ## One-way or reversible
 

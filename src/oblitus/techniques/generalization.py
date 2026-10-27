@@ -1,10 +1,12 @@
 """Techniques that make values coarser so more records share each value."""
 
 import math
+from typing import Any
 
 import narwhals as nw
 import numpy as np
 
+from oblitus.generalization_hierarchies import GeneralizationHierarchy
 from oblitus.table import Table
 from oblitus.techniques.context import TechniqueContext
 from oblitus.techniques.date_expressions import (
@@ -238,3 +240,24 @@ def suppress_rare(
     if replacement is None:
         return nw.when(~rare).then(values)
     return nw.when(rare).then(nw.lit(replacement)).otherwise(values)
+
+
+def generalize_hierarchy(
+    table: Table,
+    column: str,
+    context: TechniqueContext,
+    *,
+    hierarchy: dict[str, Any],
+    level: int = 1,
+) -> nw.Expr:
+    """Replace each value with its stand-in at `level` of a hierarchy (postal code to region).
+
+    `hierarchy` is either `{"levels": [{value: stand_in, ...}, ...]}`, one mapping per level
+    from specific to general, or `{"prefix_lengths": [5, 3]}` to keep the first characters
+    and star the rest. `{"preset": "cep"}` is the Brazilian postal code prefix hierarchy.
+    Level 0 keeps the value, and the level past the last one gives `*`.
+    """
+    parsed = GeneralizationHierarchy.model_validate(hierarchy)
+    if not 0 <= level <= parsed.top_level:
+        raise ValueError(f"level must be between 0 and {parsed.top_level}")
+    return lookup_distinct(table, column, lambda text: parsed.ancestor(text, level))

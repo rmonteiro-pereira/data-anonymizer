@@ -13,7 +13,16 @@ from oblitus.errors import (
     TableFormatError,
 )
 from oblitus.evaluation import PrivacyReport, UtilityReport
-from oblitus.plan import AnonymizationPlan, ColumnAction, Fidelity, Protection
+from oblitus.generalization_hierarchies import GeneralizationHierarchy
+from oblitus.plan import (
+    AnonymizationPlan,
+    ColumnAction,
+    Fidelity,
+    JointMicroaggregation,
+    KAnonymityMethod,
+    Protection,
+    RangeStyle,
+)
 from oblitus.protection import ProtectionAssessment, ProtectionLevel
 from oblitus.synthesis import ColumnSchema, DatasetSchema, RelationalSchema, infer_schema
 from oblitus.taxonomy import ColumnKind, DataCategory, Sensitivity
@@ -42,6 +51,9 @@ __all__ = [
     "DatasetSchema",
     "Fidelity",
     "MemoryVault",
+    "GeneralizationHierarchy",
+    "JointMicroaggregation",
+    "KAnonymityMethod",
     "PlanError",
     "PrivacyBudget",
     "PrivacyBudgetError",
@@ -50,6 +62,7 @@ __all__ = [
     "ProtectionAssessment",
     "ProtectionLevel",
     "RelationalSchema",
+    "RangeStyle",
     "SchemaError",
     "Sensitivity",
     "SqliteVault",
