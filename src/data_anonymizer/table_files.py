@@ -20,8 +20,9 @@ def read_table(path: Path) -> pl.DataFrame:
     suffix = path.suffix.lower()
     if suffix == ".csv":
         # The whole file decides each column's type, so a late decimal in an integer
-        # column does not fail the read.
-        return pl.read_csv(path, infer_schema_length=None)
+        # column does not fail the read. ISO dates are read as dates, so date techniques and
+        # checks see them as dates rather than text.
+        return pl.read_csv(path, infer_schema_length=None, try_parse_dates=True)
     if suffix == ".parquet":
         return pl.read_parquet(path)
     raise TableFormatError(f"cannot read {path.name}; supported: {_SUPPORTED}")

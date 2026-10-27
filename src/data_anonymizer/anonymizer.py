@@ -28,7 +28,7 @@ from data_anonymizer.evaluation import (
 from data_anonymizer.evaluation.aligned_sample import align_sample
 from data_anonymizer.local_suppression import enforce_k_anonymity
 from data_anonymizer.plan import AnonymizationPlan, ColumnAction, Fidelity, Protection
-from data_anonymizer.proposal import propose_plan, replace_untreated_keys
+from data_anonymizer.proposal import propose_plan
 from data_anonymizer.protection import (
     ProtectionAssessment,
     assess_protection,
@@ -47,6 +47,7 @@ from data_anonymizer.synthesis import (
 from data_anonymizer.synthesis.rare_values import min_records_for
 from data_anonymizer.table import ROW_KEY_COLUMN, Table, row_key_problem
 from data_anonymizer.techniques import BUILTIN_TECHNIQUES, Technique, TechniqueContext
+from data_anonymizer.untreated_columns import treat_untreated_columns
 
 # Shorter keys can be guessed, and every pseudonym and encryption key derives from it.
 MIN_SECRET_KEY_BYTES = 16
@@ -136,7 +137,7 @@ class Anonymizer:
             findings, fidelity=fidelity, protection=protection, techniques=self._techniques
         )
         working, _engine = to_working_frame(frame)
-        plan = replace_untreated_keys(plan, working)
+        plan = treat_untreated_columns(plan, working)
         # A record-ID column can still repeat or have gaps. Only a column that tells every
         # row apart may key the noise.
         if plan.row_key is not None and row_key_problem(working, plan.row_key) is not None:

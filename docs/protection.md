@@ -22,7 +22,9 @@ to the person.
   Noise stays keyed on the secret key and seed. Reissuing the same release gives the same
   noise, so averaging repeated releases gains nothing.
 - Quasi-identifiers are generalized, and local suppression then blanks cells until each
-  combination is shared by at least `k_target` rows.
+  combination is shared by at least `k_target` rows. Rows whose quasi-identifiers are all
+  blank still form a group; when they number fewer than `k_target`, the smallest complete
+  group is blanked too, so no row has to be dropped.
 
 The result is then checked.
 
@@ -48,7 +50,19 @@ fresh for every release and keep the grouping, so a model can still use the colu
 can look up their own value. Whole-number columns are kept, because they may be measurements
 such as counts or hours whose distribution must survive; when one of them groups rows like a
 key, the protection report flags it and the release is `at_risk`. Replace it or list it in the
-plan. Pseudonymization proposals are unchanged.
+plan.
+
+Two more steps read the whole table under anonymization:
+- A timestamp or number left untreated with a different value in nearly every row (90% or
+  more distinct) is generalized, since it would single out rows. Statistical fidelity cuts
+  timestamps to the day and rounds numbers to three significant figures, which keeps their
+  distribution. Privacy fidelity cuts to the year and uses quintile bands, and adds both
+  columns to the quasi-identifiers.
+- Every other column with at most 50 distinct values joins the quasi-identifiers, so local
+  suppression covers the same columns the protection report uses when it looks for unique
+  rows.
+
+Pseudonymization proposals are unchanged. CSV files are read with ISO dates parsed as dates.
 
 The proposal picks an entity column: the company column if there is one, otherwise the
 record ID. `date_shift` then moves every date of one entity by the same offset, so the

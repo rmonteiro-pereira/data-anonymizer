@@ -10,11 +10,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-import narwhals as nw
-
 from data_anonymizer.detection import ColumnFinding
-from data_anonymizer.engines import WorkingFrame
-from data_anonymizer.identifying_columns import untreated_discrete_columns
 from data_anonymizer.plan import AnonymizationPlan, ColumnAction, Fidelity, Protection
 from data_anonymizer.surrogates import SURROGATE_CATEGORIES
 from data_anonymizer.taxonomy import ColumnKind, DataCategory, Sensitivity, sensitivity_of
@@ -226,43 +222,6 @@ def propose_plan(
         quasi_identifiers=_columns_with(findings, Sensitivity.QUASI_IDENTIFIER),
         sensitive_attributes=_columns_with(findings, Sensitivity.SENSITIVE),
         enforce_k_anonymity=enforce_k,
-    )
-
-
-def replace_untreated_keys(plan: AnonymizationPlan, frame: WorkingFrame) -> AnonymizationPlan:
-    """Add a fresh-code action for every untreated discrete column of an anonymization plan.
-
-    A column of account numbers, cards or devices ties together the rows of one entity, and
-    nobody can tell it from a product code by its statistics. Fresh per-release codes keep the
-    grouping for a model while nobody can look up their own value. Only text columns are
-    replaced: a whole-number column may be a measurement whose distribution must survive, so it
-    is left to the protection report. Pseudonymization plans are left alone, since the key
-    holder may need the original values.
-    """
-    if plan.protection is not Protection.ANONYMIZATION:
-        return plan
-    schema = frame.collect_schema()
-    columns = [
-        column
-        for column in untreated_discrete_columns(plan, frame)
-        if plan.action_for(column) is None and _holds_text(schema[column])
-    ]
-    if not columns:
-        return plan
-    actions = [*plan.actions, *(_fresh_code_action(column) for column in columns)]
-    return plan.model_copy(update={"actions": actions})
-
-
-def _holds_text(dtype: Any) -> bool:
-    return dtype == nw.String or dtype == nw.Categorical
-
-
-def _fresh_code_action(column: str) -> ColumnAction:
-    return ColumnAction(
-        column=column,
-        technique="scramble_categories",
-        params={"prefix": "KEY"},
-        reason="untreated discrete column: fresh code per release; rows stay grouped",
     )
 
 

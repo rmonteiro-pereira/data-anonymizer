@@ -39,7 +39,7 @@ from data_anonymizer.techniques.rescaling import SHAPE_KEEPING_METHODS
 
 # A column with at most this many distinct values counts as discrete for the
 # whole-record uniqueness check; continuous columns make every row unique trivially.
-_DISCRETE_LIMIT = 50
+DISCRETE_LIMIT = 50
 
 # A noisy column fails the linkage check when nearest-value matching re-links more
 # than one record in k_target: worse odds than k-anonymity already accepts.
@@ -222,7 +222,7 @@ def _magnitude_disclosures(
     groupings = [
         column
         for column in plan.quasi_identifiers
-        if released[column].nunique(dropna=False) <= _DISCRETE_LIMIT
+        if released[column].nunique(dropna=False) <= DISCRETE_LIMIT
     ]
     problems = []
     for attribute in plan.sensitive_attributes:
@@ -294,7 +294,7 @@ def _isolated_records(plan: AnonymizationPlan, released: WorkingFrame) -> list[s
     if not candidates or row_count == 0:
         return []
     distinct = first_row(released.select(*[nw.col(c).n_unique().alias(c) for c in candidates]))
-    discrete = [column for column in candidates if distinct[column] <= _DISCRETE_LIMIT]
+    discrete = [column for column in candidates if distinct[column] <= DISCRETE_LIMIT]
     columns = list(dict.fromkeys([*plan.quasi_identifiers, *discrete]))
     columns = [column for column in columns if column in names]
     if not columns:

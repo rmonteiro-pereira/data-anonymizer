@@ -38,12 +38,15 @@ def test_local_suppression_blanks_only_rows_in_small_groups():
     assert assess_privacy(outcome.data, ["zip", "gender"], k_target=2).meets_target
 
 
-def test_a_lone_outlier_cannot_be_hidden_by_suppression_alone():
-    frame = pd.DataFrame({"zip": ["100"] * 5 + ["999"]})
+def test_a_lone_outlier_is_merged_with_the_smallest_complete_group():
+    frame = pd.DataFrame({"zip": ["100"] * 5 + ["200"] * 2 + ["999"]})
 
     outcome = enforce_k_anonymity(frame, ["zip"], k=2)
 
-    assert not assess_privacy(outcome.data, ["zip"], k_target=2).meets_target
+    assert assess_privacy(outcome.data, ["zip"], k_target=2).meets_target
+    # The two-row group is the cheapest to blank; the five-row group keeps its value.
+    assert outcome.data["zip"].isna().tolist() == [False] * 5 + [True] * 3
+    assert outcome.suppressed_cells == 3
 
 
 def test_compare_tables_reports_zero_drift_for_identical_tables():
