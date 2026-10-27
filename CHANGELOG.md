@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+- **Class imbalance.** A question's `positive_share` sets how rare the positive class is by
+  shifting the log-odds of its `truth_column`. The answer key gains a `class_balance` section
+  with the PR-AUC baseline and the best achievable PR-AUC.
+- **Missing not at random.** A column's `missingness` makes its blank cells follow its own
+  value (`mnar`) or another column (`mar`). The key records each column's mechanism under
+  `missingness`.
+- **Related tables.** A schema with a `tables` list generates tables joined by foreign keys,
+  with child counts per parent, child columns that read parent columns, and aggregates of
+  child rows that a parent's target can depend on. `oblitus challenge` writes every child
+  table, `oblitus synthesize` writes a folder of tables, and `Anonymizer.synthesize_tables`
+  returns them. Treatments and test shifts are refused for related tables. See
+  `examples/customers_orders_challenge.json`.
+- **Difficulty levels.** A question's `difficulty` (`easy`, `medium`, `hard`) sets target noise,
+  distractor columns, label noise and drift; the key gains a `difficulty` section.
+- **Task description.** `QUESTION.md` is now written from the schema's question: what to
+  predict, files, score, notes on blank cells and rules, without revealing the answer key. A
+  question can name its `metric`.
+
 ## 0.3.0
 
 - **Renamed to oblitus.** The package is `oblitus` on PyPI (`pip install oblitus`), the import

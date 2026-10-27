@@ -25,7 +25,7 @@ synthetic = Anonymizer(seed=1, locale="pt_BR").synthesize(10_000, schema=schema)
 | `category` | `choices`, optional `weights` |
 | `datetime` | `start`, `end` |
 | `text` | `category` for realistic fakes (`email`, `person_name`, `cpf`, `cnpj`, `phone`, ...), a `template` where `#` is a digit and `?` an uppercase letter, or `choices` |
-| any | `level` in a schema with a `panel` (see [Panels and time series](#panels-and-time-series)), `null_fraction`, and `unique` for integer keys, fake-value categories and templates. A unique template with fewer possible values than rows is a `SchemaError`. `unique` is rejected on boolean, datetime and `choices` columns |
+| any | `level` in a schema with a `panel` (see [Panels and time series](#panels-and-time-series)), `null_fraction`, `missingness` (see [Planted patterns](#planted-patterns)), and `unique` for integer keys, fake-value categories and templates. A unique template with fewer possible values than rows is a `SchemaError`. `unique` is rejected on boolean, datetime and `choices` columns |
 
 | `distribution` | Parameters |
 |---|---|
@@ -129,6 +129,35 @@ break one are dropped and more rows are drawn.
   rate it measured. A rule that holds for 1% of rows is fine.
 - Statistics marked `exact` are exact before this filtering, and approximate after it.
 
+**Missing-value mechanisms.** A plain `null_fraction` blanks cells completely at random
+(MCAR). A `missingness` setting makes the chance of a blank cell depend on a value, while
+`null_fraction` stays the overall share of blank cells:
+
+```json
+{
+  "name": "income", "kind": "float", "mean": 4000, "std": 1500,
+  "null_fraction": 0.2,
+  "missingness": {"mechanism": "mnar", "strength": 1.5}
+}
+```
+
+- `mnar` (missing not at random): the chance follows the column's own value, as when high
+  incomes go unreported. `depends_on` must be left out.
+- `mar` (missing at random): the chance follows another column, named in `depends_on`, such
+  as older customers skipping a field.
+- `strength` is the change in the log-odds of a blank cell per standard deviation of the
+  driving value; positive blanks large values more often, negative blanks small ones.
+  The curve is shifted so the overall share still equals `null_fraction`.
+- The driving column must be a number, a boolean or a date. It is read before any cell is
+  blanked, so a driver's own blanks do not matter.
+- `null_fraction` must be above 0, and a column cannot also set `null_fraction` in
+  `conditions`.
+
+A challenge key lists every column with blank cells under `missingness`: its `mechanism`
+(`mcar`, `mar` or `mnar`), what it `depends_on`, its `strength` and the observed share of blank
+cells per split. A column whose `conditions` change `null_fraction` is reported as `mar`, with
+those conditions.
+
 ## From a reference table
 
 ```python
@@ -200,9 +229,10 @@ The command writes:
 
 | File | Contents |
 |---|---|
-| `churn/QUESTION.md` | The question, the task, the target and the column list |
+| `churn/QUESTION.md` | The task description for participants (see [Task description](#task-description)) |
 | `churn/train.csv` | Training rows with the target, without the hidden columns |
 | `churn/test.csv` | Test rows without the target |
+| `churn/<table>.csv` | Related schemas only: every child table, in full (see [Related tables](#related-tables)) |
 | `churn/answers/test_answers.csv` | The test targets |
 | `churn/answers/answer_key.json` | The answer key |
 
@@ -406,6 +436,70 @@ The key gains a `label_noise` section with the settings, the number of labels `f
 `best_achievable` is measured against the published test answers, so it equals the clean score
 unless the test split is noisy.
 
+### Class imbalance
+
+`positive_share` sets how rare the positive class of a classification target is:
+
+```json
+"question": {
+  "target": "churned", "task": "classification",
+  "truth_column": "churn_probability", "positive_share": 0.05
+}
+```
+
+- The `truth_column` must be a float formula column of probabilities that the target reads,
+  such as `sigmoid(...)` read by `bernoulli(churn_probability)`.
+- The log-odds of every row are shifted by one constant until the probabilities average the
+  share. The rows keep their order and every planted dependence; only the rate moves.
+  The share is expected, not exact: each label is still drawn.
+- It is not available for a regression question, a panel or a treatment, which would
+  change the probabilities after the shift. The truth column cannot have `noise_std`,
+  `conditions` or `exact`.
+- With a `test_shift` the shifted test rows are calibrated to the same share, so a covariate
+  drift does not change how rare the positive class is.
+
+The key gains a `class_balance` section: `requested_positive_share`, the `positive_rate` of
+the published train and test labels, `majority_class_accuracy` (what always answering the
+common class scores), `pr_auc_baseline` (the area under the precision-recall curve of a model
+with no skill, equal to the test positive rate) and `best_achievable_pr_auc` (the same curve for
+the true probabilities).
+
+### Difficulty levels
+
+`difficulty` on the question (`easy`, `medium` or `hard`) sets four things together:
+
+| Level | Target noise | Extra distractor columns | Label noise (train) | Test drift |
+|---|---|---|---|---|
+| `easy` | 0.5 × `noise_std` | 0 | none | none |
+| `medium` | 1 × `noise_std` | 4 | 2% of labels flipped, or noise of 5% of the target's std | none |
+| `hard` | 2 × `noise_std` | 10 | 5% of labels flipped, or noise of 10% of the target's std | the mean of the first published numeric driver rises by 0.5 std |
+
+- Target noise multiplies the `noise_std` of the target's formula. A target without
+  `noise_std` is left as it is.
+- Distractors are columns named `extra_feature_NN`, cycling between a normal number, a
+  four-level category and a count. Nothing reads them, and the key lists them as distractors.
+- Label noise is the question's own `label_noise` with the `train` split. Drift is a
+  `test_shift` on the first published numeric driver that is drawn with a `mean` and a `std`.
+  Drift is skipped for a panel and for related tables.
+- A setting the question gives itself, such as its own `label_noise` or `test_shift`, is kept
+  and the level does not add another. A setting that does not fit the schema is skipped.
+- Without `difficulty` nothing changes. With it, the key gains a `difficulty` section that
+  names the level, the noise before and after, the distractor columns, and the label noise
+  and drift that were applied or why they were not.
+
+### Task description
+
+`QUESTION.md` is written from the question and from what is published: the title and prompt,
+what to predict, the files and row counts, the score, notes on blank cells and a treatment or
+panel layout, the rules and the columns. It never reads the key's findings, so it does not
+name drivers, formulas, why cells are blank, label noise, drift or aggregates. A rare positive
+class is mentioned with the share a participant could measure in the training rows.
+
+`metric` on the question (`rmse`, `mae`, `r2`, `accuracy`, `roc_auc`, `pr_auc` or `log_loss`)
+names the score; it must suit the task, and the key then repeats it as `metric`. Without it
+the text uses RMSE for regression, ROC AUC for classification and PR AUC when the positive
+class is rare (a `positive_share`, or under 20% of the training rows).
+
 ## Panels and time series
 
 A `panel` makes the table `entities × periods` rows: the same entities observed over many
@@ -505,3 +599,66 @@ The key gains a `time_series` section:
 - `withheld_test_columns`: columns that read an earlier target and are blank after the first
   test period of a time split;
 - `regimes`: each condition on `period` or the time column, with the column it changes.
+
+## Related tables
+
+A schema with a `tables` list describes several tables joined by foreign keys. The full
+example is [examples/customers_orders_challenge.json](../examples/customers_orders_challenge.json).
+
+```json
+{
+  "tables": [
+    {"name": "customers", "key": "customer_id", "columns": [...], "aggregates": [...]},
+    {
+      "name": "orders", "key": "order_id",
+      "parent": "customers", "foreign_key": "customer_id",
+      "rows_per_parent": {"distribution": "poisson", "mean": 5},
+      "columns": [...]
+    }
+  ]
+}
+```
+
+- The first table is the root and has as many rows as `--rows` asks for. Every other table
+  names its `parent` (a table listed before it), the `foreign_key` column that holds the
+  parent's key, and `rows_per_parent`: a distribution (Poisson by default, or any numeric
+  distribution with `mean`, `std`, `minimum` and `maximum`) for how many rows each parent
+  gets. A parent can have none.
+- Keys are generated and are the whole numbers from 1, so every foreign key points at a row
+  that exists. Neither key is listed in `columns`.
+- A child column can read its parent's columns as `<parent table>_<column>`, such as
+  `customers_loyalty_tier`, in formulas and conditions. A grandchild reads its own parent.
+- Tables cannot have a panel or constraints. Missing-value mechanisms, correlations, formulas
+  and conditions work inside each table as usual.
+
+**Aggregates.** A table can summarise a child table's rows per row of its own with
+`aggregates`: `{"name": "total_spend", "table": "orders", "function": "sum", "column":
+"amount", "when": "not refunded"}`.
+- `function` is `count` (no `column`), `sum`, `mean`, `min` or `max`. `when` keeps only the
+  child rows where an expression over the child's columns is true. A parent with no matching
+  rows gets 0.
+- Other columns of the parent can read an aggregate by name, such as
+  `sigmoid(-0.4 * order_count)`. Those columns, and every column that reads them, are built
+  after the child rows, so a child can only read parent columns that do not depend on an
+  aggregate. A table needs at least one column that does not.
+- Aggregates are withheld from the published tables.
+
+**Challenges.** Put the `question` at the top level of the schema, with the target in the
+root table. `oblitus challenge` splits the root table into `train.csv` and `test.csv` and
+writes every other table in full, as `<table>.csv`, so a participant can build the aggregates
+that the withheld ones stand for. A target that reads an aggregate cannot be predicted from
+the root table alone.
+
+The key adds:
+- `tables`: for each table its rows, key and, for a child, its parent, foreign key and
+  `rows_per_parent` (declared, and the observed mean and maximum), plus `missingness`;
+- `child_aggregates`: the withheld aggregates, those `the_target_depends_on` (through other
+  columns too) and those `not_used_by_the_target`.
+
+`oblitus synthesize --schema ... --rows N -o FOLDER` writes one CSV per table into the folder.
+In Python, `Anonymizer.synthesize_tables(schema, rows)` returns the tables and the aggregates.
+
+**Refusals.** A causal question (`treatment`) and a `test_shift` are refused with a
+`SchemaError`: both need the build replayed from stored random numbers, which each table keeps
+for itself but not across tables, and a treatment on a parent would also change its children.
+Difficulty skips drift for the same reason.

@@ -39,9 +39,13 @@ from oblitus.surrogates import SurrogateFactory
 from oblitus.synthesis import (
     Challenge,
     DatasetSchema,
+    GeneratedTables,
+    RelationalSchema,
     build_challenge,
+    build_relational_challenge,
     generate_from_reference,
     generate_from_schema,
+    generate_tables,
     infer_schema,
 )
 from oblitus.synthesis.rare_values import min_records_for
@@ -293,15 +297,30 @@ class Anonymizer:
             stratify_by=stratify_by,
         )
 
-    def challenge(self, schema: DatasetSchema, rows: int | None = None) -> Challenge:
+    def synthesize_tables(self, schema: RelationalSchema, rows: int) -> GeneratedTables:
+        """Generate related tables: `rows` rows of the root table and the child tables it implies.
+
+        Every foreign key points at a row of its parent table. The aggregates a schema declares
+        are returned apart from the tables, which hold only the schema's columns and keys.
+        """
+        rng = np.random.default_rng(self._seed)
+        return generate_tables(schema, rows, rng=rng, surrogates=SurrogateFactory(self._locale))
+
+    def challenge(
+        self, schema: DatasetSchema | RelationalSchema, rows: int | None = None
+    ) -> Challenge:
         """Generate a data-science challenge from a schema with a `question`.
 
         Returns the training table, the test features, the test answers and an
         answer key with the true drivers and the best achievable scores. A schema with a
-        panel fixes its own row count, so `rows` may be left out.
+        panel fixes its own row count, so `rows` may be left out. For related tables, `rows`
+        is the root table's size and the child tables come back in `Challenge.related_tables`.
         """
         rng = np.random.default_rng(self._seed)
-        return build_challenge(schema, rows, rng=rng, surrogates=SurrogateFactory(self._locale))
+        surrogates = SurrogateFactory(self._locale)
+        if isinstance(schema, RelationalSchema):
+            return build_relational_challenge(schema, rows, rng=rng, surrogates=surrogates)
+        return build_challenge(schema, rows, rng=rng, surrogates=surrogates)
 
     def _context(self, *, throwaway_key: bool = False) -> TechniqueContext:
         secret_key = secrets.token_bytes(32) if throwaway_key else self._secret_key

@@ -457,8 +457,8 @@ def test_planted_leaks_are_flagged_from_a_formula_that_reads_the_target():
 
 
 def test_the_question_page_names_the_treatment(promo_challenge):
-    from oblitus.cli import _question_page
+    from oblitus.synthesis.question_text import describe_task
 
-    page = _question_page(promo_challenge)
+    page = describe_task(DatasetSchema.load(EXAMPLE), promo_challenge)
 
     assert "Treatment column: `promo` (control False, treated True)." in page

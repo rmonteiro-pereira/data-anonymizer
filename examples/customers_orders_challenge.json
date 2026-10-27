@@ -1,0 +1,52 @@
+{
+  "tables": [
+    {
+      "name": "customers",
+      "key": "customer_id",
+      "columns": [
+        {"name": "age", "kind": "integer", "mean": 41, "std": 12, "minimum": 18, "maximum": 90},
+        {"name": "region", "kind": "category", "choices": ["north", "south", "east", "west"]},
+        {"name": "loyalty_tier", "kind": "category", "choices": ["basic", "silver", "gold"], "weights": [60, 30, 10]},
+        {
+          "name": "churn_probability", "kind": "float",
+          "formula": "sigmoid(0.2 - 0.45 * order_count + 1.1 * refund_count - 0.004 * total_spend + where(loyalty_tier == 'gold', -0.6, 0))"
+        },
+        {"name": "churned", "kind": "boolean", "formula": "bernoulli(churn_probability)"}
+      ],
+      "aggregates": [
+        {"name": "order_count", "table": "orders", "function": "count"},
+        {"name": "total_spend", "table": "orders", "function": "sum", "column": "amount"},
+        {"name": "refund_count", "table": "orders", "function": "count", "when": "refunded"},
+        {"name": "average_items", "table": "orders", "function": "mean", "column": "items"}
+      ]
+    },
+    {
+      "name": "orders",
+      "key": "order_id",
+      "parent": "customers",
+      "foreign_key": "customer_id",
+      "rows_per_parent": {"distribution": "poisson", "mean": 5},
+      "columns": [
+        {
+          "name": "amount", "kind": "float", "distribution": "lognormal", "mean": 60, "std": 40, "minimum": 1,
+          "null_fraction": 0.05, "missingness": {"mechanism": "mnar", "strength": 1.5},
+          "conditions": [{"when": "customers_loyalty_tier == 'gold'", "mean": 110, "std": 55}]
+        },
+        {"name": "items", "kind": "integer", "distribution": "poisson", "mean": 3, "minimum": 1},
+        {"name": "channel", "kind": "category", "choices": ["web", "app", "store"], "weights": [45, 35, 20]},
+        {"name": "refunded", "kind": "boolean", "true_share": 0.08}
+      ]
+    }
+  ],
+  "question": {
+    "title": "Which customers will churn?",
+    "prompt": "Predict which customers churn. The customers file describes each customer; the orders file lists their purchases.",
+    "target": "churned",
+    "task": "classification",
+    "hidden_columns": ["churn_probability"],
+    "truth_column": "churn_probability",
+    "positive_share": 0.12,
+    "metric": "pr_auc",
+    "difficulty": "medium"
+  }
+}
