@@ -130,6 +130,7 @@
     <figure>
       <h2>The distribution moves this much</h2>
       <p class="note">Share of rows per value band, original against released.</p>
+      <p class="note" id="distribution-note"></p>
       <div class="legend">
         <span><i class="key" style="background: var(--series-1)"></i>Original</span>
         <span><i class="key" style="background: var(--series-2)"></i>Released</span>
@@ -249,7 +250,12 @@
     tooltip.style.display = "block";
     const x = Math.min(event.clientX + 14, window.innerWidth - tooltip.offsetWidth - 8);
     tooltip.style.left = x + "px";
-    tooltip.style.top = event.clientY + 14 + "px";
+    // Near the bottom of the window the tooltip opens above the pointer, so it is never cut off.
+    let y = event.clientY + 14;
+    if (y + tooltip.offsetHeight > window.innerHeight - 8) {
+      y = Math.max(8, event.clientY - 14 - tooltip.offsetHeight);
+    }
+    tooltip.style.top = y + "px";
   }
 
   function hideTooltip() {
@@ -372,6 +378,7 @@
     const edges = currentSweep().histogram_edges;
     const released = currentLevel().histogram;
     const toShare = (counts) => counts.map((count) => count / DATA.rows);
+    renderDistributionNote();
     const before = toShare(currentSweep().original_histogram);
     const after = toShare(released);
     const highest = Math.max(...before, ...after);
@@ -399,13 +406,40 @@
         width: Math.max(1, xScale(edges[index + 1]) - xScale(edges[index])),
         height: frame.bottom - frame.top, fill: "transparent", tabindex: 0,
       }, svg);
-      const band = `${formatNumber(edges[index])} to ${formatNumber(edges[index + 1])}`;
       attachTooltip(hit, [
-        ["value band", band],
+        ["value band", bandLabel(edges, index)],
         ["of original rows", formatPercent(share)],
         ["of released rows", formatPercent(after[index])],
       ]);
     });
+  }
+
+  // The end bands also hold every value beyond the axis, so their labels say so.
+  function bandLabel(edges, index) {
+    const last = edges.length - 2;
+    if (index === 0) {
+      return `${formatNumber(edges[1])} or less`;
+    }
+    if (index === last) {
+      return `${formatNumber(edges[last])} or more`;
+    }
+    return `${formatNumber(edges[index])} to ${formatNumber(edges[index + 1])}`;
+  }
+
+  function renderDistributionNote() {
+    const note = document.getElementById("distribution-note");
+    const released = currentLevel().outside_share;
+    const original = currentSweep().original_outside_share;
+    const parts = [];
+    if (DATA.total_rows > DATA.rows) {
+      parts.push(`A random sample of ${DATA.rows.toLocaleString()} of the ` +
+        `${DATA.total_rows.toLocaleString()} values is shown.`);
+    }
+    if (released > 0 || original > 0) {
+      parts.push(`${formatPercent(original)} of original and ${formatPercent(released)} of ` +
+        "released values lie beyond the axis and are counted in the end bands.");
+    }
+    note.textContent = parts.join(" ");
   }
 
   function renderScatter() {
@@ -467,11 +501,14 @@
     const xScale = linearScale(toLogX(xFloor), toLogX(Math.max(...shifts) * 1.5),
       frame.left, frame.right);
     const yScale = linearScale(toLogY(chance / 2), 0, frame.bottom, frame.top);
-    const xTicks = integerRange(Math.ceil(toLogX(xFloor)), Math.floor(toLogX(Math.max(...shifts))));
-    const yTicks = integerRange(Math.ceil(toLogY(chance / 2)), 0);
+    const allShifts = points.map((metrics) => metrics.median_deviation_sd);
+    const allRisks = points.map((metrics) => metrics.linkage_rate);
+    const xTicks = logTicks(toLogX(xFloor), toLogX(Math.max(...shifts)),
+      allShifts.some((value) => value <= 0));
+    const yTicks = logTicks(toLogY(chance / 2), 0, allRisks.some((value) => value <= 0));
     drawAxes(svg, frame, xTicks, yTicks, xScale, yScale,
-      (exponent) => formatTick(Math.pow(10, exponent)),
-      (exponent) => formatPercent(Math.pow(10, exponent)));
+      (exponent) => formatPowerOfTen(exponent, toLogX(xFloor), ""),
+      (exponent) => formatPowerOfTen(exponent + 2, toLogY(chance / 2) + 2, "%"));
     axisTitle(svg, "information loss: typical record shift, in standard deviations (log)",
       (frame.left + frame.right) / 2, frame.bottom + 34);
     axisTitle(svg, "re-linked records (log)", 12, (frame.top + frame.bottom) / 2, true);
@@ -501,6 +538,28 @@
     }
     addNearestPointLayer(svg, frame, placed);
     renderRiskLegend();
+  }
+
+  // Ticks at whole powers of ten. When some points are exactly zero they are drawn on
+  // the floor of the axis, and the floor gets its own "0" tick so the chart says so.
+  function logTicks(floor, highest, hasZeros) {
+    const ticks = integerRange(Math.ceil(floor), Math.floor(highest));
+    if (!hasZeros) {
+      return ticks;
+    }
+    const clear = ticks.filter((tick) => tick - floor > 0.35);
+    return [floor, ...clear];
+  }
+
+  function formatPowerOfTen(exponent, floor, unit) {
+    if (exponent === floor) {
+      return "0" + unit;
+    }
+    const rounded = Math.round(exponent);
+    if (rounded >= -3 && rounded <= 5) {
+      return Number(Math.pow(10, rounded).toPrecision(1)).toLocaleString() + unit;
+    }
+    return `1e${rounded}${unit}`;
   }
 
   function integerRange(first, last) {

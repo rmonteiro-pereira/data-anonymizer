@@ -17,8 +17,10 @@ from data_anonymizer.taxonomy import ColumnKind
 
 
 def test_statistical_plan_pseudonymizes_identifiers_and_keeps_statistics(people):
-    anonymizer = Anonymizer(secret_key="key", seed=1)
-    plan = anonymizer.propose(people, fidelity=Fidelity.STATISTICAL)
+    anonymizer = Anonymizer(secret_key="key-for-tests-0123456789", seed=1)
+    plan = anonymizer.propose(
+        people, fidelity=Fidelity.STATISTICAL, protection=Protection.PSEUDONYMIZATION
+    )
 
     result = anonymizer.apply(people, plan)
     data = result.data
@@ -36,8 +38,10 @@ def test_statistical_plan_pseudonymizes_identifiers_and_keeps_statistics(people)
 
 
 def test_privacy_pseudonymization_hashes_identifiers_and_reaches_k(people):
-    anonymizer = Anonymizer(secret_key="key", seed=1)
-    plan = anonymizer.propose(people, fidelity=Fidelity.PRIVACY)
+    anonymizer = Anonymizer(secret_key="key-for-tests-0123456789", seed=1)
+    plan = anonymizer.propose(
+        people, fidelity=Fidelity.PRIVACY, protection=Protection.PSEUDONYMIZATION
+    )
 
     result = anonymizer.apply(people, plan)
 
@@ -53,7 +57,7 @@ def test_privacy_pseudonymization_hashes_identifiers_and_reaches_k(people):
 
 @pytest.mark.parametrize("fidelity", list(Fidelity))
 def test_anonymization_leaves_no_link_to_people(people, fidelity):
-    anonymizer = Anonymizer(secret_key="key", seed=1)
+    anonymizer = Anonymizer(secret_key="key-for-tests-0123456789", seed=1)
     plan = anonymizer.propose(people, fidelity=fidelity, protection=Protection.ANONYMIZATION)
 
     result = anonymizer.apply(people, plan)
@@ -108,17 +112,18 @@ def test_an_untouched_direct_identifier_makes_the_result_identifiable(people):
 
     assert protection.level is ProtectionLevel.IDENTIFIABLE
     assert not protection.reached
-    assert len([problem for problem in protection.problems if "left as it was" in problem]) == 2
+    assert len([problem for problem in protection.problems if "does not replace" in problem]) == 2
 
 
 def test_same_key_gives_the_same_pseudonyms_across_instances(people):
     plan = AnonymizationPlan(
         fidelity=Fidelity.STATISTICAL,
+        protection=Protection.PSEUDONYMIZATION,
         actions=[ColumnAction(column="email", technique="keyed_hash")],
     )
 
-    first = Anonymizer(secret_key="shared").apply(people, plan).data["email"]
-    second = Anonymizer(secret_key="shared").apply(people, plan).data["email"]
+    first = Anonymizer(secret_key="shared-for-tests-0123456789").apply(people, plan).data["email"]
+    second = Anonymizer(secret_key="shared-for-tests-0123456789").apply(people, plan).data["email"]
 
     assert first.equals(second)
 

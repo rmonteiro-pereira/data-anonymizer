@@ -11,7 +11,14 @@ from typing import Any
 import pandas as pd
 
 from data_anonymizer.taxonomy import NUMERIC_KINDS, ColumnKind
-from data_anonymizer.techniques import encryption, generalization, masking, noise, perturbation
+from data_anonymizer.techniques import (
+    encryption,
+    generalization,
+    masking,
+    noise,
+    perturbation,
+    rescaling,
+)
 from data_anonymizer.techniques import pseudonymization as pseudo
 from data_anonymizer.techniques.context import TechniqueContext
 
@@ -25,6 +32,7 @@ class TechniqueFamily(StrEnum):
     MASKING = "masking"
     PSEUDONYMIZATION = "pseudonymization"
     ENCRYPTION = "encryption"
+    RESCALING = "rescaling"
     GENERALIZATION = "generalization"
     NOISE = "noise"
     PERTURBATION = "perturbation"
@@ -36,17 +44,24 @@ class StatisticalEffect(StrEnum):
     `preserves_relationships`: distinct counts, joins and links to other columns survive.
     `preserves_distribution`: the column's own distribution survives, roughly or exactly,
     but links to other columns may weaken.
+    `preserves_shape`: the distribution's shape and the column's links survive, but its
+    level and units are gone.
     `distorts`: the distribution changes; analysis needs to account for it.
     """
 
     PRESERVES_RELATIONSHIPS = "preserves_relationships"
     PRESERVES_DISTRIBUTION = "preserves_distribution"
+    PRESERVES_SHAPE = "preserves_shape"
     DISTORTS = "distorts"
 
 
 @dataclass(frozen=True, slots=True)
 class Technique:
-    """One way of transforming a column, with what it needs and what it costs."""
+    """One way of transforming a column, with what it needs and what it costs.
+
+    `replaces_identifiers` marks techniques that, applied to a direct identifier,
+    leave none of the original value in the output.
+    """
 
     name: str
     family: TechniqueFamily
@@ -57,6 +72,7 @@ class Technique:
     inverse: TechniqueFunction | None = None
     linkable: bool = False
     unlinking_flag: str | None = None
+    replaces_identifiers: bool = False
 
     @property
     def reversible(self) -> bool:
@@ -68,7 +84,8 @@ class Technique:
 
         Reversible techniques always keep the link. Linkable techniques give the same
         output for the same person, or let anyone test a guessed value against the
-        output, unless their `unlinking_flag` parameter is set to False.
+        output, unless their boolean `unlinking_flag` parameter is false (its default
+        applies when the plan leaves it out).
         """
         if self.reversible:
             return True
@@ -76,7 +93,8 @@ class Technique:
             return False
         if self.unlinking_flag is None:
             return True
-        return bool(params.get(self.unlinking_flag, True))
+        default = inspect.signature(self.function).parameters[self.unlinking_flag].default
+        return bool(params.get(self.unlinking_flag, default))
 
     def parameter_names(self) -> list[str]:
         """Return the keyword parameters the technique accepts."""
@@ -123,17 +141,32 @@ _GENERAL = TechniqueFamily.GENERALIZATION
 _NOISE = TechniqueFamily.NOISE
 _PERTURB = TechniqueFamily.PERTURBATION
 
+_RESCALE = TechniqueFamily.RESCALING
+
 _RELATIONSHIPS = StatisticalEffect.PRESERVES_RELATIONSHIPS
+_SHAPE = StatisticalEffect.PRESERVES_SHAPE
 _DISTRIBUTION = StatisticalEffect.PRESERVES_DISTRIBUTION
 _DISTORTS = StatisticalEffect.DISTORTS
 
 _BUILTINS = (
     Technique("keep", _KEEP, _RELATIONSHIPS, _ALL_KINDS, masking.keep, "Leave unchanged."),
     Technique(
-        "redact", _MASKING, _DISTORTS, _ALL_KINDS, masking.redact, "Replace with a constant."
+        "redact",
+        _MASKING,
+        _DISTORTS,
+        _ALL_KINDS,
+        masking.redact,
+        "Replace with a constant.",
+        replaces_identifiers=True,
     ),
     Technique(
-        "suppress", _MASKING, _DISTORTS, _ALL_KINDS, masking.suppress, "Replace with missing."
+        "suppress",
+        _MASKING,
+        _DISTORTS,
+        _ALL_KINDS,
+        masking.suppress,
+        "Replace with missing.",
+        replaces_identifiers=True,
     ),
     Technique(
         "partial_mask",
@@ -159,6 +192,7 @@ _BUILTINS = (
         pseudo.keyed_hash,
         "Replace with a keyed HMAC digest (SHA-2, SHA-3 or BLAKE2); consistent per key.",
         linkable=True,
+        replaces_identifiers=True,
     ),
     Technique(
         "scramble_characters",
@@ -168,6 +202,7 @@ _BUILTINS = (
         pseudo.scramble_characters,
         "Replace digits with digits and letters with letters, keeping the format.",
         linkable=True,
+        replaces_identifiers=True,
     ),
     Technique(
         "surrogate",
@@ -178,6 +213,7 @@ _BUILTINS = (
         "Replace with a realistic fake; consistent per value, or random per cell.",
         linkable=True,
         unlinking_flag="consistent",
+        replaces_identifiers=True,
     ),
     Technique(
         "argon2_hash",
@@ -187,6 +223,7 @@ _BUILTINS = (
         pseudo.argon2_hash,
         "Replace with a slow, memory-hard Argon2id hash; a keyed salt keeps joins.",
         linkable=True,
+        replaces_identifiers=True,
     ),
     Technique(
         "bcrypt_hash",
@@ -196,6 +233,7 @@ _BUILTINS = (
         pseudo.bcrypt_hash,
         "Replace with a slow bcrypt hash; a keyed salt keeps joins.",
         linkable=True,
+        replaces_identifiers=True,
     ),
     Technique(
         "encrypt",
@@ -205,6 +243,7 @@ _BUILTINS = (
         encryption.encrypt,
         "Reversible AES-SIV token (deterministic) or AES-GCM token (randomized).",
         inverse=encryption.decrypt,
+        replaces_identifiers=True,
     ),
     Technique(
         "format_preserving_encrypt",
@@ -214,6 +253,26 @@ _BUILTINS = (
         encryption.format_preserving_encrypt,
         "Reversible NIST FF1 encryption that keeps length, format and separators.",
         inverse=encryption.format_preserving_decrypt,
+        replaces_identifiers=True,
+    ),
+    Technique(
+        "scramble_categories",
+        _PSEUDO,
+        _RELATIONSHIPS,
+        _TEXT_LIKE | _CATEGORICAL,
+        pseudo.scramble_categories,
+        "Replace labels with opaque codes in random order; rare labels merged.",
+        linkable=True,
+        unlinking_flag="keyed",
+        replaces_identifiers=True,
+    ),
+    Technique(
+        "normalize",
+        _RESCALE,
+        _SHAPE,
+        _NUMERIC,
+        rescaling.normalize,
+        "Recentre and rescale to hide level and units; shape kept unless allowed.",
     ),
     Technique(
         "bin_numeric",

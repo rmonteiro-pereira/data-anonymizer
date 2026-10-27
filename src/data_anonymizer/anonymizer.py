@@ -34,6 +34,9 @@ from data_anonymizer.synthesis import (
 )
 from data_anonymizer.techniques import BUILTIN_TECHNIQUES, Technique, TechniqueContext
 
+# Shorter keys can be guessed, and every pseudonym and encryption key derives from it.
+MIN_SECRET_KEY_BYTES = 16
+
 # Privacy-first synthesis leaves out categories rarer than this, since they can
 # point at the few people who have them.
 _PRIVACY_MIN_CATEGORY_COUNT = 5
@@ -72,6 +75,11 @@ class Anonymizer:
     ) -> None:
         if isinstance(secret_key, str):
             secret_key = secret_key.encode("utf-8")
+        if secret_key is not None and len(secret_key) < MIN_SECRET_KEY_BYTES:
+            raise ValueError(
+                f"secret_key must be at least {MIN_SECRET_KEY_BYTES} bytes; "
+                "generate one with `openssl rand -hex 32`"
+            )
         self._secret_key = secret_key if secret_key is not None else secrets.token_bytes(32)
         self._seed = seed
         self._locale = locale
@@ -93,7 +101,7 @@ class Anonymizer:
         frame: pd.DataFrame,
         *,
         fidelity: Fidelity = Fidelity.STATISTICAL,
-        protection: Protection = Protection.PSEUDONYMIZATION,
+        protection: Protection = Protection.ANONYMIZATION,
         findings: list[ColumnFinding] | None = None,
     ) -> AnonymizationPlan:
         """Scan the table, unless findings are given, and propose a plan for it."""
@@ -111,7 +119,7 @@ class Anonymizer:
         re-linked later.
         """
         self.validate(frame, plan)
-        context = self._context(throwaway_key=plan.protection is Protection.ANONYMIZATION)
+        context = self._context(frame, throwaway_key=plan.protection is Protection.ANONYMIZATION)
         anonymized = frame.copy()
         for action in plan.actions:
             technique = self._techniques[action.technique]
@@ -146,7 +154,7 @@ class Anonymizer:
         one-way are returned unchanged, and recovered values come back as text.
         """
         self.validate(frame, plan)
-        context = self._context()
+        context = self._context(frame)
         revealed = frame.copy()
         for action in plan.actions:
             technique = self._techniques[action.technique]
@@ -167,6 +175,7 @@ class Anonymizer:
             for action in plan.actions
             if (problem := self._problem_with(frame, action)) is not None
         ]
+        problems += _missing_listed_columns(frame, plan)
         if not problems and plan.protection is Protection.ANONYMIZATION:
             problems = linking_actions(plan, self._techniques)
         if problems:
@@ -224,10 +233,11 @@ class Anonymizer:
         rng = np.random.default_rng(self._seed)
         return build_challenge(schema, rows, rng=rng, surrogates=SurrogateFactory(self._locale))
 
-    def _context(self, *, throwaway_key: bool = False) -> TechniqueContext:
+    def _context(self, frame: pd.DataFrame, *, throwaway_key: bool = False) -> TechniqueContext:
         secret_key = secrets.token_bytes(32) if throwaway_key else self._secret_key
         return TechniqueContext(
             rng=np.random.default_rng(self._seed),
+            table=frame,
             secret_key=secret_key,
             surrogates=SurrogateFactory(self._locale),
         )
@@ -239,3 +249,19 @@ class Anonymizer:
             plan.sensitive_attributes,
             k_target=plan.k_target,
         )
+
+
+def _missing_listed_columns(frame: pd.DataFrame, plan: AnonymizationPlan) -> list[str]:
+    # A misspelt quasi-identifier would silently drop out of every privacy check.
+    listed = {
+        "direct_identifiers": plan.direct_identifiers,
+        "quasi_identifiers": plan.quasi_identifiers,
+        "sensitive_attributes": plan.sensitive_attributes,
+        "entity_column": [plan.entity_column] if plan.entity_column else [],
+    }
+    return [
+        f"{field} names {column!r}, which is not in the table"
+        for field, columns in listed.items()
+        for column in columns
+        if column not in frame.columns
+    ]

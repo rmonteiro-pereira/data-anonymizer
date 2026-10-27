@@ -50,10 +50,11 @@ def assess_privacy(
     grouped = keys.assign(_row=1).groupby(columns, dropna=False)
     group_sizes = grouped["_row"].transform("size")
     below = int((group_sizes < k_target).sum())
+    # A sensitive column released entirely blank cannot be inferred, so it is not scored.
     diversity = {
         attribute: _l_diversity(frame, keys, columns, attribute)
         for attribute in sensitive_attributes
-        if attribute in frame.columns
+        if attribute in frame.columns and frame[attribute].notna().any()
     }
     return PrivacyReport(
         quasi_identifiers=columns,
@@ -68,5 +69,7 @@ def assess_privacy(
 def _l_diversity(
     frame: pd.DataFrame, keys: pd.DataFrame, columns: list[str], attribute: str
 ) -> int:
-    grouped = keys.assign(_attribute=frame[attribute].astype(str)).groupby(columns, dropna=False)
-    return int(grouped["_attribute"].nunique().min())
+    # Blank cells are not a value an attacker learns, so they do not add diversity.
+    attribute_values = frame[attribute].astype(object).where(frame[attribute].notna(), None)
+    grouped = keys.assign(_attribute=attribute_values).groupby(columns, dropna=False)
+    return int(grouped["_attribute"].nunique(dropna=True).min())

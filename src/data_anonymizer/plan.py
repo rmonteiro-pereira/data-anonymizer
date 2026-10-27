@@ -51,6 +51,9 @@ class ColumnAction(BaseModel):
 class AnonymizationPlan(BaseModel):
     """The column actions, plus the identifiers and attributes they protect.
 
+    `entity_column` names the column that identifies whose row it is (a person, a
+    store), for techniques that treat all rows of one entity alike.
+
     With `enforce_k_anonymity`, after the column actions run, quasi-identifier cells
     are blanked in rows whose combination is shared by fewer than `k_target` rows.
     `l_target` is the fewest distinct sensitive values each such group must hold for
@@ -60,9 +63,12 @@ class AnonymizationPlan(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     fidelity: Fidelity
-    protection: Protection = Protection.PSEUDONYMIZATION
+    # Anonymization is the default because it is the safer reading of a plan that
+    # does not say which protection it wants.
+    protection: Protection = Protection.ANONYMIZATION
     actions: list[ColumnAction]
     direct_identifiers: list[str] = Field(default_factory=list)
+    entity_column: str | None = None
     quasi_identifiers: list[str] = Field(default_factory=list)
     sensitive_attributes: list[str] = Field(default_factory=list)
     k_target: int = Field(default=5, ge=1)

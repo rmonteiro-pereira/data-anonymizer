@@ -5,11 +5,11 @@ A Python library and command-line tool for tables that contain personal data. It
 1. **detects** which columns hold personal or sensitive data. It reads column names and
    values, and checks the check digits of about 30 document formats, Brazilian and
    international;
-2. **proposes** a plan, a JSON file you can review and edit, that assigns one of 26
+2. **proposes** a plan, a JSON file you can review and edit, that assigns one of 28
    techniques to each flagged column;
 3. **applies** the plan as **pseudonymization** (keyed, re-linkable by whoever holds the key)
-   or **true anonymization** (no link left, and checked), keeping either the statistics or
-   the privacy first;
+   or **true anonymization** (no link left, and checked; the default), keeping either the
+   statistics or the privacy first;
 4. **shows how noise deflects your data** on an interactive page: distributions, per-record
    shifts and re-identification risk for every noise technique and strength;
 5. **reveals** the original values of reversibly encrypted columns, for whoever holds the key;
@@ -27,9 +27,10 @@ A Python library and command-line tool for tables that contain personal data. It
 | Pseudonymization | Keyed format-preserving scrambling. Realistic surrogates: names, emails, phones, valid CPF/CNPJ, SSN, cards, IBAN, IPs, addresses, URLs. A surrogate is either consistent per value (a pseudonym) or random per cell (no link) |
 | Encryption, reversible | **AES-SIV** deterministic encryption (RFC 5297). **AES-256-GCM** randomized encryption. **FF1** format-preserving encryption (NIST SP 800-38G, checked against the NIST sample vectors). Keys derived from one secret with **HKDF-SHA256** |
 | Generalization | Fixed-width, equal-width and quantile binning. Rounding. Date and string truncation. Top and bottom coding. Rare-category suppression |
-| Noise | Gaussian noise rescaled to keep mean and variance. **Laplace mechanism** (ε-local differential privacy with fixed bounds). Multiplicative noise. Date shifting |
+| Noise | Gaussian noise rescaled to keep mean and variance. **Laplace mechanism** (ε-local differential privacy with fixed bounds). Multiplicative noise. Date shifting, with one offset per person or company |
 | Perturbation | Shuffling, rank swapping, univariate microaggregation, **randomized response** (local differential privacy) |
-| Protection modes | **Pseudonymization** or **anonymization**, each with `statistical` or `privacy` fidelity. Anonymization refuses linking techniques and runs under a throwaway key. Each result is labelled `anonymized`, `at_risk`, `pseudonymized` or `identifiable`, by checks named after the EDPB 2026 criteria: no record isolation, no linkage, no inference |
+| Business confidentiality | Opaque category codes in random order, with small segments merged. **Recentring and rescaling** (robust, z-score, min-max) that hides a value's units and keeps its distribution's shape; index, rank, log-ratio and growth, per group if needed, behind an explicit flag. Dominance and p% checks, so a segment's biggest contributor cannot be read from the release. See [docs/business-confidentiality.md](docs/business-confidentiality.md) |
+| Protection modes | **Anonymization** (the default) or **pseudonymization**, each with `statistical` or `privacy` fidelity. Anonymization refuses linking techniques and runs under a throwaway key. Identifiers are checked on the data, not only by technique name, and unique columns released unchanged are flagged. Each result is labelled `anonymized`, `at_risk`, `pseudonymized` or `identifiable`, by checks named after the EDPB 2026 criteria: no record isolation, no linkage, no inference |
 | Privacy and risk | k-anonymity, l-diversity, k-anonymity enforcement by local suppression, whole-record uniqueness, distance-based record linkage, interval disclosure |
 | Utility | Change in mean and standard deviation, Kolmogorov–Smirnov, Wasserstein / IQR, total variation distance, correlation change, per-record shift in standard deviations |
 | Noise explorer | A self-contained interactive HTML page per column. For every technique and strength it shows before/after distributions, original against released per record with an exposure band, and a risk-utility map. It works offline and follows light and dark themes |
@@ -57,8 +58,8 @@ Planned, not yet implemented:
     international phones.
   - Passport MRZ, crypto wallet addresses, and confidence calibrated on a labelled benchmark.
 - **Tokenization with a vault**: random tokens with the mapping kept in a separate store.
-- **Entity-consistent transformations**: shift all dates of one person by the same offset,
-  and keep pseudonyms consistent across several tables in one call.
+- **Multi-table consistency**: keep pseudonyms and date offsets consistent across several
+  tables in one call.
 - **Stronger anonymization**:
   - Mondrian multidimensional generalization;
   - generalization hierarchies (postal code → region → state);
@@ -111,7 +112,7 @@ result.utility.max_correlation_change
 
 | Variable | Required | Default | What it does |
 |---|---|---|---|
-| `ANONYMIZER_SECRET_KEY` | for `reveal` | random per run | Keys every pseudonym and keyed salt, and is the master secret for the encryption keys. With the same key, the same value always gets the same pseudonym, so tables pseudonymized separately still join. `reveal` refuses to run without it. `apply` warns and uses a random key, so pseudonyms change on every run and encrypted columns can never be revealed. Anonymization plans ignore it and use a throwaway key. |
+| `ANONYMIZER_SECRET_KEY` | for `reveal` | random per run | At least 16 bytes; a shorter key is refused. Keys every pseudonym and keyed salt, and is the master secret for the encryption keys. With the same key, the same value always gets the same pseudonym, so tables pseudonymized separately still join. `reveal` refuses to run without it. `apply` warns and uses a random key, so pseudonyms change on every run and encrypted columns can never be revealed. Anonymization plans ignore it and use a throwaway key. |
 
 In Python, pass `secret_key=` to `Anonymizer`; the library never reads the environment.
 Treat the key like a password. Anyone who holds it can decrypt the reversible columns,
@@ -129,13 +130,13 @@ locale for fake values, such as `pt_BR`; default `en_US`). Tables can be `.csv` 
 | `anonymize propose INPUT [--protection P] [--fidelity F] [-o PLAN]` | Writes a plan as JSON (stdout without `-o`) |
 | `anonymize apply INPUT -o OUTPUT [--plan PLAN] [--protection P] [--fidelity F] [--report REPORT]` | Applies a plan, or proposes one first. Prints the protection level reached. `--report` writes privacy, utility and protection results as JSON |
 | `anonymize reveal INPUT --plan PLAN -o OUTPUT` | Decrypts the columns the plan encrypted and leaves one-way columns as they are |
-| `anonymize explore-noise INPUT --column NAME -o PAGE.html [--band SD]` | Writes the interactive noise explorer for one numeric column |
+| `anonymize explore-noise INPUT --column NAME -o PAGE.html [--band SD] [--max-rows N]` | Writes the interactive noise explorer for one numeric column. Columns longer than `N` values (default 200,000) are explored on a random sample |
 | `anonymize infer-schema INPUT [--fidelity F] [-o SCHEMA]` | Learns a generation schema from a table |
 | `anonymize synthesize -o OUTPUT --rows N [--schema SCHEMA] [--reference INPUT] [--fidelity F]` | Generates a synthetic table |
 | `anonymize challenge --schema SCHEMA --rows N -o FOLDER` | Generates a data-science challenge: `train.csv`, `test.csv`, `QUESTION.md`, and `answers/` with the answer key |
 | `anonymize techniques` | Lists every technique, its parameters and whether it is reversible |
 
-`P` is `pseudonymization` (the default) or `anonymization`. `F` is `statistical` (the
+`P` is `anonymization` (the default) or `pseudonymization`. `F` is `statistical` (the
 default) or `privacy`. `-o` is short for `--output`.
 
 Exit codes:
@@ -150,6 +151,8 @@ Exit codes:
 - [docs/protection.md](docs/protection.md): pseudonymization against anonymization, the
   default proposals, plan files and the protection checks
 - [docs/techniques.md](docs/techniques.md): every technique, its parameters and its effect
+- [docs/business-confidentiality.md](docs/business-confidentiality.md): sharing company data,
+  such as tenant revenue and rent, without revealing any one company's figures
 - [docs/noise-explorer.md](docs/noise-explorer.md): reading the noise explorer and its metrics
 - [docs/synthesis.md](docs/synthesis.md): schemas, planted patterns, synthesis from a
   sample, and data-science challenges

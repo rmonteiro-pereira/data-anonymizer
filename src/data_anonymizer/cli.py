@@ -18,6 +18,7 @@ from pydantic import ValidationError
 from data_anonymizer.anonymizer import AnonymizationResult, Anonymizer
 from data_anonymizer.errors import AnonymizerError, PlanError
 from data_anonymizer.noise_explorer import explore_noise, save_page
+from data_anonymizer.noise_explorer.sweep import DEFAULT_MAX_ROWS
 from data_anonymizer.plan import AnonymizationPlan, Fidelity, Protection
 from data_anonymizer.synthesis import DatasetSchema, infer_schema
 from data_anonymizer.table_files import read_table, write_table
@@ -44,14 +45,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 2
     if secret_key is None and arguments.command == "apply":
         print(
-            f"warning: {SECRET_KEY_VARIABLE} is not set; pseudonyms will differ on every run",
+            f"warning: {SECRET_KEY_VARIABLE} is not set; "
+            "pseudonymization plans will give different pseudonyms on every run",
             file=sys.stderr,
         )
-    anonymizer = Anonymizer(
-        secret_key=secret_key,
-        seed=arguments.seed,
-        locale=arguments.locale,
-    )
+    try:
+        anonymizer = Anonymizer(
+            secret_key=secret_key,
+            seed=arguments.seed,
+            locale=arguments.locale,
+        )
+    except ValueError as error:
+        print(f"error: {SECRET_KEY_VARIABLE}: {error}", file=sys.stderr)
+        return 2
     try:
         arguments.handler(anonymizer, arguments)
     except (AnonymizerError, ValidationError, FileNotFoundError) as error:
@@ -122,6 +128,12 @@ def _build_parser() -> argparse.ArgumentParser:
     noise_parser.add_argument(
         "--band", type=float, default=0.1, help="exposure band, in standard deviations"
     )
+    noise_parser.add_argument(
+        "--max-rows",
+        type=int,
+        default=DEFAULT_MAX_ROWS,
+        help=f"explore a random sample of this many values (default {DEFAULT_MAX_ROWS:,})",
+    )
     noise_parser.set_defaults(handler=_explore_noise)
 
     challenge_parser = commands.add_parser(
@@ -152,7 +164,7 @@ def _add_protection(parser: argparse.ArgumentParser) -> None:
         "--protection",
         type=Protection,
         choices=list(Protection),
-        default=Protection.PSEUDONYMIZATION,
+        default=Protection.ANONYMIZATION,
         help="pseudonymization keeps keyed links; anonymization removes every link and checks it",
     )
 
@@ -239,7 +251,11 @@ def _explore_noise(anonymizer: Anonymizer, arguments: argparse.Namespace) -> Non
     frame = read_table(arguments.input)
     try:
         exploration = explore_noise(
-            frame, arguments.column, seed=arguments.seed or 0, band_sd=arguments.band
+            frame,
+            arguments.column,
+            seed=arguments.seed or 0,
+            band_sd=arguments.band,
+            max_rows=arguments.max_rows,
         )
     except ValueError as error:
         raise PlanError(str(error)) from error

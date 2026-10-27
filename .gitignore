@@ -14,3 +14,6 @@ wheels/
 *.parquet
 !examples/*.csv
 .env
+
+# Agent worktrees
+.claude/

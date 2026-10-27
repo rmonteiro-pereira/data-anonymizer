@@ -7,11 +7,22 @@ import pandas as pd
 TextTransform = Callable[[str], str]
 
 
+def canonical_text(values: pd.Series) -> pd.Series:
+    """Return the present values as text, writing whole-number floats without `.0`.
+
+    An integer ID column turns into floats as soon as it has a gap, so `123` would
+    become `123.0` and get a different pseudonym than in a table without gaps.
+    """
+    present = values.dropna()
+    if pd.api.types.is_float_dtype(present) and (present % 1 == 0).all():
+        return present.astype("int64").astype(str)
+    return present.astype(str)
+
+
 def map_present(values: pd.Series, transform: TextTransform) -> pd.Series:
     """Transform every present cell on its own."""
     result = values.astype(object).copy()
-    present = values.notna()
-    result[present] = values[present].astype(str).map(transform)
+    result[values.notna()] = canonical_text(values).map(transform)
     return result
 
 
@@ -21,7 +32,7 @@ def map_distinct(values: pd.Series, transform: TextTransform) -> pd.Series:
     Use it for deterministic transformations; slow ones such as Argon2 then cost
     one call per distinct value instead of one per row.
     """
-    present = values.dropna().astype(str)
+    present = canonical_text(values)
     mapping = {original: transform(original) for original in present.unique()}
     result = values.astype(object).copy()
     result[values.notna()] = present.map(mapping)

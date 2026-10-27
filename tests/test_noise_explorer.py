@@ -54,6 +54,28 @@ def test_explore_noise_sweeps_every_technique_from_weak_to_strong():
     assert all(sum(sweep.original_histogram) == 1000 for sweep in exploration.sweeps)
 
 
+def test_large_columns_are_explored_on_a_sample():
+    frame = pd.DataFrame({"price": np.random.default_rng(4).lognormal(3, 1, 5000)})
+
+    exploration = explore_noise(frame, "price", max_rows=800)
+
+    assert exploration.rows == 800
+    assert exploration.total_rows == 5000
+    assert all(sum(sweep.original_histogram) == 800 for sweep in exploration.sweeps)
+
+
+def test_values_beyond_the_axis_are_reported_not_hidden():
+    values = np.concatenate([np.random.default_rng(5).normal(0, 1, 2000), [1e6, -1e6]])
+    frame = pd.DataFrame({"amount": values})
+
+    exploration = explore_noise(frame, "amount")
+    gaussian = exploration.sweeps[0]
+
+    assert gaussian.histogram_edges[-1] < 1e5
+    assert gaussian.original_outside_share == pytest.approx(2 / 2002)
+    assert all(level.outside_share > 0 for level in gaussian.levels)
+
+
 def test_the_page_embeds_the_data_safely():
     frame = pd.DataFrame({"</script><b>x": np.arange(100.0)})
 

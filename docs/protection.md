@@ -30,9 +30,18 @@ Every direct identifier follows the row for its protection and fidelity:
 | | `statistical` | `privacy` |
 |---|---|---|
 | pseudonymization | `surrogate` (realistic, consistent); `keyed_hash` for record IDs and identifiers without a fake generator | `keyed_hash` |
-| anonymization | `surrogate` with `consistent: false` (random per cell); `suppress` for record IDs | `suppress` |
+| anonymization | `surrogate` with `consistent: false` (random per cell); `scramble_categories` for record IDs, so the rows of one entity stay together without the real ID | `suppress` |
 
-Free text with personal data always gets `redact_entities`.
+The default target is `anonymization`. Free text with personal data always gets
+`redact_entities`. Company names get `scramble_categories` (`ORG-…` codes) in every mode.
+
+`scramble_categories` codes are random per run under anonymization. Under
+pseudonymization they are keyed (`keyed: true`), so the same label gets the same code in
+every release.
+
+The proposal picks an entity column: the company column if there is one, otherwise the
+record ID. `date_shift` then moves every date of one entity by the same offset, so the
+intervals between that entity's events survive.
 
 The other categories:
 
@@ -41,12 +50,20 @@ The other categories:
 | url | `surrogate` | `keyed_hash` | random `surrogate` | `suppress` |
 | postal_code | keep 3 characters | keep 2 | keep 3 | keep 2 |
 | city | `keep` | `suppress_rare` below 10 | `keep` | `suppress_rare` below 10 |
-| date_of_birth | `date_shift` ±30 days | year only | year only | year only |
+| date_of_birth | `date_shift` ±30 days, per entity | year only | year only | year only |
 | age | `microaggregate` groups of 5 | decades | `microaggregate` groups of 5 | decades |
 | gender | `keep` | `keep` | `keep` | `keep` |
 | geo_coordinate | Gaussian noise about 1 km | 1 decimal | 2 decimals | 1 decimal |
 | income | `rank_swap` within 5% | quintiles | `microaggregate` groups of 5 | quintiles |
-| health | `keep` | `randomized_response` p = 0.75 | `keep` | `randomized_response` p = 0.75 |
+| health, special category | `keep` | `randomized_response` p = 0.75 | `keep` | `randomized_response` p = 0.75 |
+| nationality | `suppress_rare` below 5 | below 20 | below 5 | below 20 |
+| marital status | `keep` | `keep` | `keep` | `keep` |
+| business segment | `scramble_categories`, segments under 3 rows merged | under 5 | under 3 | under 5 |
+| floor area | quartile bands | quartile bands | quartile bands | quartile bands |
+| business revenue, rent | `normalize` robust | `normalize` robust | `normalize` robust | `normalize` robust |
+
+Any other sensitive categorical column is kept with statistical fidelity and gets
+`randomized_response` with privacy fidelity.
 
 k-anonymity is enforced in every mode except pseudonymization with statistical fidelity.
 When a technique cannot handle a column's storage kind, such as dates stored as text,
@@ -67,16 +84,16 @@ The checks follow the three criteria of the EDPB Guidelines 02/2026 on anonymisa
 
 | Criterion | Check |
 |---|---|
-| No record isolation | Every quasi-identifier combination is shared by at least `k_target` rows (default 5). No row is unique across its discrete released columns, meaning those with at most 50 distinct values, excluding sensitive attributes |
+| No record isolation | Every quasi-identifier combination is shared by at least `k_target` rows (default 5). No row is unique across its discrete released columns, meaning those with at most 50 distinct values, excluding sensitive attributes. No column with at least 20 rows and 90% distinct values is released unchanged, since such a column is a fingerprint |
 | No linkage | No action uses a linking technique. For noise and perturbation columns, nearest-value matching re-links at most 1 record in `k_target`: no better odds than k-anonymity already accepts |
-| No inference | Within each quasi-identifier group, every sensitive attribute takes at least `l_target` distinct values (default 2) |
+| No inference | Within each quasi-identifier group, every sensitive attribute takes at least `l_target` distinct values (default 2). A sensitive column released entirely blank is skipped. A numeric sensitive column still in its original units must not let a segment's dominant contributor be read off (dominance and p% rules, see [business-confidentiality.md](business-confidentiality.md)) |
 
 | Level | Meaning |
 |---|---|
 | `anonymized` | No link to people, and every check passed |
 | `at_risk` | No link to people, but a record can still be isolated or a sensitive value inferred |
 | `pseudonymized` | Identifiers replaced, but a linking technique lets the key holder re-link them |
-| `identifiable` | A direct identifier was left as it was |
+| `identifiable` | A direct identifier was left as it was. This is checked on the data: more than 1% of a direct identifier's values surviving unchanged counts, whatever the technique. For `redact_entities`, any text that still holds a recognisable document, email or phone counts |
 
 The `anonymized` level also comes with caveats, because these checks are necessary but
 not sufficient:

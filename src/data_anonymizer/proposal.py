@@ -13,7 +13,7 @@ from typing import Any
 from data_anonymizer.detection import ColumnFinding
 from data_anonymizer.plan import AnonymizationPlan, ColumnAction, Fidelity, Protection
 from data_anonymizer.surrogates import SURROGATE_CATEGORIES
-from data_anonymizer.taxonomy import DataCategory, Sensitivity, sensitivity_of
+from data_anonymizer.taxonomy import ColumnKind, DataCategory, Sensitivity, sensitivity_of
 from data_anonymizer.techniques import BUILTIN_TECHNIQUES, Technique
 
 # Findings below this confidence are still proposed, but the reason asks for review.
@@ -77,6 +77,50 @@ _ATTRIBUTE_RULES: dict[DataCategory, dict[Fidelity, Rule]] = {
         _STATISTICAL: Rule("keep", note="kept; counted as sensitive attribute"),
         _PRIVACY: Rule("randomized_response", {"keep_probability": 0.75}, "each value deniable"),
     },
+    DataCategory.SPECIAL_CATEGORY: {
+        _STATISTICAL: Rule("keep", note="kept; counted as sensitive attribute"),
+        _PRIVACY: Rule("randomized_response", {"keep_probability": 0.75}, "each value deniable"),
+    },
+    DataCategory.NATIONALITY: {
+        _STATISTICAL: Rule(
+            "suppress_rare", {"min_count": 5, "replacement": "OTHER"}, "rare countries merged"
+        ),
+        _PRIVACY: Rule(
+            "suppress_rare", {"min_count": 20, "replacement": "OTHER"}, "rare countries merged"
+        ),
+    },
+    DataCategory.MARITAL_STATUS: {
+        _STATISTICAL: Rule("keep", note="kept; counted as quasi-identifier"),
+        _PRIVACY: Rule("keep", note="kept; counted as quasi-identifier"),
+    },
+    DataCategory.BUSINESS_SEGMENT: {
+        _STATISTICAL: Rule(
+            "scramble_categories",
+            {"prefix": "SEG", "min_count": 3},
+            "opaque codes; segments with fewer than 3 rows merged",
+        ),
+        _PRIVACY: Rule(
+            "scramble_categories",
+            {"prefix": "SEG", "min_count": 5},
+            "opaque codes; segments with fewer than 5 rows merged",
+        ),
+    },
+    DataCategory.FLOOR_AREA: {
+        _STATISTICAL: Rule(
+            "bin_numeric", {"bins": 4, "strategy": "quantile"}, "size quartiles; anchors hidden"
+        ),
+        _PRIVACY: Rule(
+            "bin_numeric", {"bins": 4, "strategy": "quantile"}, "size quartiles; anchors hidden"
+        ),
+    },
+    DataCategory.BUSINESS_REVENUE: {
+        _STATISTICAL: Rule("normalize", {"method": "robust"}, "units removed; shape kept"),
+        _PRIVACY: Rule("normalize", {"method": "robust"}, "units removed; shape kept"),
+    },
+    DataCategory.RENT: {
+        _STATISTICAL: Rule("normalize", {"method": "robust"}, "units removed; shape kept"),
+        _PRIVACY: Rule("normalize", {"method": "robust"}, "units removed; shape kept"),
+    },
 }
 
 # Under anonymization, values that stay exact or stay unique per person are replaced
@@ -122,6 +166,15 @@ def _direct_identifier_rule(
 ) -> Rule:
     if category is DataCategory.FREE_TEXT_WITH_PII:
         return Rule("redact_entities", note="personal data inside text labelled")
+    if category is DataCategory.ORGANIZATION:
+        # Codes keep each company's rows together, so its behaviour can still be modelled.
+        return Rule("scramble_categories", {"prefix": "ORG"}, "opaque code per company")
+    if (
+        category is DataCategory.RECORD_ID
+        and protection is Protection.ANONYMIZATION
+        and fidelity is _STATISTICAL
+    ):
+        return Rule("scramble_categories", {"prefix": "ID"}, "random code; rows stay grouped")
     has_fakes = category in SURROGATE_CATEGORIES and category is not DataCategory.RECORD_ID
 
     if protection is Protection.PSEUDONYMIZATION:
@@ -144,13 +197,14 @@ def propose_plan(
     findings: Sequence[ColumnFinding],
     *,
     fidelity: Fidelity = Fidelity.STATISTICAL,
-    protection: Protection = Protection.PSEUDONYMIZATION,
+    protection: Protection = Protection.ANONYMIZATION,
     techniques: Mapping[str, Technique] = BUILTIN_TECHNIQUES,
 ) -> AnonymizationPlan:
     """Return a plan with one action for every column that needs treatment."""
+    entity_column = _entity_column(findings)
     actions = []
     for finding in findings:
-        action = _action_for(finding, protection, fidelity, techniques)
+        action = _action_for(finding, protection, fidelity, techniques, entity_column)
         if action is not None:
             actions.append(action)
 
@@ -160,6 +214,7 @@ def propose_plan(
         protection=protection,
         actions=actions,
         direct_identifiers=_columns_with(findings, Sensitivity.DIRECT_IDENTIFIER),
+        entity_column=entity_column,
         quasi_identifiers=_columns_with(findings, Sensitivity.QUASI_IDENTIFIER),
         sensitive_attributes=_columns_with(findings, Sensitivity.SENSITIVE),
         enforce_k_anonymity=enforce_k,
@@ -171,6 +226,7 @@ def _action_for(
     protection: Protection,
     fidelity: Fidelity,
     techniques: Mapping[str, Technique],
+    entity_column: str | None,
 ) -> ColumnAction | None:
     rule = rule_for(finding.category, protection, fidelity)
     if rule is None:
@@ -178,7 +234,13 @@ def _action_for(
 
     technique = techniques[rule.technique]
     if finding.kind not in technique.kinds:
-        rule = _fallback(finding, protection)
+        rule = _fallback(finding, protection, fidelity)
+    params = dict(rule.params)
+    if rule.technique == "scramble_categories" and protection is Protection.PSEUDONYMIZATION:
+        params["keyed"] = True
+    if rule.technique == "date_shift" and entity_column is not None:
+        # One offset per person; separate offsets per row average out across a person's rows.
+        params["by"] = entity_column
 
     reason = f"{finding.category.value} ({finding.sensitivity.value})"
     if rule.note:
@@ -188,15 +250,26 @@ def _action_for(
     return ColumnAction(
         column=finding.column,
         technique=rule.technique,
-        params=dict(rule.params),
+        params=params,
         reason=reason,
     )
 
 
-def _fallback(finding: ColumnFinding, protection: Protection) -> Rule:
+def _fallback(finding: ColumnFinding, protection: Protection, fidelity: Fidelity) -> Rule:
     # The usual technique cannot handle this storage kind, such as dates kept as
     # unparseable text. Identifiers still get removed; anything else is kept for review.
     stored_as = finding.kind.value
+    categorical = finding.kind in (ColumnKind.CATEGORY, ColumnKind.BOOLEAN)
+    if finding.sensitivity is Sensitivity.SENSITIVE and categorical:
+        # Suppressing the attribute would leave nothing to analyse, such as an income
+        # bracket stored as text; randomize it under privacy fidelity instead.
+        if fidelity is _PRIVACY:
+            return Rule(
+                "randomized_response",
+                {"keep_probability": 0.75},
+                f"stored as {stored_as}; each value deniable",
+            )
+        return Rule("keep", note=f"stored as {stored_as}; counted as sensitive attribute")
     if protection is Protection.ANONYMIZATION:
         return Rule("suppress", note=f"stored as {stored_as}, so removed")
     if finding.sensitivity is Sensitivity.DIRECT_IDENTIFIER:
@@ -206,3 +279,12 @@ def _fallback(finding: ColumnFinding, protection: Protection) -> Rule:
 
 def _columns_with(findings: Sequence[ColumnFinding], sensitivity: Sensitivity) -> list[str]:
     return [finding.column for finding in findings if finding.sensitivity is sensitivity]
+
+
+def _entity_column(findings: Sequence[ColumnFinding]) -> str | None:
+    """The column that says whose row it is: a company, else the first record key."""
+    for category in (DataCategory.ORGANIZATION, DataCategory.RECORD_ID):
+        for finding in findings:
+            if finding.category is category:
+                return finding.column
+    return None

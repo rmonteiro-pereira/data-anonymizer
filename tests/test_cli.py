@@ -7,7 +7,7 @@ from data_anonymizer.cli import main
 
 
 def test_propose_then_apply_with_a_reviewed_plan(people, tmp_path, capsys, monkeypatch):
-    monkeypatch.setenv("ANONYMIZER_SECRET_KEY", "cli-key")
+    monkeypatch.setenv("ANONYMIZER_SECRET_KEY", "cli-key-for-tests-0123456789")
     source = tmp_path / "people.csv"
     people.to_csv(source, index=False)
     plan_path = tmp_path / "plan.json"

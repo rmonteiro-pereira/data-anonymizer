@@ -8,6 +8,7 @@ anonymous: whoever holds the key can confirm a guess about a person.
 import base64
 import hashlib
 import os
+from collections.abc import Callable
 
 import bcrypt
 import pandas as pd
@@ -15,7 +16,8 @@ from argon2.low_level import Type, hash_secret
 
 from data_anonymizer.taxonomy import DataCategory
 from data_anonymizer.techniques.context import TechniqueContext
-from data_anonymizer.techniques.value_mapping import map_distinct, map_present
+from data_anonymizer.techniques.ff1 import FF1
+from data_anonymizer.techniques.value_mapping import canonical_text, map_distinct, map_present
 
 _DIGITS = "0123456789"
 _LOWERCASE = "abcdefghijklmnopqrstuvwxyz"
@@ -41,12 +43,14 @@ def keyed_hash(
 ) -> pd.Series:
     """Replace each value with a truncated HMAC hex digest, optionally prefixed.
 
-    `algorithm` is one of sha256, sha512, sha3_256, sha3_512, blake2b or blake2s.
+    `algorithm` is one of sha256, sha512, sha3_256, sha3_512, blake2b or blake2s. The
+    minimum length is 16 hex characters (64 bits): shorter digests start to merge
+    different people once a column has millions of distinct values.
     """
     if algorithm not in KEYED_HASH_ALGORITHMS:
         raise ValueError(f"algorithm must be one of {', '.join(KEYED_HASH_ALGORITHMS)}")
-    if not 8 <= length <= 128:
-        raise ValueError("length must be between 8 and 128 hex characters")
+    if not 16 <= length <= 128:
+        raise ValueError("length must be between 16 and 128 hex characters")
 
     def digest(text: str) -> str:
         return prefix + context.keyed_digest(text, algorithm).hex()[:length]
@@ -66,18 +70,19 @@ def argon2_hash(
 ) -> pd.Series:
     """Replace each value with an Argon2id hash in the standard `$argon2id$...` format.
 
-    Argon2id is deliberately slow and memory-hungry, so guessing the value behind a
-    hash stays expensive even for someone who has the secret key. The defaults are
-    the OWASP minimum (19 MiB, two passes): 10 to 20 ms per distinct value.
-    With `deterministic`, the salt is derived from the value and the secret key, so
-    equal values get equal hashes and joins survive. Without it, each distinct value
-    gets a random salt and the result cannot be linked to anything.
+    Argon2id is deliberately slow and memory-hungry, so every guess at the value
+    behind a hash costs a full Argon2 run, even for someone who has the secret key.
+    The defaults are the OWASP minimum (19 MiB, two passes): 10 to 20 ms per
+    distinct value. With `deterministic`, all values share one salt derived from the
+    secret key, so equal values get equal hashes and joins survive. Without it, each
+    distinct value gets a random salt and hashes cannot be joined, though anyone can
+    still test a guessed value against a published hash.
     """
 
     def digest(text: str) -> str:
         encoded = hash_secret(
             text.encode("utf-8"),
-            _salt(context, text, deterministic),
+            _salt(context, deterministic),
             time_cost=time_cost,
             memory_cost=memory_cost,
             parallelism=parallelism,
@@ -110,7 +115,7 @@ def bcrypt_hash(
         if len(secret) > _BCRYPT_MAX_BYTES:
             secret = hashlib.sha256(secret).hexdigest().encode("ascii")
         if deterministic:
-            salt = _bcrypt_salt(_salt(context, text, deterministic=True), rounds)
+            salt = _bcrypt_salt(_salt(context, deterministic=True), rounds)
         else:
             salt = bcrypt.gensalt(rounds)
         return bcrypt.hashpw(secret, salt).decode("ascii")
@@ -118,9 +123,11 @@ def bcrypt_hash(
     return map_distinct(values, digest)
 
 
-def _salt(context: TechniqueContext, text: str, deterministic: bool) -> bytes:
+def _salt(context: TechniqueContext, deterministic: bool) -> bytes:
+    # The shared salt does not depend on the value: a salt derived from the value
+    # would let the key holder test guesses with one cheap HMAC instead of Argon2.
     if deterministic:
-        return context.keyed_digest(text)[:16]
+        return context.derived_key("password-hash-salt", 16)
     return os.urandom(16)
 
 
@@ -134,28 +141,50 @@ def _bcrypt_salt(raw_salt: bytes, rounds: int) -> bytes:
 def scramble_characters(values: pd.Series, context: TechniqueContext) -> pd.Series:
     """Replace each digit with a digit and each letter with a letter, keeping the format.
 
-    `AB-1234` might become `QZ-8071`. The replacement depends on the whole value, so
-    two values that share a prefix do not share the scrambled prefix.
+    `AB-1234567` might become `QZ-8071533`. Digits and letters are each encrypted
+    with FF1 under a key derived from the secret key, which is a one-to-one mapping,
+    so distinct values stay distinct and joins survive. FF1 needs at least 6 digits
+    or 5 letters; shorter runs fall back to a keyed hash per character, where two
+    values can occasionally collide.
     """
+    digit_cipher = FF1(context.derived_key("scramble-digits", 32), 10)
+    letter_cipher = FF1(context.derived_key("scramble-letters", 32), 26)
 
     def scramble(text: str) -> str:
-        stream = context.keyed_digest(text)
-        characters = []
-        for index, character in enumerate(text):
-            byte = stream[index % len(stream)] + index
-            characters.append(_scramble_one(character, byte))
+        characters = list(text)
+        _encrypt_class(characters, str.isdigit, _DIGITS, digit_cipher, context, text)
+        _encrypt_class(characters, _is_ascii_letter, _LOWERCASE, letter_cipher, context, text)
         return "".join(characters)
 
     return map_distinct(values, scramble)
 
 
-def _scramble_one(character: str, byte: int) -> str:
-    if character.isdigit():
-        return _DIGITS[byte % 10]
-    if character.isascii() and character.isalpha():
-        replacement = _LOWERCASE[byte % 26]
-        return replacement.upper() if character.isupper() else replacement
-    return character
+def _is_ascii_letter(character: str) -> bool:
+    return character.isascii() and character.isalpha()
+
+
+def _encrypt_class(
+    characters: list[str],
+    belongs: Callable[[str], bool],
+    alphabet: str,
+    cipher: FF1,
+    context: TechniqueContext,
+    text: str,
+) -> None:
+    positions = [index for index, character in enumerate(characters) if belongs(character)]
+    if not positions:
+        return
+    numerals = [alphabet.index(characters[index].lower()) for index in positions]
+    if len(numerals) >= cipher.min_length:
+        encrypted = cipher.encrypt(numerals)
+    else:
+        stream = context.keyed_digest(text + alphabet)
+        encrypted = [(stream[index] + index) % len(alphabet) for index in range(len(numerals))]
+    for position, numeral in zip(positions, encrypted, strict=True):
+        replacement = alphabet[numeral]
+        characters[position] = (
+            replacement.upper() if characters[position].isupper() else replacement
+        )
 
 
 def surrogate(
@@ -180,7 +209,7 @@ def surrogate(
             values, lambda original: _random_surrogate(context, data_category, original)
         )
 
-    present = values.dropna().astype(str)
+    present = canonical_text(values)
     mapping: dict[str, str] = {}
     used: set[str] = set()
     for original in present.unique():
@@ -213,3 +242,35 @@ def _surrogate_for(
         fake = context.surrogates.value_for(category, seed + attempt, like=original)
         attempt += 1
     return fake
+
+
+def scramble_categories(
+    values: pd.Series,
+    context: TechniqueContext,
+    *,
+    prefix: str = "C",
+    min_count: int = 1,
+    keyed: bool = False,
+) -> pd.Series:
+    """Replace each category with an opaque code such as `C-03`, the same code for the same label.
+
+    Codes are handed out in a random order, so they reveal neither the alphabetical
+    order nor the size of the categories. Categories seen fewer than `min_count`
+    times are first merged into one `<prefix>-OTHER` code, because a segment with
+    one or two members identifies them. With `keyed`, the order comes from the
+    secret key instead, so the same label gets the same code in every release: a
+    pseudonym that the key holder can link.
+    """
+    present = canonical_text(values)
+    counts = present.value_counts()
+    common = [label for label in counts.index if counts[label] >= min_count]
+    if keyed:
+        ordered = sorted(common, key=lambda label: context.keyed_digest(label))
+    else:
+        ordered = [common[index] for index in context.rng.permutation(len(common))]
+    width = max(2, len(str(len(ordered))))
+    codes = {label: f"{prefix}-{number:0{width}d}" for number, label in enumerate(ordered, 1)}
+    other = f"{prefix}-OTHER"
+    result = values.astype(object).copy()
+    result[values.notna()] = present.map(lambda label: codes.get(label, other))
+    return result

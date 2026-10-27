@@ -3,7 +3,14 @@ import pandas as pd
 import pytest
 from argon2 import PasswordHasher
 
-from data_anonymizer import AnonymizationPlan, Anonymizer, ColumnAction, Fidelity, PlanError
+from data_anonymizer import (
+    AnonymizationPlan,
+    Anonymizer,
+    ColumnAction,
+    Fidelity,
+    PlanError,
+    Protection,
+)
 from data_anonymizer.cli import main
 from data_anonymizer.techniques import TechniqueContext
 from data_anonymizer.techniques.encryption import (
@@ -126,6 +133,7 @@ def test_keyed_hash_offers_several_algorithms(context):
 def _reversible_plan() -> AnonymizationPlan:
     return AnonymizationPlan(
         fidelity=Fidelity.STATISTICAL,
+        protection=Protection.PSEUDONYMIZATION,
         actions=[
             ColumnAction(column="email", technique="encrypt"),
             ColumnAction(column="cpf", technique="format_preserving_encrypt"),
@@ -136,9 +144,9 @@ def _reversible_plan() -> AnonymizationPlan:
 
 def test_reveal_recovers_reversible_columns_and_leaves_one_way_ones(people):
     plan = _reversible_plan()
-    anonymized = Anonymizer(secret_key="vault").apply(people, plan).data
+    anonymized = Anonymizer(secret_key="vault-for-tests-0123456789").apply(people, plan).data
 
-    revealed = Anonymizer(secret_key="vault").reveal(anonymized, plan)
+    revealed = Anonymizer(secret_key="vault-for-tests-0123456789").reveal(anonymized, plan)
 
     assert not anonymized["email"].isin(people["email"]).any()
     assert revealed["email"].equals(people["email"].astype(object))
@@ -148,10 +156,10 @@ def test_reveal_recovers_reversible_columns_and_leaves_one_way_ones(people):
 
 def test_reveal_with_the_wrong_key_fails_clearly(people):
     plan = _reversible_plan()
-    anonymized = Anonymizer(secret_key="vault").apply(people, plan).data
+    anonymized = Anonymizer(secret_key="vault-for-tests-0123456789").apply(people, plan).data
 
     with pytest.raises(PlanError, match="cannot reveal"):
-        Anonymizer(secret_key="guess").reveal(anonymized, plan)
+        Anonymizer(secret_key="guess-for-tests-0123456789").reveal(anonymized, plan)
 
 
 def test_cli_reveal_needs_the_secret_key(people, tmp_path, monkeypatch, capsys):
@@ -162,7 +170,7 @@ def test_cli_reveal_needs_the_secret_key(people, tmp_path, monkeypatch, capsys):
     anonymized = tmp_path / "anon.csv"
     revealed = tmp_path / "revealed.csv"
 
-    monkeypatch.setenv("ANONYMIZER_SECRET_KEY", "vault")
+    monkeypatch.setenv("ANONYMIZER_SECRET_KEY", "vault-for-tests-0123456789")
     assert main(["apply", str(source), "--plan", str(plan_path), "-o", str(anonymized)]) == 0
     assert main(["reveal", str(anonymized), "--plan", str(plan_path), "-o", str(revealed)]) == 0
     assert pd.read_csv(revealed)["email"].equals(people["email"])

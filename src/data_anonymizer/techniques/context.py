@@ -4,6 +4,7 @@ import hmac
 from dataclasses import dataclass
 
 import numpy as np
+import pandas as pd
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
@@ -16,12 +17,22 @@ class TechniqueContext:
 
     The random generator makes noise reproducible for a given seed. The secret key
     makes pseudonyms reproducible across runs while keeping them impossible to
-    reverse for anyone without the key.
+    reverse for anyone without the key. `table` is the original table, so a
+    technique can group rows by another column, such as one offset per person.
     """
 
     rng: np.random.Generator
     secret_key: bytes
     surrogates: SurrogateFactory
+    table: pd.DataFrame | None = None
+
+    def group_keys(self, column: str) -> pd.Series:
+        """Return another column of the original table, for techniques that group rows by it."""
+        if self.table is None:
+            raise ValueError(f"grouping by {column!r} needs the original table")
+        if column not in self.table.columns:
+            raise ValueError(f"grouping column {column!r} is not in the table")
+        return self.table[column]
 
     def keyed_digest(self, value: str, algorithm: str = "sha256") -> bytes:
         """Return the HMAC of a value under the run's secret key, SHA-256 by default."""

@@ -48,23 +48,25 @@ def laplace_noise(
 ) -> pd.Series:
     """Clip each value to [lower, upper] and add Laplace noise of scale (upper - lower) / epsilon.
 
-    When `lower` and `upper` are fixed in advance rather than read from the data, each
+    With `lower` and `upper` fixed in advance rather than read from the data, each
     released value satisfies epsilon-local differential privacy. Smaller epsilon means
-    more privacy and more noise. Bounds left out default to the column's minimum and
-    maximum, which is convenient but leaks those two numbers.
+    more privacy and more noise. Both bounds are required: the column's own minimum
+    and maximum would leak, and the guarantee would not hold.
     """
     if epsilon <= 0:
         raise ValueError("epsilon must be positive")
+    if lower is None or upper is None:
+        raise ValueError(
+            "laplace_noise needs lower and upper bounds chosen without looking at the data"
+        )
     numbers = pd.to_numeric(values, errors="coerce").astype(float)
     present = numbers.notna()
     original = numbers[present].to_numpy()
     if len(original) == 0:
         return values.copy()
 
-    lower_bound = float(original.min()) if lower is None else lower
-    upper_bound = float(original.max()) if upper is None else upper
-    clipped = np.clip(original, lower_bound, upper_bound)
-    sensitivity = upper_bound - lower_bound
+    clipped = np.clip(original, lower, upper)
+    sensitivity = upper - lower
     noisy = clipped + context.rng.laplace(0.0, sensitivity / epsilon, size=len(clipped))
     return _write_back(values, numbers, present, noisy)
 
@@ -85,11 +87,27 @@ def multiplicative_noise(
     return _write_back(values, numbers, present, original * factors)
 
 
-def date_shift(values: pd.Series, context: TechniqueContext, *, max_days: int = 30) -> pd.Series:
-    """Move each date by a random whole number of days between -max_days and +max_days."""
+def date_shift(
+    values: pd.Series,
+    context: TechniqueContext,
+    *,
+    max_days: int = 30,
+    by: str | None = None,
+) -> pd.Series:
+    """Move each date by a random whole number of days between -max_days and +max_days.
+
+    With `by`, every row of the same entity (a person, a store) moves by the same
+    offset. Without it, each row gets its own offset, and averaging the many rows of
+    one person recovers their true date within days.
+    """
     dates = as_datetime(values)
-    offsets = context.rng.integers(-max_days, max_days + 1, size=len(dates))
-    return dates + pd.to_timedelta(offsets, unit="D")
+    if by is None:
+        offsets = context.rng.integers(-max_days, max_days + 1, size=len(dates))
+        return dates + pd.to_timedelta(offsets, unit="D")
+    entities = context.group_keys(by).reindex(values.index)
+    codes, uniques = pd.factorize(entities, use_na_sentinel=False)
+    per_entity = context.rng.integers(-max_days, max_days + 1, size=len(uniques))
+    return dates + pd.to_timedelta(per_entity[codes], unit="D")
 
 
 def _write_back(

@@ -9,8 +9,9 @@
 | `suppress` | masking | no | no | distorts | any | — | Replace with missing. |
 | `partial_mask` | masking | no | no | distorts | category, integer, text | `keep_first`, `keep_last`, `mask_char` | Hide all but the first or last characters, keeping separators. |
 | `redact_entities` | masking | no | no | distorts | category, text | `categories` | Replace emails, documents and phones inside free text with labels. |
-| `keyed_hash` | pseudonymization | no | yes | preserves relationships | any | `length`, `prefix`, `algorithm` | Replace with a keyed HMAC digest (SHA-2, SHA-3 or BLAKE2); consistent per key. |
-| `scramble_characters` | pseudonymization | no | yes | preserves relationships | category, integer, text | — | Replace digits with digits and letters with letters, keeping the format. |
+| `keyed_hash` | pseudonymization | no | yes | preserves relationships | any | `length`, `prefix`, `algorithm` | Replace with a keyed HMAC digest (SHA-2, SHA-3 or BLAKE2); consistent per key. `length` is 16 to 128 hex characters. |
+| `scramble_categories` | pseudonymization | no | only with `keyed: true` | preserves relationships | any | `prefix`, `min_count`, `keyed` | Replace labels with opaque codes in random order; labels with fewer than `min_count` rows become `<prefix>-OTHER`. |
+| `scramble_characters` | pseudonymization | no | yes | preserves relationships | category, integer, text | — | Replace digits with digits and letters with letters, keeping the format. Uses FF1 per character class, so distinct values stay distinct; runs shorter than 6 digits or 5 letters fall back to a keyed hash. |
 | `surrogate` | pseudonymization | no | yes, unless `consistent: false` | preserves relationships | category, integer, text | `category`, `unique`, `consistent` | Replace with a realistic fake; consistent per value, or random per cell. |
 | `argon2_hash` | pseudonymization | no | yes | preserves relationships | any | `time_cost`, `memory_cost`, `parallelism`, `hash_length`, `deterministic` | Replace with a slow, memory-hard Argon2id hash; a keyed salt keeps joins. |
 | `bcrypt_hash` | pseudonymization | no | yes | preserves relationships | any | `rounds`, `deterministic` | Replace with a slow bcrypt hash; a keyed salt keeps joins. |
@@ -23,9 +24,10 @@
 | `top_bottom_code` | generalization | no | no | preserves distribution | float, integer | `lower_quantile`, `upper_quantile`, `lower`, `upper` | Clip outliers to quantile or fixed limits. |
 | `suppress_rare` | generalization | no | no | distorts | boolean, category, integer, text | `min_count`, `replacement` | Replace categories seen fewer than a minimum number of times. |
 | `gaussian_noise` | noise | no | no | preserves distribution | float, integer | `relative_scale`, `scale`, `preserve_variance` | Add normal noise, rescaled to keep the mean and standard deviation. |
-| `laplace_noise` | noise | no | no | distorts | float, integer | `epsilon`, `lower`, `upper` | Clip and add Laplace noise; local differential privacy with fixed bounds. |
+| `laplace_noise` | noise | no | no | distorts | float, integer | `epsilon`, `lower`, `upper` | Clip and add Laplace noise; local differential privacy with fixed bounds. `lower` and `upper` are required. |
+| `normalize` | rescaling | no | no | preserves shape | float, integer | `method`, `by`, `order_by`, `allow_shape_change` | Recentre and rescale to hide level and units. `robust` (default), `zscore` and `minmax` keep the shape; `index`, `rank`, `log_ratio`, `growth` and any `by` need `allow_shape_change`. |
 | `multiplicative_noise` | noise | no | no | preserves distribution | float, integer | `relative_scale` | Multiply by a random factor near 1; suits amounts. |
-| `date_shift` | noise | no | no | preserves distribution | datetime | `max_days` | Move each date by a random number of days. |
+| `date_shift` | noise | no | no | preserves distribution | datetime | `max_days`, `by` | Move each date by a random number of days; with `by`, every row of one entity moves by the same offset. |
 | `shuffle` | perturbation | no | no | preserves distribution | any | — | Reorder values among rows; exact distribution, no link to other columns. |
 | `rank_swap` | perturbation | no | no | preserves distribution | datetime, float, integer | `max_distance_percent` | Swap values with near neighbours in rank; exact distribution. |
 | `microaggregate` | perturbation | no | no | preserves distribution | float, integer | `group_size` | Replace values with the mean of groups of at least k; exact mean. |
@@ -36,6 +38,8 @@ What the effects mean:
 - **preserves relationships**: distinct counts, joins and links to other columns survive.
 - **preserves distribution**: the column's own distribution survives, exactly or
   approximately, but links to other columns may weaken.
+- **preserves shape**: the values are shifted and scaled, so the distribution's shape,
+  the ranking and the correlations survive, but the units and level do not.
 - **distorts**: the distribution changes, and analysis has to account for it.
 
 **Keeps a link** means the output can be tied back to the person by the key holder, or by
@@ -57,9 +61,9 @@ techniques.
     `encrypt` with `"deterministic": false` gives a different token every time.
   - FF1 needs at least 6 digits, or 4 characters with the `alphanumeric` alphabet.
 
-`laplace_noise` satisfies ε-local differential privacy only when you pass `lower` and
-`upper`. Without them it uses the column's minimum and maximum, and those two numbers
-leak.
+`laplace_noise` satisfies ε-local differential privacy only with `lower` and `upper` fixed
+in advance, without looking at the data, so both are required. Taking them from the
+column's minimum and maximum would leak those two numbers.
 
 ## Your own techniques
 

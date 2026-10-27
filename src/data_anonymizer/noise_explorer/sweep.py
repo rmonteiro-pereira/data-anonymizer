@@ -29,6 +29,15 @@ DEFAULT_SWEEPS: Mapping[str, tuple[str, Sequence[float], Mapping[str, float]]] =
 _HISTOGRAM_BINS = 40
 _SCATTER_POINTS = 1500
 
+# Larger columns are explored on a random sample of this many values. The metrics and
+# charts are shares and medians, which a sample this size estimates closely, and the
+# sweep runs every technique about forty times, so the full table would take minutes.
+DEFAULT_MAX_ROWS = 200_000
+
+# The axis covers the middle of the original values, not its extremes, so one huge
+# outlier does not squash every other value into a single bar.
+_AXIS_QUANTILES = (0.005, 0.995)
+
 
 @dataclass(frozen=True, slots=True)
 class SweepLevel:
@@ -36,6 +45,8 @@ class SweepLevel:
 
     value: float
     histogram: list[int]
+    # Share of released values beyond the axis; they are counted in the end bands.
+    outside_share: float
     scatter_released: list[float]
     metrics: dict[str, float]
 
@@ -48,6 +59,7 @@ class TechniqueSweep:
     parameter: str
     histogram_edges: list[float]
     original_histogram: list[int]
+    original_outside_share: float
     levels: list[SweepLevel]
 
 
@@ -57,6 +69,8 @@ class NoiseExploration:
 
     column: str
     rows: int
+    # Numeric values in the column before sampling; equals `rows` when nothing was sampled.
+    total_rows: int
     band_sd: float
     scatter_original: list[float]
     sweeps: list[TechniqueSweep] = field(default_factory=list)
@@ -83,15 +97,20 @@ def explore_noise(
     seed: int = 0,
     band_sd: float = 0.1,
     sweeps: Mapping[str, tuple[str, Sequence[float], Mapping[str, float]]] = DEFAULT_SWEEPS,
+    max_rows: int = DEFAULT_MAX_ROWS,
 ) -> NoiseExploration:
-    """Sweep every technique in `sweeps` over one numeric column of `frame`."""
+    """Sweep every technique in `sweeps` over one numeric column of `frame`.
+
+    Columns with more than `max_rows` numeric values are explored on a random sample.
+    """
     if column not in frame.columns:
         raise ValueError(f"column {column!r} is not in the table")
-    original = pd.to_numeric(frame[column], errors="coerce").dropna().reset_index(drop=True)
-    if len(original) < 10:
+    numeric = pd.to_numeric(frame[column], errors="coerce").dropna()
+    if len(numeric) < 10:
         raise ValueError(f"column {column!r} needs at least 10 numeric values")
 
     rng = np.random.default_rng(seed)
+    original = _sample(numeric, max_rows, rng)
     scatter_rows = np.sort(rng.choice(len(original), min(_SCATTER_POINTS, len(original)), False))
     released_by_level = _run_sweeps(original, sweeps, seed)
 
@@ -102,6 +121,7 @@ def explore_noise(
             SweepLevel(
                 value=float(value),
                 histogram=_histogram(released, edges),
+                outside_share=_outside_share(released, edges),
                 scatter_released=_rounded(released.to_numpy()[scatter_rows]),
                 metrics=asdict(
                     deflection_metrics(original.to_numpy(), released.to_numpy(), band_sd=band_sd)
@@ -115,6 +135,7 @@ def explore_noise(
                 parameter=parameter,
                 histogram_edges=_rounded(edges),
                 original_histogram=_histogram(original, edges),
+                original_outside_share=_outside_share(original, edges),
                 levels=levels,
             )
         )
@@ -122,10 +143,20 @@ def explore_noise(
     return NoiseExploration(
         column=column,
         rows=len(original),
+        total_rows=len(numeric),
         band_sd=band_sd,
         scatter_original=_rounded(original.to_numpy()[scatter_rows]),
         sweeps=technique_sweeps,
     )
+
+
+def _sample(values: pd.Series, max_rows: int, rng: np.random.Generator) -> pd.Series:
+    if max_rows < 10:
+        raise ValueError("max_rows must be at least 10")
+    if len(values) <= max_rows:
+        return values.reset_index(drop=True)
+    chosen = np.sort(rng.choice(len(values), max_rows, replace=False))
+    return values.iloc[chosen].reset_index(drop=True)
 
 
 def _run_sweeps(
@@ -134,8 +165,13 @@ def _run_sweeps(
     seed: int,
 ) -> dict[str, list[tuple[float, pd.Series]]]:
     results: dict[str, list[tuple[float, pd.Series]]] = {}
+    # Laplace needs bounds; the column's own range is fine for a private exploration,
+    # though a real release must fix them without looking at the data.
+    bounds = {"lower": float(original.min()), "upper": float(original.max())}
     for name, (parameter, values, fixed) in sweeps.items():
         technique = BUILTIN_TECHNIQUES[name]
+        if name == "laplace_noise":
+            fixed = {**bounds, **fixed}
         runs = []
         for value in values:
             # A fresh generator per level keeps each level reproducible on its own.
@@ -157,16 +193,21 @@ def _parameter_value(value: float) -> float | int:
 
 def _technique_edges(original: pd.Series, runs: list[tuple[float, pd.Series]]) -> np.ndarray:
     # One axis per technique, so a strong Laplace setting does not squash the others.
-    # It covers the original and most of each released version, but never more than
-    # one original range beyond either end; the far tails land in the end bins.
-    low = float(original.min())
-    high = float(original.max())
-    span = (high - low) or 1.0
+    # It covers the middle of the original and of each released version, but never
+    # more than one original span beyond either end; the far tails land in the end bins.
+    lower_quantile, upper_quantile = _AXIS_QUANTILES
+    original_low = float(original.quantile(lower_quantile))
+    original_high = float(original.quantile(upper_quantile))
+    span = (original_high - original_low) or 1.0
+    low = original_low
+    high = original_high
     for _value, released in runs:
-        low = min(low, float(released.quantile(0.005)))
-        high = max(high, float(released.quantile(0.995)))
-    low = max(low, float(original.min()) - span)
-    high = min(high, float(original.max()) + span)
+        low = min(low, float(released.quantile(lower_quantile)))
+        high = max(high, float(released.quantile(upper_quantile)))
+    low = max(low, original_low - span)
+    high = min(high, original_high + span)
+    if high <= low:
+        high = low + 1.0
     return np.linspace(low, high, _HISTOGRAM_BINS + 1)
 
 
@@ -174,6 +215,12 @@ def _histogram(values: pd.Series, edges: np.ndarray) -> list[int]:
     clipped = np.clip(values.to_numpy(dtype=float), edges[0], edges[-1])
     counts, _ = np.histogram(clipped, bins=edges)
     return [int(count) for count in counts]
+
+
+def _outside_share(values: pd.Series, edges: np.ndarray) -> float:
+    numbers = values.to_numpy(dtype=float)
+    outside = (numbers < edges[0]) | (numbers > edges[-1])
+    return float(outside.mean())
 
 
 def _rounded(values: np.ndarray) -> list[float]:

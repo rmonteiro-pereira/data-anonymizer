@@ -25,6 +25,10 @@ column at several strengths:
 | `rank_swap` | maximum distance 0.5% to 40% of the rows |
 | `microaggregate` | group size 2 to 50 |
 
+Columns with more than 200,000 numeric values are explored on a random sample of that
+size (`--max-rows` or `max_rows=` to change it); the page says so. The metrics are shares
+and medians, which a sample this size estimates closely.
+
 Pick a technique and slide its strength. Clicking a point on the risk map selects that
 setting.
 
@@ -39,13 +43,16 @@ setting.
 
 **Charts**
 - **The distribution moves this much**: original against released histogram, on one
-  axis per technique.
+  axis per technique. The axis covers the middle 99% of the original and released values,
+  so one extreme outlier does not squash the rest. Values beyond it are counted in the end
+  bands, whose labels read "or less" and "or more", and a note gives their share.
 - **Each record moves this much**: true against released value for up to 1,500 sampled
   records. The shaded band is ±`--band` standard deviations (default 0.1). Points inside
   it are records whose true value an attacker can still pin down.
 - **Risk against information loss**: for every technique and strength, re-linked
   records (log scale) against typical record shift (log scale). Lower and further left is
-  better, and the dashed line is chance.
+  better, and the dashed line is chance. A log scale has no zero, so settings with no
+  re-linked records or no shift sit on the edge of the axis, at the tick labelled 0.
 
 **Table**: every strength of the selected technique, with all metrics.
 
