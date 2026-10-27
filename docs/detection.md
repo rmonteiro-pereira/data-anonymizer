@@ -11,9 +11,9 @@
 
 | Sensitivity | Meaning | Categories |
 |---|---|---|
-| direct identifier | Points at one person on its own | email, phone, person_name, cpf, cnpj, ssn, credit_card, iban, ip_address, street_address, cnh, nis, health_card, voter_id, vehicle_registration, vehicle_plate, pix_key, invoice_key, national_id, imei, mac_address, record_id, free_text_with_pii |
-| quasi-identifier | Identifies in combination | url, postal_code, city, date_of_birth, age, gender, geo_coordinate |
-| sensitive | What an attacker wants to learn | income, health |
+| direct identifier | Points at one person, or one company, on its own | email, phone, person_name, cpf, cnpj, ssn, credit_card, iban, ip_address, street_address, cnh, nis, health_card, voter_id, vehicle_registration, vehicle_plate, pix_key, invoice_key, national_id, imei, mac_address, organization, record_id, free_text_with_pii |
+| quasi-identifier | Identifies in combination | url, postal_code, city, date_of_birth, age, gender, geo_coordinate, nationality, marital_status, business_segment, floor_area |
+| sensitive | What an attacker wants to learn | income, health, special_category (race, religion, politics, union, sexual orientation, biometric, genetic), business_revenue, rent |
 | non-sensitive | Nothing found | generic_numeric, generic_category, generic_datetime, generic_text |
 
 A CNPJ is kept as a direct identifier, because for a sole proprietor (MEI) it identifies a
@@ -52,9 +52,12 @@ person under the LGPD.
 
 IBAN, DNI/NIE, UK National Insurance, codice fiscale, alphanumeric CNPJ and vehicle plates are matched in upper and lower case.
 
-These have no value check and are found by column name only: person names, street
-addresses, cities, RG and passport numbers, age, gender, coordinates, income and
-health. The checks are in `src/data_anonymizer/detection/checksums.py`.
+These have no value check and are found by column name only: street addresses, cities,
+RG and passport numbers, age, gender, coordinates, income, health, special categories,
+nationality, marital status and the business figures (segment, revenue, rent, floor
+area). Organizations are found by name only. Person names are found by name, and a
+column named after a person (`customer`, `titular`, `owner`) also needs values shaped
+like names. The checks are in `src/data_anonymizer/detection/checksums.py`.
 
 ## How a column is classified
 
@@ -65,7 +68,13 @@ health. The checks are in `src/data_anonymizer/detection/checksums.py`.
    numbers made of one repeated digit, such as `000.000.000-00`.
 2. **Name hints.** The column name is split into tokens, with accents removed and
    camelCase split. It is then matched against English and Portuguese hints, such as
-   `dataNascimento` → date of birth, or `cel` → phone. Negative hints, such as `order`,
+   `dataNascimento` → date of birth, or `cel` → phone. A name word (`nome`, `name`, `nm`)
+   next to a person word (`cliente`, `paciente`, `mae`, `titular`, `owner`, `given`, ...),
+   in any order and with `do`/`da`/`de`/`of` between, is a person name. A qualifier word
+   (`count`, `qtd`, `type`, `tipo`, `status`, `flag`, `score`, `brand`, `ratio`,
+   `verified`, `calls`, `total`, `rate`) beside a hint means the column describes the
+   category rather than holding it, so `email_count` and `address_type` suggest nothing.
+   Negative hints, such as `order`,
    `pedido`, `protocolo`, `sku`, `ref`, `code`, `timestamp` and `nsu`, mark business
    codes. In those columns only the recognizers with a strong check run (CPF, CNPJ, CNH,
    Título de Eleitor, CNS, IBAN, email, URL), so a part number is not taken for a phone,
@@ -90,18 +99,28 @@ health. The checks are in `src/data_anonymizer/detection/checksums.py`.
    - A runner-up within 0.05 of the winner, with no name to settle it: the evidence
      names both, and confidence drops by 0.25.
 5. **Fallbacks, in order.**
-   1. A name hint alone gives 0.7. When the values contradict a checkable hint, the
-      confidence is 0.4 and the plan asks for review.
-   2. Text averaging at least two words per value, where 10% of values embed personal
+   1. A column named after a person whose values are two to five alphabetic words in
+      title case, such as `Ana da Silva`, is a person name (0.7).
+   2. A name hint alone gives 0.55, so the plan always asks for review. When the values
+      contradict a checkable hint, the confidence is 0.4. When the storage kind cannot
+      hold the category, such as a boolean `email` or a float `sexo`, it is 0.3.
+   3. Dates in the past that are mostly adult, spread over decades (a standard deviation
+      of 8 to 30 years), with no time of day and a typical age under 100, are birth dates
+      (0.5).
+   4. Text averaging at least two words per value, where 10% of values embed personal
       data, is classed as free text with personal data. Recognizers that random numbers
       in prose would trigger, such as CNH, NIS, CNS or IMEI, are not used inside text. A
       recognizer that can fire by chance, such as phone or card, counts only when its hits
       are more than twice its chance rate.
-   3. Gender labels.
-   4. Dates in the past, spread over decades and with no time of day, are birth dates
-      (0.5).
-   5. A strong check that matched more than 20% of values, but too few to pass: that
+   5. Gender labels.
+   6. A strong check that matched more than 20% of values, but too few to pass: that
       category at 0.4, never "no sign of personal data".
-   6. Nearly unique short values are a record ID (0.5).
+   7. Nearly unique short values are a record ID (0.5). Integers count only when they look
+      like keys: non-negative, in a range under ten times the row count. Epoch
+      timestamps, amounts in cents and populations stay numeric.
+
+`scan` accepts object columns that hold lists, dicts, sets or arrays by reading their
+text. It raises `TableFormatError` for duplicate column names and `ValueError` for a
+`sample_size` below 1.
 
 Findings below 0.6 confidence get "please review" in the proposed plan.

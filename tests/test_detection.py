@@ -1,5 +1,6 @@
 import time
 
+import numpy as np
 import pandas as pd
 import pytest
 from faker import Faker
@@ -13,6 +14,7 @@ from data_anonymizer.detection.patterns import (
     is_valid_iban,
     passes_luhn,
 )
+from data_anonymizer.errors import TableFormatError
 from data_anonymizer.taxonomy import ColumnKind, DataCategory, Sensitivity
 
 
@@ -542,3 +544,272 @@ def test_imeis_starting_with_zero_stored_as_integers_are_recognized():
     imeis = pd.Series([int(_with_luhn_digit(f"01{index:012d}")) for index in range(40)])
 
     assert scan_column("device", imeis).category is DataCategory.IMEI
+
+
+_REPEATED_NAMES = pd.Series(
+    [
+        f"{first} {last}"
+        for first in ["Ana", "Bruno", "Carla", "Diego", "Elisa"]
+        for last in ["Silva", "Souza", "Lima", "da Costa"]
+    ]
+    * 10
+)
+
+
+@pytest.mark.parametrize(
+    "column",
+    [
+        "Nome do Cliente",
+        "nome_do_cliente",
+        "nm_cliente",
+        "nome_paciente",
+        "nome_mae",
+        "nome_pai",
+        "nome_responsavel",
+        "nome social",
+        "patient_name",
+        "mother_name",
+        "name_of_the_father",
+        "given_name",
+        "family_name",
+        "name_first",
+        "account_holder_name",
+        "recipient_name",
+        "doctor_name",
+        "author_name",
+    ],
+)
+def test_names_combining_a_name_word_and_a_person_word_are_person_names(column):
+    assert category_from_name(column) is DataCategory.PERSON_NAME
+    assert scan_column(column, _REPEATED_NAMES).category is DataCategory.PERSON_NAME
+
+
+@pytest.mark.parametrize(
+    "column",
+    ["titular", "paciente", "patient", "customer", "client", "owner", "sender", "mae", "author"],
+)
+def test_person_word_columns_are_person_names_when_the_values_look_like_names(column):
+    finding = scan_column(column, _REPEATED_NAMES)
+
+    assert finding.category is DataCategory.PERSON_NAME
+    assert finding.confidence >= 0.6
+
+
+@pytest.mark.parametrize(
+    ("column", "values"),
+    [
+        ("customer", ["Gold", "Silver", "Bronze"] * 30),
+        ("customer", [f"C{index:05d}" for index in range(90)]),
+        ("owner", ["Store 12", "Store 7", "Annex B-2"] * 30),
+        ("customer_city", ["Ana Silva", "Bruno Souza", "Carla Lima"] * 30),
+    ],
+)
+def test_person_words_alone_are_not_enough_without_name_like_values(column, values):
+    assert scan_column(column, pd.Series(values)).category is not DataCategory.PERSON_NAME
+
+
+@pytest.mark.parametrize(
+    ("column", "expected"),
+    [
+        ("razao_social", DataCategory.ORGANIZATION),
+        ("nome_fantasia", DataCategory.ORGANIZATION),
+        ("company_name", DataCategory.ORGANIZATION),
+        ("empresa", DataCategory.ORGANIZATION),
+        ("tenant", DataCategory.ORGANIZATION),
+        ("lojista", DataCategory.ORGANIZATION),
+        ("store_name", DataCategory.ORGANIZATION),
+        ("nome_loja", DataCategory.ORGANIZATION),
+        ("brand", DataCategory.ORGANIZATION),
+        ("marca", DataCategory.ORGANIZATION),
+        ("merchant", DataCategory.ORGANIZATION),
+        ("rua", DataCategory.STREET_ADDRESS),
+        ("addr", DataCategory.STREET_ADDRESS),
+        ("address1", DataCategory.STREET_ADDRESS),
+        ("address2", DataCategory.STREET_ADDRESS),
+        ("morada", DataCategory.STREET_ADDRESS),
+        ("bairro", DataCategory.CITY),
+        ("race", DataCategory.SPECIAL_CATEGORY),
+        ("raca", DataCategory.SPECIAL_CATEGORY),
+        ("cor_raca", DataCategory.SPECIAL_CATEGORY),
+        ("etnia", DataCategory.SPECIAL_CATEGORY),
+        ("ethnicity", DataCategory.SPECIAL_CATEGORY),
+        ("religion", DataCategory.SPECIAL_CATEGORY),
+        ("religiao", DataCategory.SPECIAL_CATEGORY),
+        ("orientacao_sexual", DataCategory.SPECIAL_CATEGORY),
+        ("sexual_orientation", DataCategory.SPECIAL_CATEGORY),
+        ("political", DataCategory.SPECIAL_CATEGORY),
+        ("partido", DataCategory.SPECIAL_CATEGORY),
+        ("sindicato", DataCategory.SPECIAL_CATEGORY),
+        ("union_member", DataCategory.SPECIAL_CATEGORY),
+        ("biometric", DataCategory.SPECIAL_CATEGORY),
+        ("genetic", DataCategory.SPECIAL_CATEGORY),
+        ("nationality", DataCategory.NATIONALITY),
+        ("nacionalidade", DataCategory.NATIONALITY),
+        ("native_country", DataCategory.NATIONALITY),
+        ("country_of_birth", DataCategory.NATIONALITY),
+        ("naturalidade", DataCategory.NATIONALITY),
+        ("marital_status", DataCategory.MARITAL_STATUS),
+        ("estado_civil", DataCategory.MARITAL_STATUS),
+        ("segmento", DataCategory.BUSINESS_SEGMENT),
+        ("segment", DataCategory.BUSINESS_SEGMENT),
+        ("ramo", DataCategory.BUSINESS_SEGMENT),
+        ("setor", DataCategory.BUSINESS_SEGMENT),
+        ("store_category", DataCategory.BUSINESS_SEGMENT),
+        ("categoria_loja", DataCategory.BUSINESS_SEGMENT),
+        ("revenue", DataCategory.BUSINESS_REVENUE),
+        ("sales", DataCategory.BUSINESS_REVENUE),
+        ("faturamento", DataCategory.BUSINESS_REVENUE),
+        ("vendas", DataCategory.BUSINESS_REVENUE),
+        ("receita", DataCategory.BUSINESS_REVENUE),
+        ("gmv", DataCategory.BUSINESS_REVENUE),
+        ("turnover", DataCategory.BUSINESS_REVENUE),
+        ("rent", DataCategory.RENT),
+        ("aluguel", DataCategory.RENT),
+        ("condominio", DataCategory.RENT),
+        ("occupancy_cost", DataCategory.RENT),
+        ("custo_ocupacao", DataCategory.RENT),
+        ("abl", DataCategory.FLOOR_AREA),
+        ("gla", DataCategory.FLOOR_AREA),
+        ("sqm", DataCategory.FLOOR_AREA),
+        ("m2", DataCategory.FLOOR_AREA),
+        ("metragem", DataCategory.FLOOR_AREA),
+        ("area_m2", DataCategory.FLOOR_AREA),
+        ("floor_area", DataCategory.FLOOR_AREA),
+        ("sales_per_sqm", DataCategory.BUSINESS_REVENUE),
+        ("rent_per_sqm", DataCategory.RENT),
+        ("tenant_id", DataCategory.RECORD_ID),
+        ("brand_id", DataCategory.RECORD_ID),
+    ],
+)
+def test_name_hints_cover_organizations_addresses_special_data_and_tenant_figures(column, expected):
+    assert category_from_name(column) is expected
+
+
+@pytest.mark.parametrize(
+    "column",
+    [
+        "email_verified",
+        "email_count",
+        "phone_calls",
+        "phone_brand",
+        "address_type",
+        "street_type",
+        "link_type",
+        "mac_count",
+        "cns_score",
+        "pix_flag",
+        "pix_status",
+        "sex_ratio",
+        "total_sales",
+        "tax_rate",
+        "qtd_cpf",
+        "tipo_endereco",
+        "quantidade_telefone",
+    ],
+)
+def test_qualifier_words_mean_the_name_suggests_no_category(column):
+    assert category_from_name(column) is None
+
+
+def test_pix_status_holding_uuids_is_not_a_pix_key():
+    uuids = pd.Series([f"123e4567-e89b-42d3-a456-{index:012d}" for index in range(30)])
+
+    assert scan_column("pix_status", uuids).category is not DataCategory.PIX_KEY
+
+
+@pytest.mark.parametrize(
+    ("column", "values"),
+    [
+        ("email", [True, False] * 20),
+        ("phone", [1.5, 2.5] * 20),
+        ("sexo", [0.4, 0.6] * 20),
+        ("telefone", pd.date_range("2024-01-01", periods=40)),
+        ("cpf", [True, False] * 20),
+        ("salary", ["low", "high"] * 20),
+        ("age", ["young", "old"] * 20),
+    ],
+)
+def test_a_guess_from_the_name_alone_is_below_review_when_the_storage_cannot_hold_it(
+    column, values
+):
+    finding = scan_column(column, pd.Series(values))
+
+    assert finding.confidence < 0.55
+
+
+def test_name_only_guesses_are_always_reviewed():
+    finding = scan_column("diagnosis", pd.Series(["J45", "E11", "I10"] * 10))
+
+    assert finding.category is DataCategory.HEALTH
+    assert finding.confidence == 0.55
+
+
+@pytest.mark.parametrize(
+    "make_cell",
+    [
+        lambda index: [index, "b"],
+        lambda index: {"key": index},
+        lambda index: {index},
+        lambda index: np.arange(3) + index,
+    ],
+    ids=["list", "dict", "set", "array"],
+)
+def test_columns_of_nested_objects_are_scanned_through_their_string_form(make_cell):
+    frame = pd.DataFrame({"payload": [make_cell(index) for index in range(100)]})
+
+    finding = scan(frame)[0]
+
+    assert finding.kind is ColumnKind.TEXT
+
+
+def test_duplicate_column_names_are_refused_with_a_clear_error():
+    frame = pd.DataFrame([[1, 2], [3, 4]], columns=["a", "a"])
+
+    with pytest.raises(TableFormatError, match="duplicate column names.*'a'"):
+        scan(frame)
+
+
+@pytest.mark.parametrize("sample_size", [0, -1])
+def test_a_sample_size_below_one_is_refused(sample_size):
+    with pytest.raises(ValueError, match="sample_size must be at least 1"):
+        scan(pd.DataFrame({"x": range(30)}), sample_size=sample_size)
+
+
+def _spread_integers(column: str) -> np.ndarray:
+    if column in {"created_at", "ts_ms"}:
+        base = 1_700_000_000_000 if column == "ts_ms" else 1_700_000_000
+        spacing = 1371 if column == "ts_ms" else 3607
+        return base + np.arange(300) * spacing
+    return np.random.default_rng(5).choice(10**7, 300, replace=False)
+
+
+@pytest.mark.parametrize(
+    "column",
+    ["created_at", "ts_ms", "amount_cents", "population", "distance_m", "visits"],
+)
+def test_nearly_unique_measures_are_not_record_ids(column):
+    values = pd.Series(_spread_integers(column))
+
+    assert scan_column(column, values).category is DataCategory.GENERIC_NUMERIC
+
+
+@pytest.mark.parametrize(
+    "values",
+    [np.arange(1, 301), np.arange(20230100000, 20230100000 + 300 * 7, 7)],
+)
+def test_unique_integers_in_a_dense_range_are_record_ids(values):
+    assert scan_column("customer_ref", pd.Series(values)).category is DataCategory.RECORD_ID
+
+
+def test_negative_integers_are_not_record_ids():
+    finding = scan_column("delta", pd.Series(np.arange(-150, 150)))
+
+    assert finding.category is not DataCategory.RECORD_ID
+
+
+def test_wide_spread_dates_of_adults_only_are_birth_dates_but_release_dates_are_not():
+    releases = pd.Series(pd.date_range("1990-01-01", "2020-12-31", periods=300).normalize())
+    people = pd.Series(pd.date_range("1950-01-01", "2005-01-01", periods=300).normalize())
+
+    assert scan_column("col_a", releases).category is DataCategory.GENERIC_DATETIME
+    assert scan_column("col_a", people).category is DataCategory.DATE_OF_BIRTH

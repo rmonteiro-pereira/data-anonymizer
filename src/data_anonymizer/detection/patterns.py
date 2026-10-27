@@ -9,6 +9,8 @@ Each recognizer pairs a regular expression with an optional checksum from
   columns whose names say they hold business codes.
 - `chance_rate`: how often a random number of the right shape passes the validator. Free
   text must show clearly more hits than this before it counts as holding personal data.
+- `max_lost_zeros`: how many leading zeros may be restored, for checks that random
+  numbers often pass.
 - `needs_name_hint`: whether a matching column also needs a column name that
   points to the category, for formats with no checksum that ordinary codes share,
   such as UUIDs, which may be PIX keys or plain record keys.
@@ -39,6 +41,7 @@ class ValueRecognizer:
     in_text: bool = True
     needs_name_hint: bool = False
     digit_length: int | None = None
+    max_lost_zeros: int | None = None
     text_validator: Callable[[str], bool] | None = None
     chance_rate: float = 0.0
     strong: bool = False
@@ -50,10 +53,18 @@ class ValueRecognizer:
         return self._is_valid(value)
 
     def matches_padded(self, value: str) -> bool:
-        """Like `matches`, but restores leading zeros lost when numbers were stored as integers."""
-        if self.digit_length is not None and value.isdigit() and len(value) < self.digit_length:
-            value = value.zfill(self.digit_length)
+        """Like `matches`, but restores leading zeros lost to integer storage or a spreadsheet."""
+        if self._lost_zeros(value):
+            value = value.zfill(self.digit_length or len(value))
         return self.matches(value)
+
+    def _lost_zeros(self, value: str) -> bool:
+        if self.digit_length is None or not value.isdigit():
+            return False
+        missing = self.digit_length - len(value)
+        if self.max_lost_zeros is None:
+            return missing > 0
+        return 0 < missing <= self.max_lost_zeros
 
     def find_spans(self, text: str) -> list[tuple[int, int]]:
         """Return the start and end of every valid occurrence inside free text."""
@@ -84,6 +95,7 @@ def _recognizer(
     in_text: bool = True,
     needs_name_hint: bool = False,
     digit_length: int | None = None,
+    max_lost_zeros: int | None = None,
     text_validator: Callable[[str], bool] | None = None,
     chance_rate: float = 0.0,
     strong: bool = False,
@@ -96,6 +108,7 @@ def _recognizer(
         in_text=in_text,
         needs_name_hint=needs_name_hint,
         digit_length=digit_length,
+        max_lost_zeros=max_lost_zeros,
         text_validator=text_validator,
         chance_rate=chance_rate,
         strong=strong,
@@ -127,6 +140,10 @@ _PHONE_PATTERN = r"(?<![\w.+-])(?<!\d[\s.-])(?:" + "|".join(_PHONE_LAYOUTS) + r"
 # The local part is possessive and may only start after a character outside its class. Without
 # that, a long cell with no "@" is rescanned from every position, which takes quadratic time.
 _EMAIL_PATTERN = r"(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]++@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"
+
+# A one-digit check passes one random number in ten, so padding a short number with many
+# zeros would make small codes look like IMEIs or BSNs. Real leading zeros are one or two.
+_WEAK_CHECK_LOST_ZEROS = 2
 
 # Order breaks exact ties between recognizers: earlier and more specific wins.
 RECOGNIZERS: tuple[ValueRecognizer, ...] = (
@@ -220,6 +237,7 @@ RECOGNIZERS: tuple[ValueRecognizer, ...] = (
         checksums.is_valid_imei,
         in_text=False,
         digit_length=15,
+        max_lost_zeros=_WEAK_CHECK_LOST_ZEROS,
     ),
     _recognizer(
         _C.CREDIT_CARD,
@@ -288,6 +306,7 @@ RECOGNIZERS: tuple[ValueRecognizer, ...] = (
         checksums.is_valid_dutch_bsn,
         in_text=False,
         digit_length=9,
+        max_lost_zeros=_WEAK_CHECK_LOST_ZEROS,
     ),
     _recognizer(
         _C.NATIONAL_ID,
