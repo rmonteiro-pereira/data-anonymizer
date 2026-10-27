@@ -11,10 +11,21 @@ def as_number(column: str) -> nw.Expr:
     return nw.col(column).cast(nw.Float64)
 
 
+def round_half_away(expression: nw.Expr, decimals: int = 0) -> nw.Expr:
+    """Round to `decimals` places, with halves going away from zero on every engine.
+
+    Polars rounds halves to even and DuckDB away from zero, so the built-in round would
+    release different values depending on where the table lives.
+    """
+    factor = float(10**decimals)
+    magnitude = (expression.abs() * factor + 0.5).floor() / factor
+    return nw.when(expression < 0).then(-magnitude).otherwise(magnitude)
+
+
 def in_original_type(expression: nw.Expr, dtype: Any) -> nw.Expr:
     """Round back to whole numbers when the column held integers."""
     if dtype.is_integer():
-        return expression.round(0).cast(dtype)
+        return round_half_away(expression).cast(dtype)
     return expression
 
 

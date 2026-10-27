@@ -6,6 +6,9 @@ from data_anonymizer.table import Table
 from data_anonymizer.techniques.context import TechniqueContext
 from data_anonymizer.techniques.numeric_expressions import as_number, in_original_type
 
+# The fewest ranks that the sort-key noise of rank_swap spans.
+_MINIMUM_SWAP_SPAN = 3.0
+
 
 def shuffle(table: Table, column: str, context: TechniqueContext) -> nw.Expr:
     """Randomly reorder the column's values among the rows.
@@ -28,8 +31,8 @@ def rank_swap(
     """Move values between records whose ranks are at most `max_distance_percent` apart.
 
     Each record's sort key is its value's rank plus a random number between 0 and
-    `window`, which is `max_distance_percent` of the record count (at least 1). The
-    sorted values are handed out in the order of those keys. A value therefore only
+    `window`, which is `max_distance_percent` of the record count, and at least three
+    ranks. The sorted values are handed out in the order of those keys. A value therefore only
     trades places with records within about one window of its rank, and the column's
     distribution stays exact. Its correlations with other columns change little.
     """
@@ -40,8 +43,11 @@ def rank_swap(
     window = max(1.0, present * max_distance_percent / 100)
     (uniform,) = table.uniforms(context.stream_key(column, "rank_swap"))
     # SQL engines refuse a window inside another window, so the sort key is stored first.
-    rank = values.rank("ordinal").cast(nw.Float64)
-    sort_key = nw.col(table.add(rank + uniform * window))
+    rank = table.ordinal_rank(values).cast(nw.Float64)
+    # The noise spans at least three ranks. A span of one rank keeps every value in
+    # place, and two ranks swap only a few neighbours, so small columns barely changed.
+    span = max(window, _MINIMUM_SWAP_SPAN)
+    sort_key = nw.col(table.add(rank + uniform * span))
     return table.reorder_values(column, sort_key)
 
 
@@ -58,12 +64,14 @@ def microaggregate(
     values = as_number(column)
     present = table.statistics(present=values.count())["present"]
     if present < group_size:
-        return in_original_type(values.mean(), table.dtype(column))
+        # Too few values for a group: all share the mean, and gaps stay gaps.
+        shared_mean = nw.when(~values.is_null()).then(values.mean())
+        return in_original_type(shared_mean, table.dtype(column))
 
     # Groups of consecutive ranks; the remainder joins the last group, so no group
-    # is smaller than group_size. Ties are broken by row order in memory.
+    # is smaller than group_size. Ties are broken by the row key on every engine.
     last_group = present // group_size - 1
-    rank_group = ((values.rank("ordinal") - 1) // group_size).clip(upper_bound=last_group)
+    rank_group = ((table.ordinal_rank(values) - 1) // group_size).clip(upper_bound=last_group)
     group = table.add(rank_group)
     averaged = nw.when(~values.is_null()).then(values.mean().over(group))
     return in_original_type(averaged, table.dtype(column))

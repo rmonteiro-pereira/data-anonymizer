@@ -14,6 +14,7 @@ from data_anonymizer.noise_explorer import explore_noise
 from data_anonymizer.plan import AnonymizationPlan, ColumnAction, Fidelity, Protection
 from data_anonymizer.table import Table
 from data_anonymizer.techniques import BUILTIN_TECHNIQUES
+from data_anonymizer.techniques.perturbation import microaggregate, rank_swap
 
 # Techniques that map each value on its own: masking, pseudonymization, encryption.
 MAPPING_TECHNIQUES = [
@@ -420,3 +421,60 @@ def test_the_noise_explorer_accepts_any_engine(engine):
 
     assert exploration.rows == 60
     assert exploration.total_rows == len(frame)
+
+
+# Fixes from review: ties, rounding, small columns and row keys.
+
+
+def _ties() -> pd.DataFrame:
+    rng = np.random.default_rng(9)
+    return pd.DataFrame({"id": np.arange(1, 401), "age": rng.integers(20, 30, 400)})
+
+
+@pytest.mark.parametrize(
+    ("name", "params"),
+    [("microaggregate", {"group_size": 5}), ("rank_swap", {"max_distance_percent": 5.0})],
+)
+def test_tied_values_get_the_same_result_on_every_engine(context, name, params):
+    released = {}
+    for engine in Engine:
+        table = Table.from_native(_native(_ties(), engine), row_key="id")
+        BUILTIN_TECHNIQUES[name].apply(table, "age", context, params)
+        released[engine] = _as_pandas(table.to_native())["age"].tolist()
+
+    assert released[Engine.PANDAS] == released[Engine.POLARS] == released[Engine.DUCKDB]
+
+
+@pytest.mark.parametrize("engine", list(Engine))
+def test_halves_round_away_from_zero_on_every_engine(context, engine):
+    frame = pd.DataFrame({"id": [1, 2, 3, 4, 5], "v": [25.0, 35.0, 45.0, -25.0, 5.0]})
+    table = Table.from_native(_native(frame, engine), row_key="id")
+
+    BUILTIN_TECHNIQUES["round_numeric"].apply(table, "v", context, {"base": 10})
+
+    assert _as_pandas(table.to_native())["v"].tolist() == [30, 40, 50, -30, 10]
+
+
+def test_rank_swap_moves_values_in_small_columns(run, context):
+    values = pd.Series(np.arange(20.0))
+
+    swapped = run(rank_swap, values, context)
+
+    assert sorted(swapped) == sorted(values)
+    assert (swapped != values).sum() >= 4
+
+
+def test_microaggregate_keeps_gaps_when_the_column_is_small(run, context):
+    released = run(microaggregate, pd.Series([1.0, None, 3.0]), context, group_size=5)
+
+    assert released.isna().tolist() == [False, True, False]
+    assert released.dropna().tolist() == [2.0, 2.0]
+
+
+@pytest.mark.parametrize("engine", list(Engine))
+@pytest.mark.parametrize("ids", [[1, 2, 2, 4], [1, None, 3, 4]])
+def test_a_row_key_that_repeats_or_has_gaps_is_refused(engine, ids):
+    frame = pd.DataFrame({"id": ids, "v": [1.0, 2.0, 3.0, 4.0]})
+
+    with pytest.raises(ValueError, match="row key 'id'"):
+        Table.from_native(_native(frame, engine), row_key="id")

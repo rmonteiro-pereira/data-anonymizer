@@ -41,8 +41,10 @@ class Table:
     """
 
     def __init__(self, frame: WorkingFrame, engine: Engine, *, row_key: str | None = None):
-        if row_key is not None and row_key not in frame.columns:
-            raise ValueError(f"row key {row_key!r} is not in the table")
+        if row_key is not None:
+            problem = row_key_problem(frame, row_key)
+            if problem is not None:
+                raise ValueError(problem)
         self._engine = engine
         self._original_columns = list(frame.columns)
         self._names = count()
@@ -81,6 +83,17 @@ class Table:
         In-memory tables without a named key use a helper column of row positions.
         """
         return self._key_column()
+
+    @property
+    def row_identity(self) -> str:
+        """A column that tells every row apart, for values computed once per row.
+
+        In-memory tables use the row position, so even a careless key cannot make two
+        rows share a value. Lazy tables use the row key, which is checked to be unique.
+        """
+        if isinstance(self._frame, nw.DataFrame):
+            return _ROW_POSITION
+        return self._original_name(self._key_column())
 
     def dtype(self, column: str) -> Any:
         """The Narwhals type of a column."""
@@ -139,6 +152,18 @@ class Table:
         that replaced that column does not change the groups.
         """
         return self._original_name(column)
+
+    def ordinal_rank(self, expression: nw.Expr) -> nw.Expr:
+        """Rank values 1, 2, 3... with ties broken by the row key, the same on every engine.
+
+        A plain ordinal rank breaks ties by row order in memory but arbitrarily in SQL, so
+        techniques that group or move values by rank would differ between engines.
+        """
+        value = self.add(expression)
+        tie_order = self._original_name(self._key_column())
+        position_among_equals = nw.col(value).cum_count().over(value, order_by=tie_order)
+        rank = nw.col(value).rank("min") + position_among_equals - 1
+        return nw.when(~nw.col(value).is_null()).then(rank)
 
     def reorder_values(self, column: str, sort_key: nw.Expr) -> nw.Expr:
         """Hand the column's present values out again, in the order of `sort_key`.
@@ -239,3 +264,24 @@ class Table:
 
     def _helper_name(self) -> str:
         return f"{HELPER_PREFIX}{next(self._names)}"
+
+
+def row_key_problem(frame: WorkingFrame, column: str) -> str | None:
+    """Why a column cannot serve as the row key, or None when it can.
+
+    Noise is keyed on the row key, so rows that share a key would share their noise,
+    and the variance-keeping rescale of Gaussian noise would then cancel it entirely.
+    """
+    if column not in frame.columns:
+        return f"row key {column!r} is not in the table"
+    counts = frame.select(
+        nw.len().alias("rows"),
+        nw.col(column).null_count().alias("missing"),
+        nw.col(column).n_unique().alias("distinct"),
+    )
+    rows, missing, distinct = collect(counts).row(0)
+    if missing:
+        return f"row key {column!r} has {missing} missing values; every row needs its own key"
+    if distinct != rows:
+        return f"row key {column!r} repeats: {distinct} distinct values in {rows} rows"
+    return None

@@ -10,7 +10,11 @@ from data_anonymizer.techniques.date_expressions import (
     shift_days,
     without_time_zone,
 )
-from data_anonymizer.techniques.numeric_expressions import as_number, in_original_type
+from data_anonymizer.techniques.numeric_expressions import (
+    as_number,
+    in_original_type,
+    round_half_away,
+)
 from data_anonymizer.techniques.value_mapping import lookup_distinct
 
 _TRUNCATION_UNITS = {"year": "1y", "month": "1mo", "day": "1d"}
@@ -124,8 +128,8 @@ def round_numeric(
         # Engines only round to a non-negative number of decimals.
         base = 10**-decimals
     if base is None:
-        return in_original_type(values.round(decimals), table.dtype(column))
-    rounded = (values / base).round(0) * base
+        return in_original_type(round_half_away(values, decimals), table.dtype(column))
+    rounded = round_half_away(values / base) * base
     if float(base).is_integer():
         return in_original_type(rounded, table.dtype(column))
     return rounded

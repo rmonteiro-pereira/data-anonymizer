@@ -40,10 +40,10 @@ def lookup_per_row(table: Table, column: str, transform: TextTransform) -> nw.Ex
     """Transform every present value on its own, so equal values can get different results.
 
     For randomized transformations such as a fresh salt or nonce per cell. The lookup is
-    keyed on the table's row key, which means it collects one value per row into Python.
-    Prefer `lookup_distinct` whenever the transformation is deterministic.
+    keyed on a column that tells every row apart, which means it collects one value per
+    row into Python. Prefer `lookup_distinct` whenever the transformation is deterministic.
     """
-    row_key = table.row_key
+    row_key = table.row_identity
     pairs = _collected(table.frame.select(nw.col(row_key), nw.col(column)).drop_nulls())
     mapping = {
         key: transform(canonical_value(value))

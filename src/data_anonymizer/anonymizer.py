@@ -10,7 +10,14 @@ import numpy as np
 import pandas as pd
 
 from data_anonymizer.detection import ColumnFinding, scan, scan_column
-from data_anonymizer.engines import Engine, column_names, engine_of, pandas_columns, to_native
+from data_anonymizer.engines import (
+    Engine,
+    column_names,
+    engine_of,
+    pandas_columns,
+    to_native,
+    to_working_frame,
+)
 from data_anonymizer.errors import PlanError, SchemaError
 from data_anonymizer.evaluation import (
     PrivacyReport,
@@ -36,7 +43,7 @@ from data_anonymizer.synthesis import (
     generate_from_schema,
     infer_schema,
 )
-from data_anonymizer.table import ROW_KEY_COLUMN, Table
+from data_anonymizer.table import ROW_KEY_COLUMN, Table, row_key_problem
 from data_anonymizer.techniques import BUILTIN_TECHNIQUES, Technique, TechniqueContext
 
 # Shorter keys can be guessed, and every pseudonym and encryption key derives from it.
@@ -127,9 +134,16 @@ class Anonymizer:
         """Scan the table, unless findings are given, and propose a plan for it."""
         if findings is None:
             findings = self.scan(frame)
-        return propose_plan(
+        plan = propose_plan(
             findings, fidelity=fidelity, protection=protection, techniques=self._techniques
         )
+        # A record-ID column can still repeat or have gaps. Only a column that tells every
+        # row apart may key the noise.
+        if plan.row_key is not None:
+            working, _engine = to_working_frame(frame)
+            if row_key_problem(working, plan.row_key) is not None:
+                plan = plan.model_copy(update={"row_key": None})
+        return plan
 
     def apply(self, frame: Any, plan: AnonymizationPlan) -> AnonymizationResult:
         """Run a plan on a pandas, Polars or DuckDB table and measure the result.
@@ -150,7 +164,7 @@ class Anonymizer:
                 "a DuckDB table needs the plan's row_key: name a column that identifies each row"
             )
         context = self._context(throwaway_key=plan.protection is Protection.ANONYMIZATION)
-        table = Table.from_native(frame, row_key=plan.row_key)
+        table = _table_for(frame, plan)
         original = table.original_frame()
         self._run_actions(table, plan, context)
         released = table.released_frame()
@@ -185,7 +199,7 @@ class Anonymizer:
         """
         self.validate(frame, plan)
         context = self._context()
-        table = Table.from_native(frame, row_key=plan.row_key)
+        table = _table_for(frame, plan)
         for action in plan.actions:
             technique = self._techniques[action.technique]
             if not technique.reversible:
@@ -311,6 +325,13 @@ def _resolved_rows(rows: int | None, schema: DatasetSchema | None) -> int:
     if rows is None:
         raise SchemaError("rows is required unless the schema has a panel")
     return rows
+
+
+def _table_for(frame: Any, plan: AnonymizationPlan) -> Table:
+    try:
+        return Table.from_native(frame, row_key=plan.row_key)
+    except ValueError as error:
+        raise PlanError(str(error)) from error
 
 
 def _randomness_key(secret_key: bytes | None, seed: int | None) -> bytes:
