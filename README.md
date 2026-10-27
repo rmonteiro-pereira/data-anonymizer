@@ -17,6 +17,9 @@ A Python library and command-line tool for tables that contain personal data. It
    correlations, conditional rules, formulas, trends, seasonality, outliers and exact
    statistics. It can also generate **data-science challenges with a known answer key**.
 
+![The noise explorer for one column: metric tiles, the original against released distribution,
+and how far each record moved](docs/images/noise-explorer-light.png)
+
 ## Features and algorithms
 
 | Area | What is implemented |
@@ -109,17 +112,22 @@ gives the command for each system, and warns that the page holds real values fro
 
 ## How it works, on one row
 
-`scan` classifies every column. On the sample table it finds four direct identifiers
-(`customer_id`, `full_name`, `email`, `cpf`), a voucher code that nearly every row has its own
-value of, and `age` as a quasi-identifier. `propose` turns that into a plan, and `apply` runs
-it. One row before and after:
+![The scan and apply commands with their real output: each column's category and evidence,
+then "result is anonymized"](docs/images/quick-start-terminal.png)
+
+`scan` classifies every column. On the sample table it finds five direct identifiers
+(`customer_id`, `full_name`, `email`, `cpf`, and `voucher`, whose few filled values are almost
+all distinct) and `age` as a quasi-identifier. `propose` turns that into a plan, and `apply`
+runs it. One row before and after; your values will differ, and timestamps and amounts are
+shortened here:
 
 | | customer_id | full_name | email | signup_date | age | monthly_spend |
 |---|---|---|---|---|---|---|
 | Before | 6242 | Barbara Sanchez | alexandererica@example.net | 2024-07-01 15:20:42 | 33 | 100.98131 |
 | After | ID-0498 | Steven Edwards | rvasquez@example.net | 2024-11-18 | 47 | 136.0 |
 
-- The identifiers are replaced: fresh codes for the ID, random fakes for name, email and CPF.
+- The identifiers are replaced: fresh codes for the ID and voucher, random fakes for name,
+  email and CPF.
 - Timestamps are cut to the day and amounts rounded to three significant figures, because a
   value distinct in every row would single the row out.
 - Ages are averaged in groups of five, and local suppression blanks the rare cells that would
@@ -138,8 +146,9 @@ Polars and DuckDB tables and return the same kind. A DuckDB table needs the plan
 import pandas as pd
 from data_anonymizer import Anonymizer, Fidelity, Protection
 
-customers = pd.read_csv("customers.csv")
-anonymizer = Anonymizer(secret_key="a long secret", seed=42, locale="pt_BR")
+# Parse dates, so the plan treats signup_date as a timestamp rather than text.
+customers = pd.read_csv("customers.csv", parse_dates=["signup_date"])
+anonymizer = Anonymizer(secret_key="replace-with-a-long-random-secret", seed=42, locale="pt_BR")
 
 for finding in anonymizer.scan(customers):
     print(finding.column, finding.category, finding.confidence, finding.evidence)
@@ -222,6 +231,7 @@ uv run mypy src
 ```
 
 GitHub Actions runs the same checks on Python 3.12 and 3.13 for every push to `main` and every
-pull request (`.github/workflows/ci.yml`).
+pull request (`.github/workflows/ci.yml`); there, formatting is checked with
+`ruff format --check` instead of rewritten.
 
 The standards every change follows are in [CONTRIBUTING.md](CONTRIBUTING.md).

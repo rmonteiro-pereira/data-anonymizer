@@ -23,8 +23,9 @@ uv run mypy src
 uv run pytest -q
 ```
 
-GitHub Actions runs the same four checks on Python 3.12 and 3.13 for every push to `main` and
-every pull request (`.github/workflows/ci.yml`). A red run blocks a release.
+GitHub Actions runs the same checks on Python 3.12 and 3.13 for every push to `main` and every
+pull request (`.github/workflows/ci.yml`), with `ruff format --check` so formatting is checked
+rather than rewritten. A red run blocks a release.
 
 ## Code style
 
@@ -48,8 +49,8 @@ The formatter decides layout: `ruff format`, at 100 columns (`pyproject.toml`). 
   than writing a parallel version.
 - **Name modules after domain concepts**, such as `local_suppression.py` or
   `identifying_columns.py`, never `utils`, `helpers` or `manager`.
-- **Keep decisions pure and I/O at the edges.** Only `table_files.py`, `noise_explorer/page.py`
-  and `cli.py` touch files. The library never reads environment variables or configures
+- **Keep decisions pure and I/O at the edges.** Only `table_files.py`, `noise_explorer/page.py`,
+  `cli.py`, and the JSON `save` and `load` of `plan.py` and `synthesis/schema.py` touch files. The library never reads environment variables or configures
   logging; the CLI does.
 - **Validate at the boundary.** Plans and schemas are pydantic models validated on load, and a
   plan is checked against the table before anything runs. Inside, trust the typed objects.
@@ -89,8 +90,8 @@ recorded in an ADR, not a quiet edit.
   `test_a_fake_never_repeats_a_real_value_of_the_column`.
 - Every bug fix comes with a test that fails without the fix. Run it against the unfixed code
   once to be sure.
-- A technique or check that must behave the same on every engine joins the engine parity lists
-  in `tests/test_engines.py`.
+- A technique that must behave the same on every engine joins `MAPPING_TECHNIQUES` or
+  `EXPRESSION_TECHNIQUES` in `tests/test_engines.py`.
 - Pin values, not bits. A pinned output is hashed after rounding floats, because numpy's
   `exp` and `log` can differ in the last bit between machines.
 - Tests run offline and fast: the full suite takes under a minute.
@@ -159,8 +160,9 @@ project.
 1. Set `version` in `pyproject.toml`, and rename `## Unreleased` in `CHANGELOG.md` to the
    version.
 2. Build with `uv build`, then install the wheel into a fresh virtual environment outside the
-   repository. Run the README quick start from that install, and check that the default plan
-   reaches `anonymized`.
+   repository. Run the quick start's commands with that environment's `anonymize`, passing
+   `--schema` the repository's `examples/customers_schema.json`, and check that `apply` prints
+   `result is anonymized`.
 3. Push, and wait for CI to pass on the release commit.
 4. Tag `vX.Y.Z` on that commit and create the GitHub release, with the wheel and the source
    archive attached. The notes cover install, highlights and known limits.

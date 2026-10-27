@@ -24,8 +24,11 @@ From Python:
 ```python
 from pathlib import Path
 
+import pandas as pd
+
 from data_anonymizer.noise_explorer import explore_noise, save_page
 
+customers = pd.read_csv("customers.csv")
 exploration = explore_noise(customers, "monthly_spend", seed=1)
 exploration.metrics  # one row per technique and strength
 save_page(exploration, Path("monthly_spend_noise.html"))
@@ -44,7 +47,13 @@ file, in a current Chrome, Edge, Firefox or Safari:
 | WSL | `explorer.exe "$(wslpath -w monthly_spend_noise.html)"` |
 
 Double-clicking the file in a file manager works too, as does dragging it onto a browser
-window. The page follows the system's light or dark theme.
+window. The page follows the system's light or dark theme, and stacks its tiles and charts on
+a phone-width window.
+
+![The explorer for monthly_spend in the dark theme, rank swap at 5%](images/noise-explorer-dark.png)
+
+<img src="images/noise-explorer-mobile.png" alt="The explorer at phone width, with tiles in two
+columns" width="260">
 
 **The page holds real values.** It embeds histograms of the column and up to 1,500 of its
 original values, for the per-record chart. Treat the file like the original table: keep it
@@ -58,7 +67,7 @@ It runs every noise technique on the column at several strengths:
 |---|---|---|
 | `gaussian_noise` | `relative_scale` | 0.02 to 1.5 |
 | `multiplicative_noise` | `relative_scale` | 0.02 to 0.5 |
-| `laplace_noise` | `epsilon` | 100 to 0.5, with the column's own bounds |
+| `laplace_noise` | `epsilon`, plus `lower` and `upper` | 100 to 0.5 |
 | `rank_swap` | `max_distance_percent` | 0.5 to 40 (% of the rows) |
 | `microaggregate` | `group_size` | 2 to 50 |
 
@@ -74,9 +83,16 @@ and medians, which a sample this size estimates closely.
 
 Pick a technique and slide its strength. Clicking a point on the risk map selects that
 setting. A good setting sits low and to the left on the risk map: few re-linked records for
-the shift you accept. Copy its technique and strength into the plan, as above.
+the shift you accept. Copy its technique and strength into the plan, as above. For
+`laplace_noise`, also set `lower` and `upper` to bounds you choose without looking at the data:
+the explorer used the column's own minimum and maximum, which a release must not reveal.
 
 ## What it shows
+
+![The first screen of the explorer for monthly_spend: technique and strength controls, six
+metric tiles, the distribution chart and the per-record chart](images/noise-explorer-light.png)
+
+The screenshots use a synthetic `monthly_spend` column of 2,000 values, with `rank_swap` at 5%.
 
 **Tiles**
 - Mean change and spread change.
@@ -86,17 +102,37 @@ the shift you accept. Copy its technique and strength into the plan, as above.
 - Kolmogorov–Smirnov distance.
 
 **Charts**
-- **The distribution moves this much**: original against released histogram, on one
-  axis per technique. The axis covers the middle 99% of the original and released values,
-  so one extreme outlier does not squash the rest. Values beyond it are counted in the end
-  bands, whose labels read "or less" and "or more", and a note gives their share.
-- **Each record moves this much**: true against released value for up to 1,500 sampled
-  records. The shaded band is ±`--band` standard deviations (default 0.1). Points inside
-  it are records whose true value an attacker can still pin down.
-- **Risk against information loss**: for every technique and strength, re-linked
-  records (log scale) against typical record shift (log scale). Lower and further left is
-  better, and the dashed line is chance. A log scale has no zero, so settings with no
-  re-linked records or no shift sit on the edge of the axis, at the tick labelled 0.
+
+*The distribution moves this much.* Original against released histogram, on one axis per
+technique. The axis covers the middle 99% of the original and released values, so one extreme
+outlier does not squash the rest. Values beyond it are counted in the end bands, whose labels
+read "or less" and "or more", and a note gives their share. Rank swap only moves values between
+records, so its released line lies exactly on the original one.
+
+![Distribution chart: original and released histograms of monthly_spend, identical under rank
+swap](images/noise-explorer-distribution.png)
+
+*Each record moves this much.* True against released value for up to 1,500 sampled records.
+The shaded band is ±`--band` standard deviations (default 0.1). Points inside it, in orange,
+are records whose true value an attacker can still pin down.
+
+![Per-record chart: true against released value, most points on the diagonal inside the
+band](images/noise-explorer-records.png)
+
+*Risk against information loss.* For every technique and strength, re-linked records (log
+scale) against typical record shift (log scale). Lower and further left is better, the ring
+marks the selected setting, and the dashed line is chance. A log scale has no zero, so
+settings with no re-linked records or no shift sit on the edge of the axis; its tick reads 0
+only when such settings exist.
+
+![Risk map: one line per technique from weak to strong, rank swap at 5% ringed near 1%
+re-linked](images/noise-explorer-risk-map.png)
+
+The same column with `gaussian_noise` at its strongest setting: the histograms now differ a
+little, records scatter far from the diagonal, and only 8.1% stay exposed.
+
+![The explorer with gaussian_noise at relative scale 1.5: records scattered widely around the
+diagonal](images/noise-explorer-strong.png)
 
 **Table**: every strength of the selected technique, with all metrics.
 

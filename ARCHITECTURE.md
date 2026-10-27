@@ -19,7 +19,8 @@ Beside that path:
   from a reference table, and can wrap a schema's question into a data-science challenge.
 
 Everything is in-process. The only file I/O is in `table_files.py`,
-`noise_explorer/page.py` and `cli.py`.
+`noise_explorer/page.py`, `cli.py`, and the JSON `save` and `load` of `plan.py` and
+`synthesis/schema.py`.
 
 ## System views (C4-style)
 
@@ -44,7 +45,7 @@ flowchart LR
   owner -->|"scans, plans, applies, synthesizes"| system
   system -->|"reads and writes"| files
   system -->|"reads and returns the same kind"| frames
-  system -->|"released table, report, challenge"| recipient
+  owner -->|"hands over a released table, or a challenge without answers/"| recipient
   system -->|"explorer page, a local HTML file"| browser
   keyholder -->|"reveal with the secret key"| system
 ```
@@ -53,8 +54,10 @@ flowchart LR
   nothing anywhere.
 - The recipient gets only what the owner hands over: a released table, a challenge folder
   without its `answers/`, or a synthetic table.
-- The key holder exists only for pseudonymization and reversible encryption. Anonymization
-  runs under a throwaway key, so nobody can re-link its output.
+- The key holder can re-link pseudonyms and decrypt reversible columns. Under anonymization,
+  pseudonyms, encryption, codes and fakes use a throwaway key, so nobody can re-link them, but
+  the secret key still drives the noise. Its holder can reproduce that noise, so the key stays
+  secret.
 
 ### Level 2: containers
 
@@ -68,20 +71,21 @@ flowchart TB
   end
   env[("ANONYMIZER_SECRET_KEY<br/>environment variable")]
   plan[("Plan JSON<br/>editable")]
-  outputs[("Released table, report JSON,<br/>synthetic table, challenge folder")]
+  outputs[("Table files, report JSON,<br/>challenge folder")]
   page[("Explorer page<br/>self-contained HTML")]
   duckdb[("DuckDB connection<br/>optional, the user's own")]
 
   cli -->|"calls"| library
   env -->|"read only by the CLI"| cli
-  library -->|"writes and reads"| plan
-  library -->|"writes"| outputs
-  library -->|"writes"| page
+  cli -->|"reads tables, writes outputs"| outputs
+  library -->|"saves and loads"| plan
+  library -->|"save_page writes"| page
   library -->|"runs SQL on the user's relation"| duckdb
 ```
 
-- The CLI only parses arguments, reads the key from the environment and prints results. The
-  library never reads environment variables.
+- The CLI parses arguments, reads the key from the environment, reads and writes the table
+  files, reports and challenge folders, and prints results. The library never reads
+  environment variables.
 - On a DuckDB relation the library builds lazy queries on the user's own connection, so a
   large table stays in DuckDB until the result is collected.
 
@@ -99,7 +103,8 @@ flowchart LR
   synthesis["synthesis/<br/>schemas, generation, challenges"]
   explorer["noise_explorer/<br/>sweep and page"]
 
-  facade --> detection --> proposal
+  facade --> detection
+  facade -->|"findings"| proposal
   facade --> techniques --> table
   facade --> suppression
   facade --> protection
