@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from oblitus.detection import checksums
 from oblitus.detection.named_entities import NamedEntityBackend
 from oblitus.detection.patterns import ValueRecognizer
+from oblitus.detection.text_names import find_name_and_city_spans
 from oblitus.detection.text_normalization import NormalizedText, normalize_text
 from oblitus.taxonomy import DataCategory
 
@@ -116,9 +117,10 @@ def find_entities(
 ) -> list[LabelledSpan]:
     """Return the personal data in a text, in the order of the text, without overlaps.
 
-    When two recognizers claim the same characters, the one listed first keeps them. A
-    named-entity backend reads last, so a name never overrides a document number. With
-    `named_categories`, the backend's findings of other categories are dropped.
+    When two recognizers claim the same characters, the one listed first keeps them. The
+    bundled name and city lists read after the recognizers, and a named-entity backend reads
+    last, so a name never overrides a document number. With `named_categories`, the findings
+    of the lists and of the backend in other categories are dropped.
     """
     normalized = normalize_text(text)
     claimed: list[LabelledSpan] = []
@@ -127,10 +129,11 @@ def find_entities(
         spans += _DISGUISED_FINDERS.get(recognizer.category, _no_spans)(normalized.text)
         for start, end in sorted(set(spans)):
             _claim(claimed, normalized, start, end, recognizer.category)
-    if named_entities is not None:
-        for start, end, category in sorted(named_entities.find(normalized.text)):
-            if named_categories is None or category in named_categories:
-                _claim(claimed, normalized, start, end, category)
+    found_by_lists = find_name_and_city_spans(normalized.text)
+    found_by_model = [] if named_entities is None else named_entities.find(normalized.text)
+    for start, end, category in sorted(found_by_lists) + sorted(found_by_model):
+        if named_categories is None or category in named_categories:
+            _claim(claimed, normalized, start, end, category)
     return sorted(claimed, key=lambda span: span.start)
 
 

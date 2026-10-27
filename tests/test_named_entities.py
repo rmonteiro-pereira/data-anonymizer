@@ -67,7 +67,10 @@ def test_a_pattern_keeps_the_characters_a_backend_also_claims():
 
     spans = find_entities(TEXT, TEXT_RECOGNIZERS, backend)
 
-    assert [span.category for span in spans] == [DataCategory.EMAIL]
+    # The bundled name list also finds "Ana Souza", so only the email's span is compared.
+    categories = [(TEXT[span.start : span.end], span.category) for span in spans]
+    assert ("ana@example.com", DataCategory.EMAIL) in categories
+    assert ("ana@example.com", DataCategory.PERSON_NAME) not in categories
 
 
 def test_named_categories_drop_what_the_backend_finds_outside_them():

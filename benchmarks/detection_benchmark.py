@@ -13,7 +13,9 @@ import numpy as np
 import pandas as pd
 from faker import Faker
 
-from oblitus.detection.reference_lists import municipalities
+from oblitus.detection.crypto_wallets import eip55_checksum_case
+from oblitus.detection.passport_mrz import weighted_check_digit
+from oblitus.detection.reference_lists import first_names, municipalities
 from oblitus.surrogates import SurrogateFactory
 from oblitus.taxonomy import DataCategory
 
@@ -66,6 +68,7 @@ def build_benchmark(seed: int = 0) -> list[LabelledColumn]:
     columns += _prose_columns(rng)
     columns += _broken_promise_columns(rng)
     columns += _hard_columns(rng)
+    columns += _missed_format_columns(rng)
     return columns
 
 
@@ -203,6 +206,65 @@ def _hard_columns(rng: np.random.Generator) -> list[LabelledColumn]:
                 texts[index] = f"{texts[index]} documento {number}"
         columns.append(LabelledColumn("observation", _series(texts), _C.FREE_TEXT_WITH_PII))
     return columns
+
+
+def _missed_format_columns(rng: np.random.Generator) -> list[LabelledColumn]:
+    """Prose with names and cities, tagged identifiers and lowercase passport zones."""
+    columns = []
+    for share in (0.4, 0.7, 1.0):
+        notes = [_plain_note(rng) for _ in range(ROWS)]
+        for index in range(ROWS):
+            if rng.random() < share:
+                notes[index] = _note_with_person(rng)
+        columns.append(LabelledColumn("notes", _series(notes), _C.FREE_TEXT_WITH_PII))
+    for share in (0.5, 1.0):
+        notes = [_plain_note(rng) for _ in range(ROWS)]
+        for index in range(ROWS):
+            if rng.random() < share:
+                notes[index] = f"Beneficiary wallet_{_ethereum_address(rng)} approved"
+        columns.append(LabelledColumn("payload", _series(notes), _C.FREE_TEXT_WITH_PII))
+    for name in _pick(NEUTRAL_NAMES, 2, rng):
+        zones = [_passport_zone(rng).lower() for _ in range(ROWS)]
+        columns.append(LabelledColumn(name, _series(zones), _C.NATIONAL_ID))
+    return columns
+
+
+_PLAIN_NOTES = (
+    "Pedido entregue no prazo combinado",
+    "Cliente pediu segunda via da fatura",
+    "Reunião de planejamento remarcada para a próxima semana",
+    "Contrato renovado sem alterações nas condições",
+    "Customer asked for a refund after the delivery delay",
+)
+_SURNAMES = ("Silva", "Souza", "Oliveira", "Pereira", "Costa", "Almeida", "Lima")
+
+
+def _plain_note(rng: np.random.Generator) -> str:
+    return str(rng.choice(_PLAIN_NOTES))
+
+
+def _note_with_person(rng: np.random.Generator) -> str:
+    first = str(rng.choice(sorted(first_names()))).title()
+    surname = str(rng.choice(_SURNAMES))
+    city = str(rng.choice(["Santos", "Bauru", "Campinas", "Londrina", "Curitiba"]))
+    return f"Atendimento de {first} {surname} em {city}"
+
+
+def _ethereum_address(rng: np.random.Generator) -> str:
+    return "0x" + eip55_checksum_case(rng.bytes(20).hex())
+
+
+def _passport_zone(rng: np.random.Generator) -> str:
+    """Build a fictitious TD3 zone with valid check digits."""
+    number = "".join(str(letter) for letter in rng.choice(list("0123456789ABCDEFGH"), 9))
+    first_line = "P<BRASILVA<<ANA".ljust(44, "<")
+    birth, expiry = "900101", "300101"
+    body = (
+        f"{number}{weighted_check_digit(number)}BRA{birth}{weighted_check_digit(birth)}F"
+        f"{expiry}{weighted_check_digit(expiry)}{'<' * 14}0"
+    )
+    composite = body[:10] + body[13:20] + body[21:43]
+    return f"{first_line}\n{body}{weighted_check_digit(composite)}"
 
 
 def _seeded_faker(locale: str, rng: np.random.Generator) -> Faker:

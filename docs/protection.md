@@ -128,9 +128,9 @@ The checks follow the three criteria of the EDPB Guidelines 02/2026 on anonymisa
 | Level | Meaning |
 |---|---|
 | `anonymized` | No link to people, and every check passed |
-| `at_risk` | No link to people, but a record can still be isolated or a sensitive value inferred. A column cleaned with `redact_entities` always stays here: no pattern finds names written into a sentence or a JSON field |
+| `at_risk` | No link to people, but a record can still be isolated or a sensitive value inferred. A column cleaned with `redact_entities` always stays here: no pattern finds every name written into a sentence or a JSON field (the bundled first-name and municipality lists find the common ones) |
 | `pseudonymized` | Identifiers replaced, but a linking technique lets the key holder re-link them |
-| `identifiable` | A direct identifier was left as it was. This is checked on the data: more than 1% of a direct identifier's values surviving unchanged counts, whatever the technique. For `redact_entities`, any text that still holds a recognisable document, email or phone counts |
+| `identifiable` | A direct identifier was left as it was. This is checked on the data: more than 1% of a direct identifier's values surviving unchanged counts, whatever the technique. For `redact_entities`, any text that still holds a recognisable document, email, phone, listed first name with a surname, or municipality counts |
 
 A column rescaled only by shift and scale (`normalize` with `robust`, `zscore` or `minmax`
 and no `by`, whatever `allow_shape_change` says) is a problem under anonymization, not a
