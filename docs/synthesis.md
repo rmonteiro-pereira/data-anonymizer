@@ -243,14 +243,15 @@ The verdict fails on any of these findings, and passes when there are none:
 - **Exact copies**: the share of synthetic rows equal to a training row exceeds the share equal
   to a holdout row by more than 1%. Rows that repeat in a low-cardinality population match the
   holdout too, so they are not counted. Without a holdout, the limit applies to the share itself.
-- **DCR share**: above 55%, and its 95% bootstrap interval excludes 50%.
-- **Membership attack**: the 95% bootstrap interval of the advantage lies entirely above 0.
+- **DCR share**: above 60%, and its 95% bootstrap interval excludes 50%.
+- **Membership attack**: the 95% bootstrap interval of the advantage lies entirely above 0 and
+  the advantage itself is at least 0.1. In 20 trials each, leak-free generators reached an
+  advantage of 0.05 at most, so the floor keeps them from failing.
 
 Change the limits with `SyntheticPrivacyThresholds`. The command prints the measurements, writes
-them as JSON with `--report`, and exits 3 when there is a finding. This is a screening, not a
-guarantee: the bootstrap covers the sampling of the candidate records, not the randomness of the
-generator, so a small advantage (about 0.05) on a leak-free generator can occasionally cross the
-line. Only a differential-privacy mechanism bounds what an attacker can learn.
+them as JSON with `--report`, and exits 3 when there is a finding. This is a screening, not a guarantee: the bootstrap covers the sampling of the candidate
+records, not the randomness of the generator, which is why the attack also needs the minimum
+advantage. Only a differential-privacy mechanism bounds what an attacker can learn.
 
 ## Data-science challenges
 

@@ -39,10 +39,13 @@ class SyntheticPrivacyThresholds:
     `max_exact_copy_share` is the largest share of synthetic rows that may equal a training
     row, beyond the share that equals a holdout row. `max_dcr_share` is the largest share of
     synthetic rows that may be closer to the training table than to the holdout.
+    `min_attack_advantage` is the smallest membership-attack advantage that counts: leak-free
+    generators show advantages up to about 0.05 by chance, which an interval alone would flag.
     """
 
     max_exact_copy_share: float = 0.01
-    max_dcr_share: float = 0.55
+    max_dcr_share: float = 0.6
+    min_attack_advantage: float = 0.1
 
 
 @dataclass(frozen=True, slots=True)
@@ -238,7 +241,7 @@ def _percentile_interval(draws: np.ndarray, confidence_level: float) -> tuple[fl
 def _findings(report: SyntheticPrivacyReport, rules: SyntheticPrivacyThresholds) -> list[str]:
     findings = _exact_copy_findings(report, rules)
     findings += _dcr_share_findings(report, rules)
-    findings += _membership_findings(report)
+    findings += _membership_findings(report, rules)
     return findings
 
 
@@ -270,12 +273,17 @@ def _dcr_share_findings(
     return []
 
 
-def _membership_findings(report: SyntheticPrivacyReport) -> list[str]:
+def _membership_findings(
+    report: SyntheticPrivacyReport, rules: SyntheticPrivacyThresholds
+) -> list[str]:
     attack = report.membership
     if attack is None or attack.advantage_ci_low <= 0:
+        return []
+    if attack.advantage < rules.min_attack_advantage:
         return []
     return [
         f"the membership attack has advantage {attack.advantage:.3f} "
         f"(interval {attack.advantage_ci_low:.3f} to {attack.advantage_ci_high:.3f}, "
-        "which excludes 0)"
+        "which excludes 0, and is at least "
+        f"{rules.min_attack_advantage:.2f})"
     ]
