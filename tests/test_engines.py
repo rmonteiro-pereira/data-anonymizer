@@ -8,10 +8,15 @@ from data_anonymizer.engines import Engine
 from data_anonymizer.table import Table
 from data_anonymizer.techniques import BUILTIN_TECHNIQUES
 
-ENGINE_TECHNIQUES = [
+# Techniques that map each value on its own: masking, pseudonymization, encryption.
+MAPPING_TECHNIQUES = [
+    ("keyed_hash", "email", {}),
+]
+
+# Techniques built from expressions, windows and keyed noise.
+EXPRESSION_TECHNIQUES = [
     ("gaussian_noise", "amount", {"relative_scale": 0.2}),
     ("microaggregate", "amount", {"group_size": 4}),
-    ("keyed_hash", "email", {}),
     ("normalize", "amount", {}),
     (
         "normalize",
@@ -24,6 +29,8 @@ ENGINE_TECHNIQUES = [
         {"method": "growth", "by": "store", "order_by": "id", "allow_shape_change": True},
     ),
 ]
+
+ENGINE_TECHNIQUES = MAPPING_TECHNIQUES + EXPRESSION_TECHNIQUES
 
 
 def _sample() -> pd.DataFrame:
@@ -102,3 +109,22 @@ def test_lazy_tables_need_a_row_key_for_noise(context):
 
     with pytest.raises(ValueError, match="row key"):
         BUILTIN_TECHNIQUES["gaussian_noise"].apply(table, "amount", context, {})
+
+
+@pytest.mark.parametrize("engine", list(Engine))
+def test_reordered_values_keep_the_column_and_its_gaps(context, engine):
+    frame = _sample()
+    frame.loc[[3, 17], "amount"] = None
+    table = Table.from_native(_native(frame, engine), row_key="id")
+    (sort_key,) = table.uniforms(context.stream_key("amount", "test"))
+
+    table.replace("amount", table.reorder_values("amount", sort_key))
+    native = table.to_native()
+    released = native.df() if engine is Engine.DUCKDB else native
+    if engine is Engine.POLARS:
+        released = released.to_pandas()
+    released = released.sort_values("id").reset_index(drop=True)
+
+    assert released["amount"].isna().tolist() == frame["amount"].isna().tolist()
+    assert sorted(released["amount"].dropna()) == sorted(frame["amount"].dropna())
+    assert not released["amount"].equals(frame["amount"])

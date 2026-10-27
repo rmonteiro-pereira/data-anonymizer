@@ -71,6 +71,14 @@ class Table:
         """The user's columns, in their original order."""
         return list(self._original_columns)
 
+    @property
+    def row_key(self) -> str:
+        """The column that identifies rows, for lookups keyed per row.
+
+        In-memory tables without a named key use a helper column of row positions.
+        """
+        return self._key_column()
+
     def dtype(self, column: str) -> Any:
         """The Narwhals type of a column."""
         return self._frame.collect_schema()[column]
@@ -118,13 +126,7 @@ class Table:
             {key_name: list(mapping), value_name: list(mapping.values())},
             {key_name: self.dtype(column), value_name: dtype},
         )
-        joined: WorkingFrame
-        if isinstance(self._frame, nw.LazyFrame):
-            lazy_lookup = lookup if isinstance(lookup, nw.LazyFrame) else lookup.lazy()
-            joined = self._frame.join(lazy_lookup, how="left", left_on=column, right_on=key_name)
-        else:
-            joined = self._frame.join(_eager(lookup), how="left", left_on=column, right_on=key_name)
-        self._frame = joined.drop(key_name, strict=False)
+        self._join_left(lookup, column, key_name)
         return nw.col(value_name)
 
     def original_column(self, column: str) -> str:
@@ -158,6 +160,25 @@ class Table:
         )
         return selected.to_pandas()
 
+    def reorder_values(self, column: str, sort_key: nw.Expr) -> nw.Expr:
+        """Hand the column's present values out again, in the order of `sort_key`.
+
+        The row with the k-th smallest sort key gets the column's k-th smallest value,
+        so the column keeps exactly the same values while they move between rows.
+        Missing values stay where they are. A random sort key shuffles; the value's
+        own rank plus a little noise swaps values with near neighbours.
+        """
+        value = nw.col(column)
+        present_key = nw.when(~value.is_null()).then(sort_key)
+        position = self.add(present_key.rank("ordinal"))
+        rank_name = self._helper_name()
+        value_name = self._helper_name()
+        ranked = self._frame.filter(~value.is_null()).select(
+            value.rank("ordinal").alias(rank_name), value.alias(value_name)
+        )
+        self._join_left(ranked, position, rank_name)
+        return nw.col(value_name)
+
     def add(self, expression: nw.Expr) -> str:
         """Store an intermediate result as a helper column and return its name.
 
@@ -182,6 +203,16 @@ class Table:
     def to_native(self) -> Any:
         """Hand the table back in the user's form, without helper columns."""
         return to_native(self._ordered().select(self._original_columns), self._engine)
+
+    def _join_left(self, right: WorkingFrame, left_on: str, right_on: str) -> None:
+        # Narwhals joins a lazy frame only with a lazy one, and an eager with an eager.
+        joined: WorkingFrame
+        if isinstance(self._frame, nw.LazyFrame):
+            lazy_right = right if isinstance(right, nw.LazyFrame) else right.lazy()
+            joined = self._frame.join(lazy_right, how="left", left_on=left_on, right_on=right_on)
+        else:
+            joined = self._frame.join(_eager(right), how="left", left_on=left_on, right_on=right_on)
+        self._frame = joined.drop(right_on, strict=False)
 
     def _ordered(self) -> WorkingFrame:
         # Joins may reorder rows, so in-memory tables are put back in their original order.
