@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Documented limits.** `docs/protection.md` gains "What keyed noise cannot hide": public
+  seeds, guessable keys, same-key re-releases, averaging across keys, positional row keys and
+  the derived key in DuckDB SQL. The business guide states that one known value plus a true
+  total undoes robust scaling, and `microaggregate` notes its exact-mean subtraction.
+
 - **Synthesis and challenge leaks closed.**
   - A time-split panel challenge blanks columns that read `lag` of the target after the first
     test period, because they published the previous test row's label. The key names them in

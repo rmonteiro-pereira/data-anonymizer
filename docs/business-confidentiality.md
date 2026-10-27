@@ -89,8 +89,11 @@ rescaling limit described below.
 shape, which is why they are the default. Their known limit: anyone who knows the
 true value of **two** records can solve for the shift and scale and convert the
 whole column back. A tenant knows its own figures, so two tenants together can
-undo the rescaling. Each column gets its own shift and scale, so undoing revenue
-does not undo rent. The protection report always lists this caveat.
+undo the rescaling. **One** known value is enough when the true column total is also
+known, such as a mall's published annual sales: the total fixes the second equation.
+Each column gets its own shift and scale, so undoing revenue does not undo rent, but
+once both are undone the ratio of rent to sales, and with it the percentage-of-sales
+clause, can be read per store. The protection report always lists this caveat.
 
 To remove the risk entirely, rescale each store against itself. Every method that
 does this changes the distribution's shape, so it needs `allow_shape_change`:

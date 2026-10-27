@@ -134,7 +134,10 @@ Columns without an action are left unchanged. A plan is checked before anything 
 A missing column, an unknown technique, an unknown parameter, or a linking technique in
 an anonymization plan raises `PlanError`.
 
-`shuffle_rows` says whether the released rows come back in a fresh random order with a fresh pandas index. `null` (the default) shuffles under anonymization, so the release cannot be lined up with the original or another release row by row, and keeps order and index under pseudonymization. The protection checks still compare the rows before the shuffle.
+`shuffle_rows` says whether the released rows come back in a fresh random order with a fresh
+pandas index. `null` (the default) shuffles under anonymization, so the release cannot be lined
+up with the original or another release row by row, and keeps order and index under
+pseudonymization. The protection checks still compare the rows before the shuffle.
 
 `row_key` names the column that identifies each row, such as a record ID. `propose`
 sets it to the first column found to hold a different value in nearly every row. It does
@@ -150,6 +153,31 @@ three things:
 `anonymize apply` and `anonymize reveal` take `--row-key COLUMN`, which overrides the
 plan's `row_key`.
 
+## What keyed noise cannot hide
+
+Noise is computed from the secret key, the seed and the row key, so whoever can recompute it
+can subtract it. These limits are not reported per release:
+
+- **A seed without a secret key is public.** Anyone who knows or guesses the seed recomputes
+  the noise and gets the original values back exactly. A small seed is found by trying each
+  one against a single known record. Releases meant to protect values need a random secret
+  key, such as `secrets.token_hex(32)`, kept apart from the release.
+- **A guessable key is no key.** A key built from a word, a date or a project name falls to
+  the same test: try the candidates against one known value.
+- **Re-releasing under the same key shows what changed.** The same row gets the same noise,
+  so the difference between two releases of updated data is the exact change in each row.
+  Use a new key for each version of the data, or release only once.
+- **Releases under different keys or seeds average out.** Each release draws fresh noise, so
+  the mean of many releases approaches the true values: the average of 32 releases is about
+  six times closer than one. Give each recipient one release.
+- **Without a row key, noise follows the row position.** Reordering the input changes which
+  row gets which noise, and an attacker who can line up two releases on a public column can
+  average them. Set `row_key` when a table is released more than once.
+- **DuckDB sees the derived key.** On DuckDB the random numbers are computed in SQL, so the
+  per-column key derived from the secret key appears in the query text and in any query log
+  or profile. It reveals that column's noise, not the secret key. Do not run releases on a
+  connection whose query log others can read.
+
 ## Large tables
 
 `Anonymizer` takes pandas, Polars and DuckDB tables and returns the kind it was given.
@@ -161,3 +189,6 @@ plan's `row_key`.
   engine. Smaller tables are compared whole.
 - Dominance sums only the sampled rows of each contributor, so for a table above the limit
   the shares are estimates.
+- A DuckDB `TIMESTAMP WITH TIME ZONE` column is read in the connection's time zone, so date
+  techniques see local times. Set the connection's `TimeZone` before applying a plan when the
+  release must use UTC.

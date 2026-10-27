@@ -30,7 +30,7 @@
 | `date_shift` | noise | no | no | preserves distribution | datetime | `max_days`, `by` | Move each date by a random number of days; with `by`, every row of one entity moves by the same offset. |
 | `shuffle` | perturbation | no | no | preserves distribution | any | — | Reorder values among rows; exact distribution, no link to other columns. |
 | `rank_swap` | perturbation | no | no | preserves distribution | datetime, float, integer | `max_distance_percent` | Swap values with near neighbours in rank; exact distribution. |
-| `microaggregate` | perturbation | no | no | preserves distribution | float, integer | `group_size` | Replace values with the mean of groups of at least k; exact mean. |
+| `microaggregate` | perturbation | no | no | preserves distribution | float, integer | `group_size` | Replace values with the mean of groups of at least k; exact mean, so someone who knows the other values of a group can subtract them to get the last one. |
 | `randomized_response` | perturbation | no | no | distorts | boolean, category | `keep_probability`, `by` | Randomly replace some categories; deniable, local differential privacy. With `by`, all rows of one entity share one draw, so averaging them reveals nothing. |
 
 Numeric techniques compute in 64-bit floating point, so integers above 2^53 (about
