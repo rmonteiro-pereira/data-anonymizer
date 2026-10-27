@@ -45,7 +45,8 @@ def test_a_synthesizer_that_copies_rows_fails_every_test(train, holdout):
     assert report.dcr_share > 0.9
     assert report.membership is not None
     assert report.membership.advantage_ci_low > 0
-    assert len(report.findings) == 3
+    # Copying every row is also caught by the isolated-record test, so it adds a fourth finding.
+    assert len(report.findings) == 4
 
 
 def test_copies_with_a_little_noise_still_fail_the_membership_and_share_tests(train, holdout):
@@ -169,3 +170,92 @@ def test_the_command_exits_3_for_copies_and_0_for_fresh_rows(train, holdout, tmp
     assert main([*fresh_args, "--report", str(report_path)]) == 0
     assert "verdict: pass" in capsys.readouterr().out
     assert json.loads(report_path.read_text())["findings"] == []
+
+
+def _continuous_population(rows: int, seed: int) -> pd.DataFrame:
+    """Four continuous measurements, five of the records in a rare high-lab cohort."""
+    rng = np.random.default_rng(seed)
+    table = pd.DataFrame(rng.normal(size=(rows, 4)), columns=["age", "height", "weight", "lab"])
+    table.loc[:4, "lab"] += 100
+    return table
+
+
+def _rare_records_appended(seed: int) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    train = _continuous_population(1000, seed)
+    holdout = _continuous_population(1000, seed + 1)
+    fresh = _continuous_population(1000, seed + 2)
+    return fresh, train, holdout
+
+
+def test_a_generator_that_appends_the_rare_training_records_fails():
+    fresh, train, holdout = _rare_records_appended(seed=141)
+    synthetic = pd.concat([fresh, train.iloc[:5]], ignore_index=True)
+
+    report = Anonymizer(seed=141).check_synthetic(synthetic, train, holdout)
+
+    assert report.exact_copy_share < 0.01
+    assert not report.passed
+    assert any("most isolated training records" in finding for finding in report.findings)
+    assert report.isolated_records is not None
+    assert (report.isolated_records.train_copies, report.isolated_records.holdout_copies) == (5, 0)
+
+
+def test_one_verbatim_rare_record_among_fresh_rows_fails():
+    fresh, train, holdout = _rare_records_appended(seed=7)
+    synthetic = pd.concat([fresh, train.iloc[:1]], ignore_index=True)
+
+    report = Anonymizer(seed=7).check_synthetic(synthetic, train, holdout)
+
+    assert not report.passed
+
+
+def test_fresh_rows_of_the_same_population_have_no_isolated_copies():
+    fresh, train, holdout = _rare_records_appended(seed=141)
+
+    report = Anonymizer(seed=141).check_synthetic(fresh, train, holdout)
+
+    assert report.passed, report.findings
+    assert report.isolated_records is not None
+    assert report.isolated_records.train_copies == 0
+
+
+def test_isolated_copies_are_checked_without_a_holdout_too():
+    fresh, train, _ = _rare_records_appended(seed=141)
+    synthetic = pd.concat([fresh, train.iloc[:5]], ignore_index=True)
+
+    report = Anonymizer(seed=141).check_synthetic(synthetic, train)
+
+    assert any("most isolated training records" in finding for finding in report.findings)
+
+
+def test_natural_matches_of_a_discrete_table_are_not_isolated_copies():
+    def population(seed_offset: int) -> pd.DataFrame:
+        rows = np.random.default_rng(seed_offset).integers(0, 40, size=(600, 3))
+        return pd.DataFrame(rows, columns=["a", "b", "c"]).astype(str)
+
+    report = assess_synthetic_privacy(population(2), population(1), population(3), seed=1)
+
+    assert not any("isolated" in finding for finding in report.findings)
+
+
+def test_the_command_reports_the_isolated_records_and_exits_3(tmp_path, capsys):
+    fresh, train, holdout = _rare_records_appended(seed=141)
+    synthetic = pd.concat([fresh, train.iloc[:5]], ignore_index=True)
+    synthetic.to_csv(tmp_path / "synthetic.csv", index=False)
+    train.to_csv(tmp_path / "train.csv", index=False)
+    holdout.to_csv(tmp_path / "holdout.csv", index=False)
+
+    exit_code = main(
+        [
+            "check-synthetic",
+            str(tmp_path / "synthetic.csv"),
+            "--real",
+            str(tmp_path / "train.csv"),
+            "--holdout",
+            str(tmp_path / "holdout.csv"),
+        ]
+    )
+
+    output = capsys.readouterr().out
+    assert exit_code == 3
+    assert "isolated training records copied exactly: 5 of 100" in output

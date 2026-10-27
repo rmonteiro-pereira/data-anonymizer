@@ -1,6 +1,6 @@
 """Check whether a synthetic table leaks the real records it was learned from.
 
-Three distance-based tests, all built on each record's distance to its closest record in
+Four distance-based tests, all built on each record's distance to its closest record in
 another table (see `record_distance.py`):
 - Exact copies: the share of synthetic rows that equal a training row.
 - DCR share: the share of synthetic rows closer to the training table than to a real holdout
@@ -9,6 +9,10 @@ another table (see `record_distance.py`):
 - Membership inference: an attacker holds candidate records, half from the training table and
   half from the holdout, and guesses "member" for those closest to the synthetic data. The
   attack's AUC is 0.5 when it learns nothing, and its advantage is 2 * AUC - 1.
+
+- Isolated records: copies of the training records that stand out from all the others (see
+  `isolated_records.py`). The first three average over the table, so a generator that appends a
+  few rare records verbatim to many fresh rows passes them; this test looks at those records.
 
 Without a holdout table, only the exact copies and the distance summaries are available.
 Each test becomes a finding when it crosses a threshold, and the table passes when there are
@@ -22,8 +26,10 @@ import pandas as pd
 from scipy import stats
 
 from oblitus.errors import SchemaError
+from oblitus.evaluation.isolated_records import IsolatedRecordCopies, count_isolated_copies
 from oblitus.evaluation.record_distance import (
     MAX_COMPARED_ROWS,
+    EncodedColumns,
     NearestDistances,
     encode_tables,
     nearest_distances,
@@ -79,6 +85,7 @@ class SyntheticPrivacyReport:
     dcr_share_ci_low: float | None = None
     dcr_share_ci_high: float | None = None
     membership: MembershipInference | None = None
+    isolated_records: IsolatedRecordCopies | None = None
     findings: list[str] = field(default_factory=list)
 
     @property
@@ -130,7 +137,28 @@ def assess_synthetic_privacy(
         outsider_distance = nearest_distances(holdout_encoded, synthetic_encoded).nearest
         attack = _membership_attack(member_distance, outsider_distance, rng, confidence_level)
         report = replace(report, membership=attack)
+    report = replace(report, isolated_records=_isolated_record_copies(encoded, holdout_rows))
     return replace(report, findings=_findings(report, rules))
+
+
+def _isolated_record_copies(
+    encoded: list[EncodedColumns], holdout_rows: pd.DataFrame | None
+) -> IsolatedRecordCopies | None:
+    """Count near copies of the isolated training records, and of isolated holdout records."""
+    train_encoded, synthetic_encoded = encoded[0], encoded[1]
+    train_rows = len(train_encoded.numbers) or len(train_encoded.categories)
+    if train_rows < 2:
+        return None
+    train_isolation = nearest_distances(train_encoded, train_encoded).second_nearest
+    train_to_synthetic = nearest_distances(train_encoded, synthetic_encoded).nearest
+    if holdout_rows is None:
+        return count_isolated_copies(train_isolation, train_to_synthetic)
+    holdout_encoded = encoded[2]
+    holdout_isolation = nearest_distances(holdout_encoded, holdout_encoded).second_nearest
+    holdout_to_synthetic = nearest_distances(holdout_encoded, synthetic_encoded).nearest
+    return count_isolated_copies(
+        train_isolation, train_to_synthetic, holdout_isolation, holdout_to_synthetic
+    )
 
 
 def _shared_columns(
@@ -242,6 +270,7 @@ def _findings(report: SyntheticPrivacyReport, rules: SyntheticPrivacyThresholds)
     findings = _exact_copy_findings(report, rules)
     findings += _dcr_share_findings(report, rules)
     findings += _membership_findings(report, rules)
+    findings += _isolated_record_findings(report)
     return findings
 
 
@@ -286,4 +315,17 @@ def _membership_findings(
         f"(interval {attack.advantage_ci_low:.3f} to {attack.advantage_ci_high:.3f}, "
         "which excludes 0, and is at least "
         f"{rules.min_attack_advantage:.2f})"
+    ]
+
+
+def _isolated_record_findings(report: SyntheticPrivacyReport) -> list[str]:
+    isolated = report.isolated_records
+    if isolated is None or not isolated.is_excessive:
+        return []
+    against = ""
+    if isolated.holdout_copies is not None:
+        against = f", against {isolated.holdout_copies} of the equally isolated holdout records"
+    return [
+        f"{isolated.train_copies} of the {isolated.cohort_size} most isolated training records "
+        f"are copied exactly in the synthetic table{against}"
     ]

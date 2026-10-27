@@ -220,7 +220,7 @@ read from the data. See [differential-privacy.md](differential-privacy.md).
 A generator can copy the records it learned from. `Anonymizer.check_synthetic(synthetic, train,
 holdout)` and `oblitus check-synthetic SYNTHETIC --real TRAIN [--holdout HOLDOUT]` measure that.
 `train` is the table the generator saw. `holdout` is real data from the same population that it
-never saw; give one to get the last two tests.
+never saw; give one to get the DCR share and the membership attack.
 
 Distances are Gower-like: the mean over the shared columns of a per-column distance between 0 and
 1. A category column counts 0 for equal values and 1 for different ones. A number or date counts
@@ -236,6 +236,7 @@ grows with the product of the row counts, which is why there is a cap.
 | Distance to closest record (DCR) | Median over synthetic rows of the distance to the nearest training row (and holdout row) |
 | NNDR | Nearest over second-nearest distance; near 0 means a row sits on top of one training record |
 | DCR share | Share of synthetic rows closer to the training table than to the holdout; 50% means no memorization, ties count half |
+| Isolated-record copies | Among the 10% of records with the largest distance to the nearest other record of their own table (and not 0), how many have a synthetic row exactly equal to them; counted for training and for holdout records |
 | Membership attack | The attacker holds the training rows and the holdout rows, guesses "member" for those closest to the synthetic data. AUC is 0.5 when it learns nothing; advantage is 2 * AUC - 1 |
 
 The verdict fails on any of these findings, and passes when there are none:
@@ -247,6 +248,21 @@ The verdict fails on any of these findings, and passes when there are none:
 - **Membership attack**: the 95% bootstrap interval of the advantage lies entirely above 0 and
   the advantage itself is at least 0.1. In 20 trials each, leak-free generators reached an
   advantage of 0.05 at most, so the floor keeps them from failing.
+
+- **Isolated-record copies**: the whole-table tests average over every record, so a generator
+  that appends five rare training records verbatim to a thousand fresh rows passes them (0.5%
+  exact copies, membership AUC near 0.51) while anyone who knows one of those people can tell
+  they were in the data. Fresh draws do not reproduce a rare record exactly, so copies of the
+  isolated training records are compared with copies of equally isolated holdout records,
+  whose isolation is measured inside the holdout the same way. If no row repeats in either real
+  table, chance does not reproduce a row and any excess is a finding, with no tolerance. If some
+  rows repeat (categories, rounded or clipped numbers), natural matches happen, and the excess
+  must also pass a one-sided sign test at the 1% level, which needs about seven copies against
+  none. Without a holdout, any copy counts. Only exact copies count: near copies of rounded
+  or discrete data occur by chance too often for a zero-tolerance rule. In 40 trials of each
+  case with 1,500 training rows, fresh draws, the copula synthesizer and MST at ε = 1 on
+  continuous, mixed and discrete data raised no finding from this test (0 of 320 runs). With 300
+  rows it fired in 3 of 360 runs, all on the mixed table.
 
 Change the limits with `SyntheticPrivacyThresholds`. The command prints the measurements, writes
 them as JSON with `--report`, and exits 3 when there is a finding. This is a screening, not a guarantee: the bootstrap covers the sampling of the candidate

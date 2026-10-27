@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **`check_synthetic` catches copies of rare records.** A generator that appends a few rare
+  training records verbatim to thousands of fresh rows passed the whole-table tests. The check
+  now also counts exact copies among the 10% most isolated training records, against the same
+  count for the isolated holdout records, and fails on any excess when no real row repeats.
+  `SyntheticPrivacyReport.isolated_records` and a line of `oblitus check-synthetic` show it.
 - **Names and cities in prose are redacted without the `ner` extra.** A first name from the
   bundled IBGE list followed by capitalized words, and a municipality name, are found in free
   text. A column of notes that mentions them gets `redact_entities` in the default plan, and the
