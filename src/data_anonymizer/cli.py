@@ -21,6 +21,7 @@ from data_anonymizer.noise_explorer import explore_noise, save_page
 from data_anonymizer.noise_explorer.sweep import DEFAULT_MAX_ROWS
 from data_anonymizer.plan import AnonymizationPlan, Fidelity, Protection
 from data_anonymizer.synthesis import DatasetSchema, infer_schema
+from data_anonymizer.synthesis.rare_values import min_records_for
 from data_anonymizer.table_files import read_table, write_table
 
 SECRET_KEY_VARIABLE = "ANONYMIZER_SECRET_KEY"
@@ -250,7 +251,7 @@ def _reveal(anonymizer: Anonymizer, arguments: argparse.Namespace) -> None:
 def _infer_schema(anonymizer: Anonymizer, arguments: argparse.Namespace) -> None:
     frame = read_table(arguments.input)
     findings = anonymizer.scan(frame)
-    min_count = 5 if arguments.fidelity is Fidelity.PRIVACY else 1
+    min_count = min_records_for(arguments.fidelity)
     schema = infer_schema(frame.to_pandas(), findings, min_category_count=min_count)
     _emit(schema.to_json(), arguments.output)
 

@@ -199,6 +199,28 @@ def test_the_answer_key_describes_the_panel_lags_and_regime(sales_challenge):
     ]
 
 
+def test_a_test_row_does_not_publish_the_previous_test_label(sales_challenge):
+    test = sales_challenge.test_features.sort_values(["store_id", "date"])
+    answers = sales_challenge.test_answers.loc[test.index, "sales"]
+    first_date = test["date"].min()
+    later = test["date"] > first_date
+
+    assert test.loc[later, "last_month_sales"].isna().all()
+    assert test.loc[~later, "last_month_sales"].notna().all()
+    previous_label = answers.groupby(test["store_id"]).shift(1)
+    assert not np.isclose(test["last_month_sales"], previous_label).any()
+    key = sales_challenge.answer_key["time_series"]
+    assert key["withheld_test_columns"] == ["last_month_sales"]
+
+
+def test_the_training_rows_keep_their_lag_of_the_target(sales_challenge):
+    train = sales_challenge.train.sort_values(["store_id", "date"])
+    previous = train.groupby("store_id")["sales"].shift(1)
+
+    later = previous.notna()
+    np.testing.assert_allclose(train.loc[later, "last_month_sales"], previous[later])
+
+
 def test_the_best_achievable_error_is_the_noise_of_the_one_step_formula(sales_challenge):
     best = sales_challenge.answer_key["best_achievable"]
 
@@ -374,6 +396,10 @@ def test_a_gap_in_a_panel_column_blanks_cells():
         (
             [{"name": "x", "kind": "float", "mean": 0, "std": 1, "level": "period", "exact": True}],
             "one value per period",
+        ),
+        (
+            [{"name": "x", "kind": "float", "mean": 0, "std": 1, "exact": True}],
+            "not over the whole panel",
         ),
         (
             [

@@ -137,7 +137,10 @@ synthetic = anonymizer.synthesize(5_000, reference=customers, fidelity=Fidelity.
 
 - **`statistical`**: a Gaussian copula learns each column's distribution and the
   correlations between numeric, date, boolean and category columns. Numbers are
-  interpolated between observed quantiles, so rows are new rather than copied.
+  interpolated between observed quantiles, so rows are new rather than copied. A category
+  seen fewer than 5 times is merged into `OTHER` (or into the most common category when the
+  rare ones together are still fewer than 5 rows), and the 5 largest and 5 smallest numbers
+  are pulled in to the nearest value beyond them, so a single record cannot reappear.
   Identifiers are always regenerated as fakes, never sampled from the reference.
   - The correlation behind a boolean or category column is estimated by maximum
     likelihood (polyserial against a number, polychoric against another category), so a
@@ -147,9 +150,11 @@ synthetic = anonymizer.synthesize(5_000, reference=customers, fidelity=Fidelity.
     category whose effect is not monotone along that scale, such as group means `a` 0,
     `b` 10, `c` 1, is blurred. Fit one copula per level with `stratify_by` for that.
 - **`privacy`**: every column is drawn independently from an inferred schema, so no
-  row-level structure survives. Categories seen fewer than 5 times become `OTHER`.
+  row-level structure survives. Categories seen fewer than 20 times become `OTHER`.
   Numeric columns are inferred as `quantiles`: the deciles, the 5% and 95% points, finer
-  points in each tail while the sample is large enough, and the minimum and maximum. They
+  points in each tail while at least 20 records lie beyond each point, and a minimum and
+  maximum that are the values with 20 records beyond them, so one extreme record cannot shape
+  the tail. They
   follow zero-inflated and heavy-tailed shapes, such as a capital gain that is zero for 92%
   of people, where a normal distribution with the same mean and std would invent negative
   values and a wrong mean. The mean of a heavy tail still varies by some percent.
@@ -293,7 +298,7 @@ published rows and be graded against.
 | `ate` | Mean of Y(treated) − Y(control) over all generated rows, train and test. Y is the target; a classification target is read as 0 or 1 |
 | `att` | The same mean over the rows that were treated |
 | `effect_on_truth_column` | When the question has a `truth_column`, its `ate` and `att` on that column, such as on the churn probability. It is the effect without the sampling noise of the label |
-| `cate` | The mean effect per level of each effect modifier. A numeric modifier is cut into quartiles. Each entry gives `level`, `rows` and `effect` |
+| `cate` | The mean effect per level of each effect modifier. A numeric modifier with more than 10 distinct values is cut into quartiles; one with 10 or fewer gets an entry per value. Each entry gives `level`, `rows` and `effect` |
 | `naive_difference` | Mean target of the treated minus the control among the published training rows |
 | `naive_bias` | `naive_difference` − `ate`: what confounding did to the simple comparison |
 | `roles` | Lists of `confounders`, `mediators`, `colliders`, `instruments` and `effect_modifiers` |
@@ -310,10 +315,15 @@ The roles follow from the graph:
 - **instruments**: causes of the treatment that reach the outcome only through the treatment,
   counting correlations and shared causes.
 
-The `adjustment_set` is the confounders when all of them are published and nothing else
-connects the treatment and the outcome. It is `null` when a confounder is hidden, or when a
-correlation links the treatment and the outcome directly. Adjusting for a mediator or a
-collider biases the estimate, which is what the example is for.
+The `adjustment_set` is a minimal set of published columns that blocks every back-door path.
+The search uses only published columns that the treatment does not cause, trying the
+published parents of the treatment, then the published confounders, their union and every
+such column, and keeps the first set that d-separates the treatment from the outcome. A
+hidden cause is fine when a published column blocks its paths. The set is `null` when no
+published set works, such as a hidden confounder with no published blocker, or a correlation
+linking the treatment and the outcome directly (front-door structures have no back-door set).
+A cause of the treatment that is correlated with the outcome counts as a confounder.
+Adjusting for a mediator or a collider biases the estimate, which is what the example is for.
 
 A treatment that is a category needs `treatment_values`, and the column's formula can produce
 the choices, such as `where(bernoulli(0.4), 'promo', 'none')`.
@@ -430,7 +440,9 @@ periods, such as 40 stores over 36 months. The full example is
 An entity-level column can read only entity-level columns, and a period-level column only
 period-level columns, so the value stays constant where it should. Row-level columns read
 anything. Correlations join columns of the same level. Only entity-level columns can be
-`unique`, and a period-level column cannot be `exact` or have `outlier_fraction`.
+`unique`. A period-level column cannot be `exact` or have `outlier_fraction`, and a row-level
+column cannot be `exact` in a panel, because every period would hit the target on its own;
+the schema is rejected with a `SchemaError`.
 
 **Formulas.** A formula can read `period` (the 0-based period of the row), `entity_index`
 (the 0-based entity), the time column (`month(date)`, `dayofyear(date)`) and
@@ -469,16 +481,25 @@ period.
 - **Label noise** applies to the published labels as for any table.
 - **Leakage.** A column that reads the current target is a leak, as before. A column that reads
   `lag` of the target is a legitimate feature: the earlier value is known when predicting. The
-  key lists such columns under `features.lags_target` instead of `distractors`.
+  key lists such columns under `features.lags_target` instead of `distractors`. In a time
+  split, a test row's lag of the target would be the previous test row's withheld label, so
+  the test rows after the first test period are published with such columns blank. The first
+  test period keeps the lag from the last training period. The task is to forecast the test
+  periods from the training horizon, and `time_series.withheld_test_columns` names the blanked
+  columns.
 - **Causal questions.** A `treatment` on a panel is refused with a `SchemaError`. A treatment
   reaches later periods through lags, and the effect replay recomputes descendants within one
   row, not across periods, so its effects would be wrong.
 - **Best achievable.** The truth of a target formula that lags is its formula evaluated
-  again without noise on the observed earlier values, the best one-step-ahead prediction.
+  again without noise on the observed earlier values, the best one-step-ahead prediction. With
+  the lag columns withheld after the first test period, a forecast from the training horizon
+  cannot reach it.
 
 The key gains a `time_series` section:
 - `entity`, `time`, `entities`, `periods`, `start`, `frequency` and `split`;
 - `periods_per_split`: the number of periods in `train` and in `test`;
 - `first_test_period`: its index and date, for a time split (null for a random split);
 - `lags`: for each column, the columns its formula lags and by how many periods;
+- `withheld_test_columns`: columns that read an earlier target and are blank after the first
+  test period of a time split;
 - `regimes`: each condition on `period` or the time column, with the column it changes.

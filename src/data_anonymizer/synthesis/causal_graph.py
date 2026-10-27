@@ -117,38 +117,90 @@ class CausalGraph:
     def adjustment_set(
         self, treatment: str, outcome: str, published: Collection[str]
     ) -> AdjustmentSet:
-        """Find published columns that block every back-door path from treatment to outcome."""
+        """Find published columns that block every back-door path from treatment to outcome.
+
+        A hidden cause does not make the set impossible when a published column blocks its
+        paths, so the search tries the published parents of the treatment, then the published
+        confounders, their union and every published non-descendant of the treatment. The first
+        set that d-separates is pruned to a minimal one.
+        """
         confounders = self.roles(treatment, outcome).confounders
+        allowed = self._adjustable(treatment, outcome, published)
+        for candidate in self._candidate_sets(treatment, confounders, allowed):
+            if self._blocks_back_doors(treatment, outcome, candidate):
+                columns = self._minimal(treatment, outcome, candidate, confounders)
+                if not columns:
+                    return AdjustmentSet(
+                        [], "no back-door path is open, so no adjustment is needed"
+                    )
+                return AdjustmentSet(
+                    columns, "adjusting for these columns blocks every back-door path"
+                )
         hidden = [name for name in confounders if name not in published]
         if hidden:
             return AdjustmentSet(
                 None,
-                f"the confounders {', '.join(hidden)} are hidden, so they cannot be adjusted for",
+                f"the confounders {', '.join(hidden)} are hidden and no published column "
+                "blocks their back-door paths",
             )
-        if not self._blocks_back_doors(treatment, outcome, set(confounders)):
-            return AdjustmentSet(
-                None,
-                "no set of published columns blocks every back-door path: "
-                "an unobserved common cause links the treatment and the outcome",
-            )
-        if not confounders:
-            return AdjustmentSet([], "no back-door path exists, so no adjustment is needed")
-        return AdjustmentSet(confounders, "adjusting for these columns blocks every back-door path")
+        return AdjustmentSet(
+            None,
+            "no set of published columns blocks every back-door path: "
+            "an unobserved common cause links the treatment and the outcome",
+        )
+
+    def _adjustable(self, treatment: str, outcome: str, published: Collection[str]) -> set[str]:
+        """Published columns that may be adjusted for: not the treatment's or outcome's
+        effects, because adjusting for an effect biases the estimate."""
+        excluded = self.descendants(treatment) | self.descendants(outcome)
+        return {name for name in self._order if name in published} - excluded - {treatment, outcome}
+
+    def _candidate_sets(
+        self, treatment: str, confounders: list[str], allowed: set[str]
+    ) -> list[set[str]]:
+        """Adjustment sets to try, from the most targeted to every adjustable column."""
+        parents = self._parents[treatment] & allowed
+        published_confounders = set(confounders) & allowed
+        return [
+            parents,
+            published_confounders,
+            parents | published_confounders,
+            allowed,
+        ]
+
+    def _minimal(
+        self, treatment: str, outcome: str, valid: set[str], confounders: list[str]
+    ) -> list[str]:
+        """Drop columns one by one while the rest still blocks every back-door path.
+
+        Columns that are not confounders go first, so a confounder is kept when it can be.
+        """
+        kept = set(valid)
+        removal_order = [name for name in reversed(self._order) if name not in confounders]
+        removal_order += [name for name in reversed(self._order) if name in confounders]
+        for name in removal_order:
+            if name in kept and self._blocks_back_doors(treatment, outcome, kept - {name}):
+                kept.discard(name)
+        return self._in_column_order(kept)
 
     def _in_column_order(self, names: Collection[str]) -> list[str]:
         return [name for name in self._order if name in names]
 
     def _confounds(self, name: str, treatment: str, outcome: str) -> bool:
-        """True when `name` reaches the outcome without the treatment and also causes it or is
-        tied by an unobserved common cause to the treatment or one of its causes."""
-        reaches_outcome = name in _reachable(self._without(treatment), [outcome])
-        if not reaches_outcome:
-            return False
+        """True when `name` opens a back-door path: it reaches the outcome without the treatment
+        and causes the treatment or shares an unobserved cause with it or its causes, or it
+        causes the treatment and shares an unobserved cause with the outcome or its causes."""
         causes_of_treatment = self.ancestors(treatment) | {treatment}
-        if name in causes_of_treatment:
-            return True
-        shared = self._latent_parents(causes_of_treatment) & self._latent_parents({name})
-        return bool(shared)
+        reaches_outcome = name in _reachable(self._without(treatment), [outcome])
+        if reaches_outcome:
+            if name in causes_of_treatment:
+                return True
+            if self._latent_parents(causes_of_treatment) & self._latent_parents({name}):
+                return True
+        if name not in causes_of_treatment:
+            return False
+        outcome_side = self.ancestors(outcome) | {outcome}
+        return bool(self._latent_parents(outcome_side) & self._latent_parents({name}))
 
     def _instruments(self, name: str, treatment: str, outcome: str) -> bool:
         if name not in self.ancestors(treatment):

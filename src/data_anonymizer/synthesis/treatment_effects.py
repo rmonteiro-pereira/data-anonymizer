@@ -23,8 +23,9 @@ from data_anonymizer.synthesis.schema import (
 )
 from data_anonymizer.taxonomy import NUMERIC_KINDS
 
-# Numeric effect modifiers are reported by quartile.
+# Numeric effect modifiers are reported by quartile, unless they have few distinct values.
 _QUANTILE_BINS = 4
+_MAX_VALUES_REPORTED_ONE_BY_ONE = 10
 
 OutcomeAsNumbers = Callable[[pd.Series], np.ndarray]
 
@@ -92,10 +93,13 @@ def _mean_or_none(values: np.ndarray) -> float | None:
 def _conditional_effects(
     column: ColumnSchema, values: pd.Series, effects: np.ndarray
 ) -> list[dict[str, Any]]:
-    """Mean effect per level of a modifier, or per quartile of a numeric one."""
+    """Mean effect per level of a modifier, per quartile of a numeric one with many values."""
     levels: Any
-    if column.kind in NUMERIC_KINDS and values.nunique() > 1:
+    distinct = values.nunique()
+    if column.kind in NUMERIC_KINDS and distinct > _MAX_VALUES_REPORTED_ONE_BY_ONE:
         levels = pd.qcut(values, _QUANTILE_BINS, duplicates="drop")
+    elif column.kind in NUMERIC_KINDS:
+        levels = pd.Categorical(values, categories=sorted(values.dropna().unique()))
     else:
         labels = [str(choice) for choice in column.choices or sorted(values.astype(str).unique())]
         levels = pd.Categorical(values.astype(str), categories=labels)
