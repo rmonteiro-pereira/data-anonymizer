@@ -42,6 +42,7 @@ class DataCategory(StrEnum):
     NATIONAL_ID = "national_id"
     IMEI = "imei"
     MAC_ADDRESS = "mac_address"
+    ORGANIZATION = "organization"
     RECORD_ID = "record_id"
     FREE_TEXT_WITH_PII = "free_text_with_pii"
     POSTAL_CODE = "postal_code"
@@ -50,8 +51,15 @@ class DataCategory(StrEnum):
     AGE = "age"
     GENDER = "gender"
     GEO_COORDINATE = "geo_coordinate"
+    NATIONALITY = "nationality"
+    MARITAL_STATUS = "marital_status"
+    BUSINESS_SEGMENT = "business_segment"
+    FLOOR_AREA = "floor_area"
     INCOME = "income"
     HEALTH = "health"
+    SPECIAL_CATEGORY = "special_category"
+    BUSINESS_REVENUE = "business_revenue"
+    RENT = "rent"
     GENERIC_NUMERIC = "generic_numeric"
     GENERIC_CATEGORY = "generic_category"
     GENERIC_DATETIME = "generic_datetime"
@@ -61,7 +69,7 @@ class DataCategory(StrEnum):
 class Sensitivity(StrEnum):
     """How much a column contributes to re-identifying or harming a person.
 
-    Direct identifiers point at one person on their own. Quasi-identifiers do so
+    Direct identifiers point at one person, or one company, on their own. Quasi-identifiers do so
     in combination (the classic example is birth date, postal code and gender).
     Sensitive attributes are what an attacker wants to learn about a person.
     """
@@ -94,6 +102,7 @@ _DIRECT_IDENTIFIERS = {
     DataCategory.NATIONAL_ID,
     DataCategory.IMEI,
     DataCategory.MAC_ADDRESS,
+    DataCategory.ORGANIZATION,
     DataCategory.RECORD_ID,
     DataCategory.FREE_TEXT_WITH_PII,
 }
@@ -106,11 +115,21 @@ _QUASI_IDENTIFIERS = {
     DataCategory.AGE,
     DataCategory.GENDER,
     DataCategory.GEO_COORDINATE,
+    DataCategory.NATIONALITY,
+    DataCategory.MARITAL_STATUS,
+    DataCategory.BUSINESS_SEGMENT,
+    DataCategory.FLOOR_AREA,
 }
 
+# Special categories are the data GDPR Article 9 and LGPD Article 11 protect most:
+# racial or ethnic origin, religion, politics, union membership, sex life,
+# genetic and biometric data. Business revenue and rent are a company's secrets.
 _SENSITIVE_ATTRIBUTES = {
     DataCategory.INCOME,
     DataCategory.HEALTH,
+    DataCategory.SPECIAL_CATEGORY,
+    DataCategory.BUSINESS_REVENUE,
+    DataCategory.RENT,
 }
 
 
