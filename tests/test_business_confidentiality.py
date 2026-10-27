@@ -66,15 +66,17 @@ def test_the_default_plan_hides_revenue_and_rent_but_keeps_the_pattern(mall):
 
     assert plan.action_for("store_name").technique == "scramble_categories"
     assert plan.action_for("segmento").technique == "scramble_categories"
-    assert plan.action_for("faturamento").technique == "normalize"
-    assert plan.action_for("aluguel").technique == "normalize"
+    # Each store is indexed against its own mean, so no single known value and total undo it.
+    for column in ("faturamento", "aluguel"):
+        action = plan.action_for(column)
+        assert action.technique == "normalize"
+        assert action.params["method"] == "index"
+        assert action.params["by"] == "store_name"
     assert not released["store_name"].isin(mall["store_name"]).any()
     assert not released["segmento"].isin(SEGMENTS).any()
     assert released["faturamento"].abs().max() < 1_000
-    assert not any("original units" in problem for problem in result.protection.problems)
-    assert result.protection.level is ProtectionLevel.AT_RISK
-    assert any("two true values" in problem for problem in result.protection.problems)
-    assert result.protection.caveats == []
+    assert result.protection.problems == []
+    assert result.protection.level is ProtectionLevel.ANONYMIZED
 
     # The monthly pattern of every store survives: same rank order over time.
     original_monthly = mall.groupby("month")["faturamento"].sum()

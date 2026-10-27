@@ -71,7 +71,7 @@ The other categories:
 | marital status | `keep` | `keep` | `keep` | `keep` |
 | business segment | `scramble_categories`, segments under 3 rows merged | under 5 | under 3 | under 5 |
 | floor area | quartile bands | quartile bands | quartile bands | quartile bands |
-| business revenue, rent | `normalize` robust | `normalize` robust | `normalize` robust | `normalize` robust |
+| business revenue, rent | `normalize` robust | `normalize` robust | `normalize` index by entity (rank without one) | `normalize` index by entity (rank without one) |
 
 Any other sensitive categorical column is kept with statistical fidelity and gets
 `randomized_response` with privacy fidelity.
@@ -106,7 +106,10 @@ The checks follow the three criteria of the EDPB Guidelines 02/2026 on anonymisa
 | `pseudonymized` | Identifiers replaced, but a linking technique lets the key holder re-link them |
 | `identifiable` | A direct identifier was left as it was. This is checked on the data: more than 1% of a direct identifier's values surviving unchanged counts, whatever the technique. For `redact_entities`, any text that still holds a recognisable document, email or phone counts |
 
-A column rescaled only by shift and scale (`normalize` without `allow_shape_change`) is a problem under anonymization, not a caveat: two known values, or one known value plus a true total, undo the scale. Group by the entity with `allow_shape_change`, or use `rank`.
+A column rescaled only by shift and scale (`normalize` with `robust`, `zscore` or `minmax`
+and no `by`, whatever `allow_shape_change` says) is a problem under anonymization, not a
+caveat: two known values, or one known value plus a true total, undo the scale. Group by the
+entity with `allow_shape_change`, or use `rank`.
 
 The `anonymized` level also comes with caveats, because these checks are necessary but
 not sufficient:

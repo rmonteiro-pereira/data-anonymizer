@@ -288,6 +288,8 @@ def _action_for(
         params["by"] = entity_column
     if rule.technique == "scramble_categories" and "min_entities" in params:
         _count_entities_or_drop(params, entity_column)
+    if rule.technique == "normalize" and protection is Protection.ANONYMIZATION:
+        _scale_without_inversion(params, entity_column)
 
     reason = f"{finding.category.value} ({finding.sensitivity.value})"
     if rule.note:
@@ -300,6 +302,17 @@ def _action_for(
         params=params,
         reason=reason,
     )
+
+
+def _scale_without_inversion(params: dict[str, Any], entity_column: str | None) -> None:
+    # One shift and scale for the whole column falls to one known value plus a public total.
+    # Each entity against its own mean keeps its seasonality; without an entity, keep the order.
+    params["allow_shape_change"] = True
+    if entity_column is None:
+        params["method"] = "rank"
+        return
+    params["method"] = "index"
+    params["by"] = entity_column
 
 
 def _count_entities_or_drop(params: dict[str, Any], entity_column: str | None) -> None:

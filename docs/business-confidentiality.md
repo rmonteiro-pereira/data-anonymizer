@@ -45,12 +45,12 @@ the default `anonymization` target the proposal is:
 | Store name | `scramble_categories` (`ORG-…`) | An opaque code per store. All rows of one store keep the same code, so its behaviour over time can still be modelled |
 | Segment | `scramble_categories` (`SEG-…`) | Opaque codes in random order. Segments with fewer than 3 rows or 3 stores (5 with `--fidelity privacy`) are merged into `SEG-OTHER`. If `SEG-OTHER` itself falls short of that minimum, the smallest remaining segments join it until it reaches it; if all segments together are too few, the column is blanked. A segment with fewer than 3 contributors is also flagged by the dominance check while values keep their units |
 | Floor area | `bin_numeric`, quartiles | Size bands instead of square metres |
-| Revenue, rent | `normalize`, `robust` | (value − median) / interquartile range. No reais are left; the ranking, the seasonality and the shape of the distribution are kept |
+| Revenue, rent | `normalize`, `index` by store | Each value / that store's own mean × 100. No reais are left and no single known value plus a total undoes it; each store's seasonality, spikes and trends are kept. Without a store column the proposal uses `rank` instead. Under pseudonymization the proposal keeps `robust` |
 | Dates | `date_shift` by store | Every row of one store moves by the same number of days, so its monthly pattern stays intact |
 
-The anchor tenant can still be the biggest store in the release. That is the point:
-its relative size is part of the behaviour to model. What it no longer shows is how
-much it sells.
+Every store averages 100, so the release no longer shows which store is biggest or how much
+any store sells. To let the provider compare store sizes, switch to `robust` in the plan and
+accept the limit described under "What remains" below.
 
 ## The magnitude check
 
@@ -80,9 +80,8 @@ level: at_risk
   90% of the total (dominance); normalize it or merge segments
 ```
 
-The default plan for the same table is `at_risk` under anonymization: it rescales revenue and
-rent with `robust`, and the report flags a plain shift and scale as a problem, described below.
-Under pseudonymization it stays a caveat.
+The default plan for the same table indexes revenue and rent per store and reaches
+`anonymized`.
 
 ## Small `OTHER` segments and collusion
 
@@ -97,7 +96,7 @@ segment might collude or one of them is publicly known.
 ## What remains, and the stronger options
 
 `robust`, `zscore` and `minmax` are shifts and scales. They keep the distribution's
-shape, which is why they are the default. Their known limit: anyone who knows the
+shape, which is why they are the pseudonymization default. Their known limit: anyone who knows the
 true value of **two** records can solve for the shift and scale and convert the
 whole column back. A tenant knows its own figures, so two tenants together can
 undo the rescaling. **One** known value is enough when the true column total is also
@@ -105,12 +104,13 @@ known, such as a mall's published annual sales: the total fixes the second equat
 Each column gets its own shift and scale, so undoing revenue does not undo rent, but
 once both are undone the ratio of rent to sales, and with it the percentage-of-sales
 clause, can be read per store. Under anonymization the protection report therefore lists any
-`normalize` without `allow_shape_change` as a problem and the level is `at_risk`; the text names
+`normalize` with one of these methods and no `by` as a problem and the level is `at_risk`, even
+with `allow_shape_change`, which only permits a shape change; the text names
 the inversion (two known values, or one known value plus a true total) and the fix. Under
 pseudonymization it remains a caveat.
 
-To remove the risk entirely, rescale each store against itself. Every method that
-does this changes the distribution's shape, so it needs `allow_shape_change`:
+The anonymization default removes the risk by rescaling each store against itself. Every
+method that does this changes the distribution's shape, so it needs `allow_shape_change`:
 
 ```json
 {
@@ -127,8 +127,9 @@ does this changes the distribution's shape, so it needs `allow_shape_change`:
 | `rank` | percentile rank, 0 to 1 | Order | Distances between stores |
 | `log_ratio` | log(value / geometric mean) | Ratios between stores | Additive structure; values must be positive |
 
-Choose `index` by store when the provider models behaviour over time. Keep the
-default `robust` when the provider also needs to compare stores of different sizes.
+`index` by store, the default, suits a provider who models behaviour over time. Choose
+`robust` when the provider also needs to compare stores of different sizes, and accept that
+the release is then `at_risk`.
 
 ## Checklist before sending the file
 

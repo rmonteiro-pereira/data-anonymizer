@@ -15,10 +15,11 @@ import narwhals as nw
 
 from data_anonymizer.table import Table
 from data_anonymizer.techniques.context import TechniqueContext
-from data_anonymizer.techniques.numeric_expressions import as_number, per_group
+from data_anonymizer.techniques.numeric_expressions import as_number, per_group, round_half_away
 
 SHAPE_KEEPING_METHODS = ("robust", "zscore", "minmax")
 _SHAPE_CHANGING_METHODS = ("index", "rank", "log_ratio", "growth")
+_INDEX_DECIMALS = 6
 
 
 def normalize(
@@ -94,7 +95,9 @@ def _rescale(values: nw.Expr, method: str, group: str | None) -> nw.Expr:
         lowest = within(values.min())
         return (values - lowest) / _nonzero(within(values.max()) - lowest)
     if method == "index":
-        return values / within(values.mean()) * 100
+        # Float division turns a flat series into 100 and 100.00000000000001; the last digits
+        # carry no meaning, and they would make equal values look different.
+        return round_half_away(values / within(values.mean()) * 100, _INDEX_DECIMALS)
     if method == "rank":
         return within(values.rank("average")) / within(values.count())
     return values.log() - within(values.log().mean())

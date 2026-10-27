@@ -59,8 +59,12 @@ def assess_privacy(
             share_below_target=0.0,
         )
 
-    # A sensitive column released entirely blank cannot be inferred, so it is not scored.
-    scored = [attribute for attribute, present in counts.items() if attribute != _ROWS and present]
+    # A sensitive column released blank, or with one value for everyone, teaches an attacker
+    # nothing about any one person, so it is not scored. A column indexed per entity is all 100
+    # when every entity's value is flat.
+    scored = [
+        attribute for attribute, distinct in counts.items() if attribute != _ROWS and distinct >= 2
+    ]
     groups = working.group_by(columns).agg(
         nw.len().alias(GROUP_SIZE),
         *[distinct_present(attribute).alias(attribute) for attribute in scored],
@@ -95,7 +99,7 @@ def _counts(frame: WorkingFrame, attributes: Sequence[str]) -> dict[str, int]:
     row = first_row(
         frame.select(
             nw.len().alias(_ROWS),
-            *[nw.col(attribute).count().alias(attribute) for attribute in attributes],
+            *[distinct_present(attribute).alias(attribute) for attribute in attributes],
         )
     )
     return {name: int(value) for name, value in row.items()}

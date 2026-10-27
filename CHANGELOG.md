@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Under anonymization, `propose` indexes business revenue and rent per entity
+  (`normalize`, `method: index`, `by` the entity) instead of `robust`, or uses `rank` when no
+  entity column is found, so the default mall release reaches `anonymized`. `index` rounds to 6
+  decimals, and l-diversity skips a sensitive column with a single released value.
 - `normalize` with `robust`, `zscore` or `minmax` and no `by` is reported as a shift and scale
   under anonymization even with `allow_shape_change`, since that flag only permits a shape
   change. `docs/protection.md` gains "What the checks cannot catch": small or multi-column
