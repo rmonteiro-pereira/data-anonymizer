@@ -71,6 +71,7 @@ def _generalize(
         return MondrianOutcome(frame, 0, [])
 
     combinations = distinct_rows(frame, columns)
+    row_counts = combinations.get_column("count").to_list()
     dimensions = [
         GeneralizedColumn(
             name,
@@ -78,6 +79,8 @@ def _generalize(
             combinations.get_column(name).to_list(),
             hierarchy=hierarchies.get(name),
             style=style,
+            row_counts=row_counts,
+            rare_below=k,
         )
         for name in columns
     ]

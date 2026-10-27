@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Mondrian does not name rare categories.** A category held by fewer than `k_target` rows in
+  the table reads `other` inside a released set instead of showing its name.
 - **`apply_many` checks the join.** Anonymized tables that release the same column with
   consistent codes are joined and checked for k-anonymity and inference over entities. A join that
   singles out an entity makes every table of it `at_risk`, naming the other table and the link.

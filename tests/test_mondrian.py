@@ -153,11 +153,13 @@ def test_dates_are_written_as_the_cuts_that_bound_their_group():
 
 
 def test_categories_become_the_set_of_their_group():
-    frame = pd.DataFrame({"state": ["SP"] * 3 + ["RJ"] * 3 + ["BA"] * 2})
+    frame = pd.DataFrame(
+        {"age": [20] * 4 + [60] * 4, "state": ["SP", "SP", "RJ", "RJ"] * 2},
+    )
 
-    outcome = enforce_k_anonymity_by_mondrian(frame, ["state"], 4)
+    outcome = enforce_k_anonymity_by_mondrian(frame, ["age", "state"], 4)
 
-    assert set(outcome.data["state"]) == {"{BA, RJ, SP}"}
+    assert set(outcome.data["state"]) == {"{RJ, SP}"}
 
 
 def test_categories_become_their_closest_common_ancestor_with_a_hierarchy():
