@@ -49,7 +49,8 @@ def _infer_column(
     fake_category = _fake_category(finding)
 
     if fake_category is not None:
-        unique = len(present) > 1 and present.nunique() == len(present)
+        can_be_unique = finding.kind not in (ColumnKind.BOOLEAN, ColumnKind.DATETIME)
+        unique = can_be_unique and len(present) > 1 and present.nunique() == len(present)
         return ColumnSchema(kind=finding.kind, category=fake_category, unique=unique, **common)
     if finding.kind in NUMERIC_KINDS:
         return _numeric_column(finding, present, common)

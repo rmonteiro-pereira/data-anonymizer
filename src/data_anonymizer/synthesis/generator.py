@@ -5,11 +5,16 @@ One table is built in four steps:
    Gaussian copula where the schema fixes correlations;
 2. in dependency order, turn them into values, compute formulas, apply conditional
    overrides and plant outliers;
-3. blank cells at each column's null fraction;
-4. when the schema has constraints, drop the rows that break one and draw more.
+3. when the schema has constraints, drop the rows that break one, and the rows that repeat
+   a unique key, and draw more until enough rows are kept;
+4. blank cells at each column's null fraction.
+
+Constraints see the table before cells are blanked, so a null never removes a row.
 """
 
+import math
 from collections.abc import Callable
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -29,15 +34,23 @@ from data_anonymizer.synthesis.patterns import (
     plant_outliers,
 )
 from data_anonymizer.synthesis.schema import DRAWN_KINDS, ColumnSchema, DatasetSchema
+from data_anonymizer.synthesis.unique_values import (
+    template_values,
+    unique_integer_capacity,
+    unique_integers,
+)
 from data_anonymizer.taxonomy import ColumnKind, DataCategory
-
-_UPPERCASE = np.array(list("ABCDEFGHIJKLMNOPQRSTUVWXYZ"))
 
 # Uniform values are kept away from 0 and 1, where some inverse functions are infinite.
 _EDGE = 1e-9
 
-# How many extra batches constraint filtering may draw before giving up.
-_CONSTRAINT_ATTEMPTS = 25
+# Constraint filtering draws batches sized from the share of rows that passed so far. It
+# gives up after drawing this many rows per requested row, within the two bounds below.
+_DRAWS_PER_REQUESTED_ROW = 200
+_MIN_DRAW_BUDGET = 2_000_000
+_MAX_DRAW_BUDGET = 20_000_000
+_MIN_BATCH_ROWS = 16
+_MAX_BATCH_ROWS = 250_000
 
 TableDraw = Callable[[int], pd.DataFrame]
 
@@ -54,7 +67,7 @@ def generate_from_schema(
     def draw_table(count: int) -> pd.DataFrame:
         return _draw_table(schema, count, rng, surrogates, learned=None)
 
-    return _with_constraints(schema, rows, draw_table, rng, surrogates)
+    return _build_table(schema, rows, draw_table, rng)
 
 
 def generate_from_reference(
@@ -85,7 +98,7 @@ def generate_from_reference(
         learned = copula.sample(count, rng) if copula is not None else None
         return _draw_table(schema, count, rng, surrogates, learned=learned)
 
-    return _with_constraints(schema, rows, draw_table, rng, surrogates)
+    return _build_table(schema, rows, draw_table, rng)
 
 
 def _learnable(column: ColumnSchema, reference: pd.DataFrame) -> bool:
@@ -133,10 +146,7 @@ def _draw_table(
         values = apply_conditions(column, values, frame, uniform, regenerate)
         frame[name] = plant_outliers(column, values, rng).to_numpy()
 
-    gapped = {
-        column.name: apply_gaps(column, frame[column.name], frame, rng) for column in schema.columns
-    }
-    return pd.DataFrame(gapped)
+    return frame
 
 
 def _uniforms(schema: DatasetSchema, rows: int, rng: np.random.Generator) -> dict[str, np.ndarray]:
@@ -172,83 +182,95 @@ def _undrawn_values(
     if column.category is not None and column.kind in (ColumnKind.TEXT, ColumnKind.CATEGORY):
         return pd.Series(surrogates.many(column.category, rows, rng, unique=column.unique))
     if column.unique and column.kind is ColumnKind.INTEGER:
-        return pd.Series(_unique_integers(column, rows, rng))
+        return pd.Series(unique_integers(column, rows, rng))
     if column.kind in DRAWN_KINDS:
-        return draw(column, rng.random(rows))
+        return _drawn_values(column, rows, rng)
     if column.template is not None:
-        return pd.Series([_fill_template(column.template, rng) for _ in range(rows)])
+        return pd.Series(template_values(column, rows, rng))
     if column.choices:
         return quantile_function(column.model_copy(update={"kind": ColumnKind.CATEGORY}))(
             rng.random(rows)
         )
-    return pd.Series(surrogates.many(DataCategory.GENERIC_TEXT, rows, rng))
+    return pd.Series(surrogates.many(DataCategory.GENERIC_TEXT, rows, rng, unique=column.unique))
 
 
-def _unique_integers(column: ColumnSchema, rows: int, rng: np.random.Generator) -> np.ndarray:
-    lower = 1 if column.minimum is None else int(np.ceil(column.minimum))
-    upper = lower + rows * 10 if column.maximum is None else int(np.floor(column.maximum))
-    available = upper - lower + 1
-    if available < rows:
-        raise SchemaError(
-            f"{column.name}: {rows} unique integers do not fit between {lower} and {upper}"
-        )
-    if available <= rows * 4:
-        return rng.permutation(np.arange(lower, upper + 1))[:rows]
-    # Drawing from a huge range and dropping repeats avoids building the whole range.
-    drawn: set[int] = set()
-    while len(drawn) < rows:
-        batch = rng.integers(lower, upper + 1, size=rows - len(drawn))
-        drawn.update(int(value) for value in batch)
-    return rng.permutation(np.fromiter(drawn, dtype="int64"))
+def _drawn_values(column: ColumnSchema, rows: int, rng: np.random.Generator) -> pd.Series:
+    values = draw(column, rng.random(rows))
+    if column.unique and values.duplicated().any():
+        raise SchemaError(f"{column.name}: this distribution cannot give {rows} unique values")
+    return values
 
 
-def _fill_template(template: str, rng: np.random.Generator) -> str:
-    characters = []
-    for character in template:
-        if character == "#":
-            characters.append(str(rng.integers(0, 10)))
-        elif character == "?":
-            characters.append(str(rng.choice(_UPPERCASE)))
-        else:
-            characters.append(character)
-    return "".join(characters)
-
-
-def _with_constraints(
-    schema: DatasetSchema,
-    rows: int,
-    draw_table: TableDraw,
-    rng: np.random.Generator,
-    surrogates: SurrogateFactory,
+def _build_table(
+    schema: DatasetSchema, rows: int, draw_table: TableDraw, rng: np.random.Generator
 ) -> pd.DataFrame:
+    table = _kept_rows(schema, rows, draw_table)
+    gapped = {
+        column.name: apply_gaps(column, table[column.name], table, rng) for column in schema.columns
+    }
+    return pd.DataFrame(gapped)
+
+
+def _kept_rows(schema: DatasetSchema, rows: int, draw_table: TableDraw) -> pd.DataFrame:
+    """Draw batches until `rows` rows pass every constraint and repeat no unique key."""
     if not schema.constraints:
         return draw_table(rows)
-
+    capacity = _batch_capacity(schema, rows)
+    seen_keys: dict[str, set[Any]] = {
+        column.name: set() for column in schema.columns if column.unique
+    }
+    budget = min(max(_MIN_DRAW_BUDGET, _DRAWS_PER_REQUESTED_ROW * rows), _MAX_DRAW_BUDGET)
     kept: list[pd.DataFrame] = []
     have = 0
-    acceptance = 1.0
-    for _ in range(_CONSTRAINT_ATTEMPTS):
-        needed = rows - have
-        batch = draw_table(max(16, int(needed / max(acceptance, 0.05) * 1.2)))
-        passing = _passes_constraints(schema, batch)
-        acceptance = max(float(passing.mean()), 0.01)
-        kept.append(batch[passing])
-        have += int(passing.sum())
-        if have >= rows:
-            break
-    else:
+    drawn = 0
+    while have < rows and drawn < budget:
+        size = _batch_size(rows - have, have, drawn, capacity)
+        batch = draw_table(size)
+        drawn += size
+        accepted = batch[_passes_constraints(schema, batch)]
+        accepted = _without_repeated_keys(accepted, seen_keys)
+        kept.append(accepted)
+        have += len(accepted)
+    if have < rows:
         raise SchemaError(
-            f"constraints rejected too many rows; only {have} of {rows} passed. "
-            "Check that the constraints can hold together."
+            f"constraints accepted only {have} of {drawn} drawn rows ({have / drawn:.3%}), "
+            f"so {rows} rows could not be found. Check that the constraints can hold together."
         )
+    return pd.concat(kept, ignore_index=True).head(rows)
 
-    result = pd.concat(kept, ignore_index=True).head(rows).reset_index(drop=True)
-    # Batches were drawn separately, so unique keys are drawn again over the final rows.
+
+def _batch_capacity(schema: DatasetSchema, rows: int) -> int:
+    """Return the largest batch that the schema's bounded unique integer keys can fill."""
+    capacity = _MAX_BATCH_ROWS
     for column in schema.columns:
-        if column.unique:
-            values = _undrawn_values(column, rows, rng, surrogates)
-            result[column.name] = apply_gaps(column, values, result, rng).to_numpy()
-    return result
+        keys_that_fit = unique_integer_capacity(column) if column.unique else None
+        if keys_that_fit is None:
+            continue
+        if keys_that_fit < rows:
+            raise SchemaError(
+                f"{column.name}: {rows} unique integers do not fit in a range of {keys_that_fit}"
+            )
+        capacity = min(capacity, keys_that_fit)
+    return capacity
+
+
+def _batch_size(needed: int, have: int, drawn: int, capacity: int) -> int:
+    # The acceptance estimate starts at 1 and is smoothed so that zero passes stay finite.
+    acceptance = 1.0 if drawn == 0 else (have + 1) / (drawn + 2)
+    wanted = math.ceil(needed / acceptance * 1.2)
+    return max(_MIN_BATCH_ROWS, min(wanted, capacity))
+
+
+def _without_repeated_keys(accepted: pd.DataFrame, seen_keys: dict[str, set[Any]]) -> pd.DataFrame:
+    """Drop rows that repeat a unique key already kept, and remember the keys that stay."""
+    keep = np.ones(len(accepted), dtype=bool)
+    for name, seen in seen_keys.items():
+        keep &= ~accepted[name].duplicated().to_numpy()
+        keep &= ~accepted[name].isin(seen).to_numpy()
+    unique_rows = accepted[keep]
+    for name, seen in seen_keys.items():
+        seen.update(unique_rows[name])
+    return unique_rows
 
 
 def _passes_constraints(schema: DatasetSchema, frame: pd.DataFrame) -> np.ndarray:

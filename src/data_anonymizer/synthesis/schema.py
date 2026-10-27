@@ -193,9 +193,21 @@ class ColumnSchema(BaseModel):
             raise ValueError(f"{self.name}: minimum is greater than maximum")
         if self.start is not None and self.end is not None and self.start > self.end:
             raise ValueError(f"{self.name}: start is after end")
+        self._check_unique_is_possible()
         for override in self.conditions:
             self.with_override(override)
         return self
+
+    def _check_unique_is_possible(self) -> None:
+        if not self.unique:
+            return
+        # Booleans and dates have no room for many distinct values, and a list of choices
+        # runs out. Keys, fake values, templates and numbers can make fresh ones.
+        if self.kind in (ColumnKind.BOOLEAN, ColumnKind.DATETIME) or self.choices:
+            raise ValueError(
+                f"{self.name}: unique is not possible for {self.kind.value} columns or "
+                "columns with choices; use an integer key, a fake-value category or a template"
+            )
 
 
 class Correlation(BaseModel):

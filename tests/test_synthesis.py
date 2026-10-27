@@ -161,3 +161,90 @@ def test_regression_challenge_optimum_matches_the_planted_noise():
     assert key["best_achievable"]["rmse"] == pytest.approx(0.5, rel=0.08)
     assert key["features"]["true_drivers"] == ["x"]
     assert key["features"]["distractors"] == ["noise_col"]
+
+
+def test_constraints_do_not_remove_the_requested_nulls():
+    schema = DatasetSchema(
+        columns=[
+            ColumnSchema(name="start", kind=ColumnKind.FLOAT, minimum=0, maximum=100),
+            ColumnSchema(
+                name="end", kind=ColumnKind.FLOAT, minimum=0, maximum=100, null_fraction=0.2
+            ),
+        ],
+        constraints=["end >= start", "end > -5"],
+    )
+
+    frame = Anonymizer(seed=2).synthesize(5000, schema=schema)
+    present = frame[frame["end"].notna()]
+
+    assert len(frame) == 5000
+    assert frame["end"].isna().mean() == pytest.approx(0.2, abs=0.03)
+    assert (present["end"] >= present["start"]).all()
+
+
+def test_unique_keys_stay_consistent_with_constraints_and_formulas():
+    schema = DatasetSchema(
+        columns=[
+            ColumnSchema(name="id", kind=ColumnKind.INTEGER, minimum=1, maximum=40000, unique=True),
+            ColumnSchema(name="twice", kind=ColumnKind.INTEGER, formula="id * 2"),
+            ColumnSchema(name="v", kind=ColumnKind.FLOAT, mean=0, std=1),
+        ],
+        constraints=["v > 0", "id > 30000"],
+    )
+
+    frame = Anonymizer(seed=3).synthesize(3000, schema=schema)
+
+    assert len(frame) == 3000
+    assert frame["id"].is_unique
+    assert (frame["id"] > 30000).all()
+    assert (frame["twice"] == 2 * frame["id"]).all()
+    assert (frame["v"] > 0).all()
+
+
+def test_constraints_with_about_one_percent_acceptance_succeed():
+    schema = DatasetSchema(
+        columns=[ColumnSchema(name="a", kind=ColumnKind.FLOAT, mean=0, std=1)],
+        constraints=["a > 2.33"],
+    )
+
+    frame = Anonymizer(seed=4).synthesize(20000, schema=schema)
+
+    assert len(frame) == 20000
+    assert (frame["a"] > 2.33).all()
+
+
+def test_impossible_constraints_report_the_acceptance_rate():
+    schema = DatasetSchema(
+        columns=[ColumnSchema(name="a", kind=ColumnKind.FLOAT, minimum=0, maximum=1)],
+        constraints=["a > 2"],
+    )
+
+    with pytest.raises(SchemaError, match=r"accepted only 0 of \d+ drawn rows \(0\.000%\)"):
+        Anonymizer(seed=4).synthesize(10, schema=schema)
+
+
+def test_a_unique_template_gives_distinct_values_or_fails_clearly():
+    def template_schema() -> DatasetSchema:
+        column = ColumnSchema(name="code", kind=ColumnKind.TEXT, template="ID-###", unique=True)
+        return DatasetSchema(columns=[column])
+
+    full = Anonymizer(seed=5).synthesize(1000, schema=template_schema())["code"]
+    with pytest.raises(SchemaError, match="only 1000 possible values"):
+        Anonymizer(seed=5).synthesize(1001, schema=template_schema())
+
+    assert full.is_unique
+    assert full.str.fullmatch(r"ID-\d{3}").all()
+
+
+@pytest.mark.parametrize(
+    "settings",
+    [
+        {"kind": ColumnKind.BOOLEAN},
+        {"kind": ColumnKind.DATETIME, "start": "2024-01-01", "end": "2024-12-31"},
+        {"kind": ColumnKind.CATEGORY, "choices": ["a", "b", "c"]},
+        {"kind": ColumnKind.TEXT, "choices": ["a", "b"]},
+    ],
+)
+def test_unique_is_rejected_where_it_cannot_be_honoured(settings):
+    with pytest.raises(ValueError, match="unique is not possible"):
+        ColumnSchema(name="x", unique=True, **settings)

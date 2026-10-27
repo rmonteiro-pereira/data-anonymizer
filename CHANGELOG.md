@@ -30,6 +30,11 @@
     nested expressions, and reports evaluation errors as `ExpressionError`;
   - a discrete distribution (Poisson) keeps its `minimum` value when truncated, and the
     end values of an integer column's bounds are as likely as the rest;
+  - constraints are checked before nulls are applied, unique keys are no longer redrawn
+    after filtering, and rules with low acceptance (about 1%) succeed; the error states the
+    acceptance rate;
+  - `unique: true` on a template retries until distinct and fails when the template is too
+    small, and schemas reject it on boolean, datetime and `choices` columns;
   - conditional overrides are validated after merging with the column: a mean and std
     replace a uniform or quantile base shape, and new choices reset the weights;
 - Data-science challenges, from `challenge`: train and test files, plus an answer key

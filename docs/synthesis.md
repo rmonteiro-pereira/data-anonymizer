@@ -25,7 +25,7 @@ synthetic = Anonymizer(seed=1, locale="pt_BR").synthesize(10_000, schema=schema)
 | `category` | `choices`, optional `weights` |
 | `datetime` | `start`, `end` |
 | `text` | `category` for realistic fakes (`email`, `person_name`, `cpf`, `cnpj`, `phone`, ...), a `template` where `#` is a digit and `?` an uppercase letter, or `choices` |
-| any | `null_fraction`, `unique` (fresh unique keys or fakes) |
+| any | `null_fraction`, and `unique` for integer keys, fake-value categories and templates. A unique template with fewer possible values than rows is a `SchemaError`. `unique` is rejected on boolean, datetime and `choices` columns |
 
 | `distribution` | Parameters |
 |---|---|
@@ -118,8 +118,15 @@ makes the target unreachable:
 - `constraints` drop rows afterwards, and a condition can redraw rows with its own settings.
 
 **Constraints.** `constraints` are row rules such as `end_date >= start_date`. Rows that
-break one are dropped and redrawn, and unique keys are drawn again over the final rows.
-Statistics marked `exact` are exact before this filtering, and approximate after it.
+break one are dropped and more rows are drawn.
+- Constraints are checked before `null_fraction` blanks cells, so a null never removes a
+  row and the null share stays as asked.
+- Unique keys are never redrawn. A row that repeats a key already kept is dropped as well,
+  so formulas, conditions and constraints that read a key stay true.
+- Batches are sized from the share of rows that passed so far. Generation stops after about
+  200 draws per requested row, at most 20 million, and the error states the acceptance
+  rate it measured. A rule that holds for 1% of rows is fine.
+- Statistics marked `exact` are exact before this filtering, and approximate after it.
 
 ## From a reference table
 
