@@ -185,6 +185,69 @@ def test_conditions_change_a_segment_and_keep_its_correlation():
     assert pro["age"].corr(pro["spend"], method="spearman") > 0.6
 
 
+def _group_schema(base_settings: dict, override_settings: dict, kind=ColumnKind.FLOAT):
+    return DatasetSchema(
+        columns=[
+            ColumnSchema(name="group", kind=ColumnKind.CATEGORY, choices=["a", "b"]),
+            ColumnSchema(
+                name="value",
+                kind=kind,
+                conditions=[ColumnOverride(when="group == 'b'", **override_settings)],
+                **base_settings,
+            ),
+        ]
+    )
+
+
+def test_a_mean_and_std_override_replaces_a_quantile_base_shape():
+    base = {"quantiles": {0: 0, 0.5: 50, 1: 100}}
+
+    frame = _generate(_group_schema(base, {"mean": 1000, "std": 5}), rows=8000)
+    group_b = frame[frame["group"] == "b"]["value"]
+
+    assert group_b.mean() == pytest.approx(1000, abs=1)
+    assert group_b.std() == pytest.approx(5, rel=0.1)
+
+
+def test_a_mean_and_std_override_replaces_a_uniform_base_shape():
+    base = {"distribution": Distribution.UNIFORM, "minimum": 0, "maximum": 100}
+
+    frame = _generate(_group_schema(base, {"mean": 50, "std": 1}), rows=8000)
+    group_b = frame[frame["group"] == "b"]["value"]
+
+    assert group_b.std() == pytest.approx(1, rel=0.1)
+    assert frame[frame["group"] == "a"]["value"].std() == pytest.approx(28.9, rel=0.1)
+
+
+def test_an_override_of_choices_without_weights_resets_the_weights():
+    base = {"choices": ["x", "y", "z"], "weights": [1, 1, 8]}
+
+    frame = _generate(
+        _group_schema(base, {"choices": ["p", "q"]}, kind=ColumnKind.CATEGORY), rows=8000
+    )
+    shares = frame[frame["group"] == "b"]["value"].value_counts(normalize=True)
+
+    assert shares["p"] == pytest.approx(0.5, abs=0.04)
+
+
+@pytest.mark.parametrize(
+    ("override", "message"),
+    [
+        ({"choices": ["p", "q"], "weights": [1, 2, 3]}, "one entry per choice"),
+        ({"minimum": 10, "maximum": 1}, "minimum is greater than maximum"),
+        ({"std": 3}, "needs both mean and std"),
+    ],
+)
+def test_overrides_are_validated_after_merging_with_the_column(override, message):
+    base = {"quantiles": {0: 0, 1: 100}}
+    kind = ColumnKind.CATEGORY if "choices" in override else ColumnKind.FLOAT
+    if kind is ColumnKind.CATEGORY:
+        base = {"choices": ["x", "y"]}
+
+    with pytest.raises(ValueError, match=message):
+        _group_schema(base, override, kind=kind)
+
+
 def test_formulas_plant_trends_and_seasonality():
     schema = DatasetSchema(
         columns=[

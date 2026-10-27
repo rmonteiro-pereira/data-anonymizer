@@ -58,7 +58,15 @@ dates, booleans and categories.
 
 **Conditional rules.** `conditions` override a column's settings where `when` is true.
 - Any distribution field can change, and so can `null_fraction`.
-- Overridden rows keep their rank in the distribution, so correlations survive.
+- An override is merged with the column and validated as a whole when the schema loads.
+- An override that gives `mean` or `std` and no `distribution` replaces a base `uniform` or
+  `quantiles` shape with a normal one, so it must give both `mean` and `std`.
+- An override that gives `choices` and no `weights` resets the weights to equal shares.
+- Overridden rows keep their rank in the distribution, so the rank order of rows survives
+  inside the overridden group. The correlation over the whole table is lower than the
+  declared value, because the groups sit at different levels: with Spearman 0.6 between
+  `age` and `income`, and `income` raised for 40% of rows, each group still shows about 0.6
+  but the whole table shows about 0.3. Set the correlation higher, or check it per group.
 
 ```json
 {"name": "spend", "kind": "float", "mean": 100, "std": 20,

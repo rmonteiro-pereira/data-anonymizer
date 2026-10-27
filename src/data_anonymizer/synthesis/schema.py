@@ -47,6 +47,10 @@ class Distribution(StrEnum):
     QUANTILES = "quantiles"
 
 
+# Fields of an override that select rows or blank cells rather than change the distribution.
+_NOT_DISTRIBUTION_FIELDS = {"when", "null_fraction"}
+
+
 class ColumnOverride(BaseModel):
     """Different distribution settings for the rows where `when` is true.
 
@@ -144,6 +148,40 @@ class ColumnSchema(BaseModel):
             names |= referenced_columns(override.when)
         return names - {self.name}
 
+    def with_override(self, override: ColumnOverride) -> "ColumnSchema":
+        """Return this column with an override's settings applied, validated as a whole."""
+        changes = {
+            field: value
+            for field, value in override.model_dump().items()
+            if field not in _NOT_DISTRIBUTION_FIELDS and value is not None
+        }
+        resets_shape = self._override_replaces_shape(changes)
+        if resets_shape:
+            # A uniform or quantile shape would ignore the new mean and std.
+            changes.update(distribution=None, quantiles=None)
+        if "quantiles" in changes and "distribution" not in changes:
+            changes["distribution"] = Distribution.QUANTILES
+        if "choices" in changes and "weights" not in changes:
+            # The base weights belong to the base choices.
+            changes["weights"] = None
+        settings = {**self.model_dump(), **changes, "conditions": [], "formula": None}
+        merged = ColumnSchema.model_validate(settings)
+        if resets_shape and (merged.mean is None or merged.std is None):
+            raise ValueError(
+                f"{self.name}: an override of mean or std on a uniform or quantile column "
+                "needs both mean and std"
+            )
+        return merged
+
+    def _override_replaces_shape(self, changes: dict[str, object]) -> bool:
+        sets_spread = "mean" in changes or "std" in changes
+        sets_shape = "distribution" in changes or "quantiles" in changes
+        has_fixed_shape = self.quantiles is not None or self.distribution in (
+            Distribution.UNIFORM,
+            Distribution.QUANTILES,
+        )
+        return sets_spread and not sets_shape and has_fixed_shape
+
     @model_validator(mode="after")
     def _consistent_fields(self) -> "ColumnSchema":
         if self.weights is not None:
@@ -155,6 +193,8 @@ class ColumnSchema(BaseModel):
             raise ValueError(f"{self.name}: minimum is greater than maximum")
         if self.start is not None and self.end is not None and self.start > self.end:
             raise ValueError(f"{self.name}: start is after end")
+        for override in self.conditions:
+            self.with_override(override)
         return self
 
 
