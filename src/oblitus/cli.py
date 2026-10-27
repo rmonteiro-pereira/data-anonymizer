@@ -20,6 +20,7 @@ import polars as pl
 from pydantic import ValidationError
 
 from oblitus.anonymizer import AnonymizationResult, Anonymizer
+from oblitus.chunked_apply import ChunkedResult
 from oblitus.differential_privacy import BudgetReport, PrivacyBudget, Statistic
 from oblitus.entropy_sources import sources_by_name
 from oblitus.errors import AnonymizerError, PlanError, SchemaError
@@ -115,6 +116,13 @@ def _build_parser() -> argparse.ArgumentParser:
         "--attack-risks",
         action="store_true",
         help="also run singling-out, linkability and inference attacks (needs oblitus[anonymeter])",
+    )
+    apply_parser.add_argument(
+        "--chunk-rows",
+        type=int,
+        metavar="N",
+        help="process the file N rows at a time, for files larger than memory; needs --plan "
+        "with a row_key and only per-row techniques",
     )
     _add_row_key(apply_parser)
     _add_vault(apply_parser)
@@ -339,6 +347,9 @@ def _propose(anonymizer: Anonymizer, arguments: argparse.Namespace) -> None:
 
 
 def _apply(anonymizer: Anonymizer, arguments: argparse.Namespace) -> None:
+    if arguments.chunk_rows is not None:
+        _apply_in_chunks(anonymizer, arguments)
+        return
     frame = read_table(arguments.input)
     if arguments.plan is not None:
         plan = AnonymizationPlan.load(arguments.plan)
@@ -355,6 +366,32 @@ def _apply(anonymizer: Anonymizer, arguments: argparse.Namespace) -> None:
         report = json.dumps(_report(result, attacks), indent=2)
         arguments.report.write_text(report + "\n", encoding="utf-8")
     _print_outcome(result, arguments.output)
+    if not result.protection.reached:
+        raise ProtectionNotReachedError(f"the {plan.protection.value} target was not reached")
+
+
+def _apply_in_chunks(anonymizer: Anonymizer, arguments: argparse.Namespace) -> None:
+    if arguments.plan is None:
+        raise PlanError(
+            "--chunk-rows needs a reviewed --plan, because a proposal reads the whole file"
+        )
+    if arguments.attack_risks:
+        raise PlanError("--attack-risks needs the whole table and cannot run with --chunk-rows")
+    plan = _with_row_key(AnonymizationPlan.load(arguments.plan), arguments.row_key)
+    with _open_vault(arguments.vault) as vault:
+        result = anonymizer.apply_file(
+            arguments.input, arguments.output, plan, chunk_rows=arguments.chunk_rows, vault=vault
+        )
+    if arguments.report is not None:
+        report = {"rows": result.rows, "chunks": result.chunks, **_report(result)}
+        arguments.report.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    print(
+        f"wrote {result.rows} rows in {result.chunks} chunks to {arguments.output}; "
+        f"k-anonymity {result.privacy_before.k_anonymity} -> {result.privacy_after.k_anonymity}; "
+        f"result is {result.protection.level.value}"
+    )
+    for problem in result.protection.problems:
+        print(f"  - {problem}")
     if not result.protection.reached:
         raise ProtectionNotReachedError(f"the {plan.protection.value} target was not reached")
 
@@ -421,7 +458,9 @@ def _as_pandas(table) -> pd.DataFrame:
     return table if isinstance(table, pd.DataFrame) else table.to_pandas()
 
 
-def _report(result: AnonymizationResult, attacks: AttackRiskReport | None = None) -> dict:
+def _report(
+    result: AnonymizationResult | ChunkedResult, attacks: AttackRiskReport | None = None
+) -> dict:
     report = {
         "plan": result.plan.model_dump(mode="json"),
         "privacy_before": asdict(result.privacy_before),

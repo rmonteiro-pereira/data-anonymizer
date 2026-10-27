@@ -4,7 +4,7 @@ This document is the map of the code. Read it before your first change.
 
 ## Bird's-eye view
 
-A pandas, Polars or DuckDB table comes in, and the main path runs in four steps:
+A pandas, Polars, DuckDB or Spark table comes in, and the main path runs in four steps:
 1. The detector classifies each column.
 2. The proposal turns the findings into an editable plan, for a protection target
    (pseudonymization or anonymization) and a fidelity (statistical or privacy).
@@ -39,7 +39,7 @@ flowchart LR
   keyholder["Key holder<br/>(person who may re-link or decrypt)"]
   system["oblitus<br/>(Python library and CLI)"]
   files[("Files<br/>CSV and Parquet")]
-  frames[("In-memory and DuckDB tables<br/>pandas, Polars, DuckDB")]
+  frames[("In-memory, DuckDB and Spark tables<br/>pandas, Polars, DuckDB, Spark")]
   browser["Web browser<br/>(opens the explorer page)"]
 
   owner -->|"scans, plans, applies, synthesizes"| system
@@ -87,7 +87,8 @@ flowchart TB
   files, reports and challenge folders, and prints results. The library never reads
   environment variables.
 - On a DuckDB relation the library builds lazy queries on the user's own connection, so a
-  large table stays in DuckDB until the result is collected.
+  large table stays in DuckDB until the result is collected. A Spark DataFrame is handled the
+  same way, on the user's own Spark session.
 
 ### Level 3: components of the library
 
@@ -97,7 +98,7 @@ flowchart LR
   detection["detection/<br/>column categories"]
   proposal["proposal.py and untreated_columns.py<br/>the plan"]
   techniques["techniques/<br/>one expression per column"]
-  table["table.py and engines.py<br/>pandas, Polars, DuckDB"]
+  table["table.py and engines.py<br/>pandas, Polars, DuckDB, Spark"]
   suppression["anonymity_enforcement.py, local_suppression.py,<br/>mondrian.py, diversity_enforcement.py,<br/>joint_microaggregation.py: k-anonymity and l-diversity"]
   protection["protection.py, identifying_columns.py,<br/>evaluation/: the checks"]
   synthesis["synthesis/<br/>schemas, generation, challenges"]
@@ -124,7 +125,7 @@ The code map below names every module and what must not live in it.
 | `taxonomy.py` | `ColumnKind`, `DataCategory`, `Sensitivity` and the category-to-sensitivity table | Logic that looks at data |
 | `detection/` | `checksums.py` (check-digit and structure rules per identifier), `patterns.py` (recognizers: pattern, checksum, strong-check, free-text and name-hint flags), `column_names.py` (name hints, qualifier words and negative hints, EN/PT), `missing_values.py` (placeholder text that counts as missing), `value_evidence.py` (scores every recognizer on a sample and picks the best fit, flagging ties and mixed columns), `person_names.py` (do values look like names), `text_normalization.py` (NFKC, hidden characters, look-alikes and `[at]` undone, with the original position of each character), `text_entities.py` (personal data inside text, found on the normalized copy and mapped back, for redaction and the residue check), `free_text.py` (prose that embeds personal data), `kinds.py` (storage kind of a column and which kinds can hold a category), `detector.py` (`scan`, `ColumnFinding`, fallbacks) | Decisions about what to do with a column |
 | `table.py` | `Table`: the table a plan is applied to, on any engine. Techniques read and replace columns through it: statistics, distinct values, keyed uniforms per row or entity, lookups of values computed in Python, reordering values, and each column's original values | Engine-specific code |
-| `engines.py` | Everything that differs between pandas, Polars and DuckDB: converting frames in and out, keyed uniforms from SHA-256 (Python or DuckDB SQL), and lookup tables built on the data's own connection | Technique logic |
+| `engines.py` | Everything that differs between pandas, Polars, DuckDB and Spark: converting frames in and out, keyed uniforms from SHA-256 (Python, DuckDB SQL or Spark `sha2`), and lookup tables built on the data's own connection or session | Technique logic |
 | `surrogates.py` | `SurrogateFactory`: realistic fake values per category, seeded for consistency | Anything about plans |
 | `techniques/` | One module per family (`masking`, `pseudonymization`, `encryption`, `generalization`, `rescaling`, `noise`, `perturbation`). Each technique is `(table, column, context, **params) -> Narwhals expression`, so one implementation runs on every engine. `ff1.py` is the FF1 cipher that `encryption` uses. `numeric_expressions.py` and `date_expressions.py` hold shared expression pieces (Box–Muller and Laplace noise, integer round-trips, day shifts). `tokenization.py` swaps values for random tokens kept in a vault. `value_mapping.py` runs a Python text transform per distinct value or per row and joins the results back. `catalogue.py` registers every technique as a `Technique`, with an `inverse` for reversible ones. `context.py` holds the secret key, the optional token vault, the randomness key with one derived key per column and purpose, HKDF key derivation and fakers | Table-level logic; techniques see one column |
 | `token_vault.py` | `TokenVault` (the interface tokenization needs), `MemoryVault`, and `SqliteVault`, a SQLite file created readable by its owner only. The caller passes a vault to `apply` and `reveal`; a plan never holds one | Choosing tokens; techniques decide that |
@@ -143,13 +144,14 @@ The code map below names every module and what must not live in it.
 | `diversity_enforcement.py` | `enforce_l_diversity`: blanks groups with too few sensitive values and merges them, on the whole table in its engine | Measuring privacy |
 | `group_rewrite.py` | `distinct_rows` and `overwrite_by_key`: the distinct combinations of columns with their counts, and new values written back to the rows that match a key, on the table's engine | Deciding what the new values are |
 | `local_suppression.py` | `enforce_k_anonymity`: blanks quasi-identifiers in rows of small groups, and the smallest complete group when blank rows stay below k, on the whole table in its engine | Measuring privacy |
-| `evaluation/` | `privacy.py` (k-anonymity, l-diversity, t-closeness, on the whole table), `attacks.py` (Anonymeter singling-out, linkability and inference attacks, behind the optional `anonymeter` extra), `aligned_sample.py` (the same at most 200,000 rows of the original and released table, as pandas, for the checks below), `utility.py` (mean/std change, KS, total variation, correlation change), `disclosure.py` (record linkage, joint linkage over several columns, interval disclosure and per-record shift for a noisy column), `dominance.py` (whether a released number still reveals a segment's dominant contributor) | Changing data |
+| `evaluation/` | `privacy.py` (k-anonymity, l-diversity, t-closeness, on the whole table), `attacks.py` (Anonymeter singling-out, linkability and inference attacks, behind the optional `anonymeter` extra), `aligned_sample.py` (the same at most 200,000 rows of the original and released table, as pandas, for the checks below; `SampleAccumulator` builds it from chunks), `utility.py` (mean/std change, KS, total variation, correlation change), `disclosure.py` (record linkage, joint linkage over several columns, interval disclosure and per-record shift for a noisy column), `dominance.py` (whether a released number still reveals a segment's dominant contributor) | Changing data |
 | `noise_explorer/` | `sweep.py` (runs noise techniques at increasing strengths and measures each), `page.py` and `template.html` (the self-contained interactive page) | Noise algorithms; they come from `techniques/` |
 | `synthesis/` | `schema.py` (`DatasetSchema`, columns, overrides, correlations, constraints, `Question`), `expressions.py` (the safe expression language), `marginals.py` (inverse distribution functions), `patterns.py` (conditions, formulas, outliers, exact statistics, gaps), `generator.py` (the four-step build and constraint filtering), `column_values.py` (the values of one column: uniforms, draw or formula, conditions, outliers), `panel.py` (a panel's settings, row layout, column levels and lags of a finished table), `panel_generation.py` (builds a panel period by period), `time_series.py` (the `time_series` section of an answer key), `draw_replay.py` (the uniform numbers behind every row, stored with it so a build can be replayed), `causal_graph.py` (the graph a schema declares, column roles and back-door adjustment sets), `interventions.py` (`do(treatment = value)` by replaying the stored numbers), `treatment_effects.py` (the `causal` section of an answer key), `unique_values.py` (unique integer keys and templates), `copula.py` (Gaussian copula learned from a reference, optionally per level), `latent_correlation.py` (correlation of the hidden normal variables behind categories and numbers), `inference.py` (schema from a table), `rare_values.py` (merges rare categories and pulls in extreme numbers so one record cannot reappear), `challenge.py` (train/test split, answer key and leakage flags), `drift.py` (shifted test rows and drift kind), `label_noise.py` (flipped or perturbed labels), `logistic_calibration.py` (shifts probabilities on the log-odds scale to a mean), `class_balance.py` (a question's positive share and the imbalance section of the key), `missingness.py` (MAR and MNAR blank cells and the key's account of them), `difficulty.py` (easy, medium and hard as concrete settings), `relational.py` (a schema of tables joined by foreign keys, child counts and aggregates), `relational_generation.py` (builds the tables parent first), `relational_challenge.py` (a challenge whose target is in the root table), `question_text.py` (the participants' task description, written without the answer key) | Detection rules; it calls `detection.scan` |
 | `key_generation.py`, `entropy_sources.py` | `generate_key`: mixes `os.urandom` (always) with extra entropy sources through HKDF, health-checks physical samples and reports each source. `entropy_sources.py` holds the built-in readers (hardware RNG, microphone, camera, CPU jitter, beacons) | Anything about plans or techniques |
 | `differential_privacy/` | `budget.py` (`PrivacyBudget`, `Spend`, `compose_budget`: the one place where epsilon and zCDP rho are added and a budget is refused), `domains.py` (public column domains: listed values or bounds and bins, to codes and back), `aggregates.py` (noisy counts, sums and means per group with OpenDP, imported lazily), `mst_synthesis.py` (MST: noisy one-way counts, exponential-mechanism tree, noisy pair counts), `tree_model.py` (consistent non-negative tree and row sampling from noisy counts) | Bounds or domains read from the data; reading tables from files |
-| `anonymizer.py` | `Anonymizer`, the facade that wires the above together (`scan`, `propose`, `apply`, `apply_many`, `reveal`, `synthesize`, `synthesize_tables`, `synthesize_private`, `aggregate_private`, `challenge`), and `AnonymizationResult` | Rules; it only orchestrates |
-| `table_files.py` | Read and write CSV or Parquet by extension, with Polars | Anything else |
+| `anonymizer.py` | `Anonymizer`, the facade that wires the above together (`scan`, `propose`, `apply`, `apply_file`, `apply_many`, `reveal`, `synthesize`, `synthesize_tables`, `synthesize_private`, `aggregate_private`, `challenge`), and `AnonymizationResult` | Rules; it only orchestrates |
+| `table_files.py` | Read and write CSV or Parquet by extension, with Polars; read a file in chunks, write one chunk at a time, and scan a file lazily | Anything else |
+| `chunked_apply.py` | `apply_in_chunks`: runs a plan on a file chunk by chunk, refuses what needs the whole column (`chunk_blockers`), and measures the written file lazily. `Anonymizer.apply_file` calls it | Techniques; it receives the per-chunk release as a function |
 | `cli.py` | The `oblitus` command; reads `OBLITUS_SECRET_KEY` | Logic beyond parsing arguments and printing |
 
 ## Data flow
@@ -217,7 +219,7 @@ flowchart LR
 |---|---|
 | What the proposal suggests for a category | `_ATTRIBUTE_RULES` and `_ANONYMIZATION_RULES` in `proposal.py`; direct identifiers in `_direct_identifier_rule` |
 | A new kind of personal data | `DataCategory` in `taxonomy.py`; a check in `detection/checksums.py` and a recognizer in `detection/patterns.py`, or a hint in `detection/column_names.py`; a generator in `surrogates.py` if fakes are needed; `docs/detection.md` |
-| A new technique | a function in the matching `techniques/<family>.py` and a `Technique` entry in `techniques/catalogue.py` (`inverse=` when reversible, `linkable=True` when its output can be tied back to a person); `docs/techniques.md` |
+| A new technique | a function in the matching `techniques/<family>.py` and a `Technique` entry in `techniques/catalogue.py` (`inverse=` when reversible, `linkable=True` when its output can be tied back to a person, `whole_column_reason=` when it reads the whole column and so cannot run in chunks); `docs/techniques.md` |
 | A way to enforce k-anonymity or l-diversity | a module beside `mondrian.py`, chosen in `anonymity_enforcement.py` and a `KAnonymityMethod` value in `plan.py`; `docs/protection.md` |
 | A protection check | `protection.py` and `docs/protection.md` |
 | A privacy, utility or disclosure metric | `evaluation/` |

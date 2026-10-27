@@ -31,6 +31,43 @@ class AlignedSample:
     released: pd.DataFrame
 
 
+class SampleAccumulator:
+    """Builds the aligned sample of a table that arrives in chunks, in bounded memory.
+
+    Each chunk adds its original and released rows. Only the rows with the smallest keyed
+    draws so far are kept, which are the rows `align_sample` would pick from the whole table,
+    so a chunked run compares the same rows as an in-memory run.
+    """
+
+    def __init__(self, key: bytes, max_rows: int = MAX_SAMPLE_ROWS) -> None:
+        self._key = key
+        self._max_rows = max_rows
+        self._original: nw.DataFrame[Any] | None = None
+        self._released: nw.DataFrame[Any] | None = None
+
+    def add(self, original: "nw.DataFrame[Any]", released: "nw.DataFrame[Any]") -> None:
+        """Add the rows of one chunk; both frames carry `ROW_KEY_COLUMN`, in the same order."""
+        if self._original is None or self._released is None:
+            candidates = (original, released)
+        else:
+            candidates = (
+                nw.concat([self._original, original], how="vertical"),
+                nw.concat([self._released, released], how="vertical"),
+            )
+        self._original, self._released = _in_memory_sample(
+            *candidates, Engine.POLARS, self._key, self._max_rows
+        )
+
+    def result(self) -> AlignedSample:
+        """The rows kept, in the order they arrived, as pandas."""
+        if self._original is None or self._released is None:
+            raise ValueError("no chunk was added")
+        return AlignedSample(
+            original=self._original.drop(ROW_KEY_COLUMN).to_pandas(),
+            released=self._released.drop(ROW_KEY_COLUMN).to_pandas(),
+        )
+
+
 def align_sample(
     original: WorkingFrame,
     released: WorkingFrame,

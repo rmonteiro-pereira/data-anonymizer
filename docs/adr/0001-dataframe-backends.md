@@ -29,7 +29,7 @@ DuckDB 2.0 also breaks Narwhals joins; DuckDB 1.4 works.
 
 1. **Narwhals at the public edges.** `Anonymizer.scan`, `propose`, `validate`, `apply`
    and `reveal` accept a pandas, Polars or DuckDB frame, and return the same kind.
-   PySpark follows the same route.
+   PySpark follows the same route (ADR 2).
 2. **Techniques are written as Narwhals expressions**, so one implementation runs on
    every backend. Eager in-memory work runs on Polars.
 3. **Per-distinct-value techniques compute a mapping table and join it back.** The
@@ -50,7 +50,7 @@ DuckDB 2.0 also breaks Narwhals joins; DuckDB 1.4 works.
    - The derived key appears in the SQL a lazy engine runs. Query logs that record it
      must be protected like the data.
    - The hash comes from Python for pandas and Polars, from `sha256` for DuckDB, and
-     will come from `sha2` for Spark.
+     comes from `sha2` for Spark.
 5. **The row key** is a column the plan names (`row_key`), such as a record ID. When
    there is none, in-memory tables use the row position. Lazy tables need the plan to
    name one, because their row order is not fixed.
@@ -62,7 +62,7 @@ DuckDB 2.0 also breaks Narwhals joins; DuckDB 1.4 works.
    whole table.
 7. **Dependencies:** `narwhals`, `polars` and `pyarrow` are required. pandas stays
    required for now, because detection, synthesis and the sampled metrics use it
-   internally. DuckDB (`<2` until Narwhals supports 2.0) is an extra. Spark is planned.
+   internally. DuckDB (`<2` until Narwhals supports 2.0) and PySpark are extras.
 
 ## Consequences
 

@@ -66,6 +66,10 @@ class Technique:
 
     `replaces_identifiers` marks techniques that, applied to a direct identifier,
     leave none of the original value in the output.
+
+    `whole_column_reason` says why a technique cannot run on a file in chunks: it reads the
+    whole column's statistics, distinct values or ranks. `chunkable_with` names the
+    parameters that remove that need, such as fixed limits instead of quantiles.
     """
 
     name: str
@@ -78,6 +82,8 @@ class Technique:
     linkable: bool = False
     unlinking_flag: str | None = None
     replaces_identifiers: bool = False
+    whole_column_reason: str | None = None
+    chunkable_with: Callable[[Mapping[str, Any]], bool] | None = None
 
     @property
     def reversible(self) -> bool:
@@ -100,6 +106,14 @@ class Technique:
             return True
         default = inspect.signature(self.function).parameters[self.unlinking_flag].default
         return bool(params.get(self.unlinking_flag, default))
+
+    def chunk_blocker(self, params: Mapping[str, Any]) -> str | None:
+        """Why the technique cannot run on a file in chunks with these parameters, or None."""
+        if self.whole_column_reason is None:
+            return None
+        if self.chunkable_with is not None and self.chunkable_with(params):
+            return None
+        return self.whole_column_reason
 
     def parameter_names(self) -> list[str]:
         """Return the keyword parameters the technique accepts."""
@@ -143,6 +157,17 @@ def apply_to_series(
     table = Table.from_native(values.rename(name).to_frame())
     technique.apply(table, name, context, params)
     return table.to_native()[name].rename(values.name)
+
+
+def _has_whole_number_width(params: Mapping[str, Any]) -> bool:
+    # Interval edges are then multiples of the width, so a value gets the same label in
+    # every chunk. A fractional width accumulates rounding differently from chunk to chunk.
+    width = params.get("width")
+    return width is not None and float(width).is_integer()
+
+
+def _has_fixed_limits(params: Mapping[str, Any]) -> bool:
+    return params.get("lower") is not None and params.get("upper") is not None
 
 
 _ALL_KINDS = frozenset(ColumnKind)
@@ -232,6 +257,7 @@ _BUILTINS = (
         linkable=True,
         unlinking_flag="consistent",
         replaces_identifiers=True,
+        whole_column_reason="picks fakes that avoid the column's other values",
     ),
     Technique(
         "argon2_hash",
@@ -294,6 +320,7 @@ _BUILTINS = (
         linkable=True,
         unlinking_flag="keyed",
         replaces_identifiers=True,
+        whole_column_reason="assigns codes from the column's distinct values and their counts",
     ),
     Technique(
         "normalize",
@@ -302,6 +329,7 @@ _BUILTINS = (
         _NUMERIC,
         rescaling.normalize,
         "Recentre and rescale to hide level and units; shape kept unless allowed.",
+        whole_column_reason="rescales by the column's mean, spread or range",
     ),
     Technique(
         "bin_numeric",
@@ -310,6 +338,8 @@ _BUILTINS = (
         _NUMERIC,
         generalization.bin_numeric,
         "Replace numbers with interval labels.",
+        whole_column_reason="cuts at the column's quantiles or range",
+        chunkable_with=_has_whole_number_width,
     ),
     Technique(
         "round_numeric",
@@ -351,6 +381,8 @@ _BUILTINS = (
         _NUMERIC,
         generalization.top_bottom_code,
         "Clip outliers to quantile or fixed limits.",
+        whole_column_reason="clips at the column's quantiles",
+        chunkable_with=_has_fixed_limits,
     ),
     Technique(
         "suppress_rare",
@@ -359,6 +391,7 @@ _BUILTINS = (
         _TEXT_LIKE | _CATEGORICAL,
         generalization.suppress_rare,
         "Replace categories seen fewer than a minimum number of times.",
+        whole_column_reason="counts how often each value occurs",
     ),
     Technique(
         "gaussian_noise",
@@ -367,6 +400,7 @@ _BUILTINS = (
         _NUMERIC,
         noise.gaussian_noise,
         "Add normal noise, rescaled to keep the mean and standard deviation.",
+        whole_column_reason="rescales to the column's mean and deviation",
     ),
     Technique(
         "laplace_noise",
@@ -399,6 +433,7 @@ _BUILTINS = (
         _ALL_KINDS,
         perturbation.shuffle,
         "Reorder values among rows; exact distribution, no link to other columns.",
+        whole_column_reason="reorders values across the whole column",
     ),
     Technique(
         "rank_swap",
@@ -407,6 +442,7 @@ _BUILTINS = (
         _NUMERIC | _DATES,
         perturbation.rank_swap,
         "Swap values with near neighbours in rank; exact distribution.",
+        whole_column_reason="ranks the whole column",
     ),
     Technique(
         "microaggregate",
@@ -415,6 +451,7 @@ _BUILTINS = (
         _NUMERIC,
         perturbation.microaggregate,
         "Replace values with the mean of groups of at least k; exact mean.",
+        whole_column_reason="ranks the whole column",
     ),
     Technique(
         "randomized_response",
@@ -423,6 +460,7 @@ _BUILTINS = (
         _CATEGORICAL,
         perturbation.randomized_response,
         "Randomly replace some categories; deniable, local differential privacy.",
+        whole_column_reason="draws from the column's distinct values",
     ),
 )
 
