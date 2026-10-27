@@ -35,11 +35,11 @@ person under the LGPD.
 | PIX random key | UUID v4; needs a name hint (`pix`, `chave_pix`), otherwise a unique UUID column is a record ID |
 | CEP | `00000-000` |
 | Phone | Layouts with fixed digit groups: North American 3-3-4 with any separators or brackets, `+<country>` numbers in any grouping (including compact E.164), Brazilian, Portuguese, British, Australian and French groupings. Formatted numbers need 10–13 digits. Bare digit strings only when they look like a Brazilian mobile (area code then 9), because bare 10–12 digit numbers are usually timestamps or order numbers. CPF, CNPJ, IPv4 addresses, version strings and dates never match |
-| Payment card | Luhn, a known network prefix, and that network's length. 15-digit numbers must start 34 or 37, which keeps IMEIs out |
-| IMEI | 15 digits with a Luhn check digit |
+| Payment card | Luhn, a known network prefix, and that network's length: Visa 13, 16 or 19; Mastercard (51–55, 2221–2720) 16; American Express (34, 37) 15; Diners Club 14–19; Discover, JCB, UnionPay, Elo, Hipercard and Maestro 16–19. 15-digit numbers must start 34 or 37, which keeps IMEIs out |
+| IMEI | 15 digits with a Luhn check digit. Not searched for inside free text, where 15-digit order numbers pass the check one time in ten |
 | IBAN | ISO 13616 mod-97, with or without spaces |
 | US SSN / ITIN | Issued ranges; ITIN group 70–88 or 90–99 except 93 |
-| IPv4 / IPv6 | Parsed by the standard library |
+| IPv4 / IPv6 | Parsed by the standard library. Inside free text an IPv6 address needs at least three groups, so `::` and `std::vector` do not count |
 | MAC address | Six hexadecimal pairs |
 | Aadhaar | 12 digits, Verhoeff check |
 | Spanish DNI / NIE | Mod-23 check letter |
@@ -49,6 +49,8 @@ person under the LGPD.
 | UK National Insurance number | Allowed prefixes and an A–D suffix |
 | Italian codice fiscale | Check letter |
 | Email, URL | Format |
+
+IBAN, DNI/NIE, UK National Insurance, codice fiscale, alphanumeric CNPJ and vehicle plates are matched in upper and lower case.
 
 These have no value check and are found by column name only: person names, street
 addresses, cities, RG and passport numbers, age, gender, coordinates, income and
@@ -80,7 +82,9 @@ health. The checks are in `src/data_anonymizer/detection/checksums.py`.
       confidence is 0.4 and the plan asks for review.
    2. Text averaging at least two words per value, where 10% of values embed personal
       data, is classed as free text with personal data. Recognizers that random numbers
-      in prose would trigger, such as CNH, NIS or CNS, are not used inside text.
+      in prose would trigger, such as CNH, NIS, CNS or IMEI, are not used inside text. A
+      recognizer that can fire by chance, such as phone or card, counts only when its hits
+      are more than twice its chance rate.
    3. Gender labels.
    4. Dates in the past, spread over decades and with no time of day, are birth dates
       (0.5).

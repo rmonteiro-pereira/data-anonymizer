@@ -5,8 +5,9 @@ from dataclasses import dataclass
 import pandas as pd
 
 from data_anonymizer.detection.column_names import category_from_name, has_negative_hint
+from data_anonymizer.detection.free_text import classify_free_text
 from data_anonymizer.detection.kinds import as_datetime, infer_kind
-from data_anonymizer.detection.patterns import RECOGNIZERS, TEXT_RECOGNIZERS
+from data_anonymizer.detection.patterns import RECOGNIZERS
 from data_anonymizer.detection.value_evidence import decide_from_values, value_candidates
 from data_anonymizer.taxonomy import (
     NUMERIC_KINDS,
@@ -16,9 +17,6 @@ from data_anonymizer.taxonomy import (
     sensitivity_of,
 )
 
-# Free text is flagged when at least this share of values contains personal data.
-_EMBEDDED_MATCH_SHARE = 0.1
-
 # Columns with nearly one distinct value per row behave like record identifiers.
 _IDENTIFIER_UNIQUE_SHARE = 0.98
 
@@ -26,7 +24,6 @@ _NAME_ONLY_CONFIDENCE = 0.7
 _NAME_CONTRADICTED_CONFIDENCE = 0.4
 _UNIQUENESS_ONLY_CONFIDENCE = 0.5
 _BIRTH_DATE_CONFIDENCE = 0.5
-_FREE_TEXT_MIN_WORDS = 2
 
 # Birth dates lie in the past, within a human lifetime, and spread over decades.
 _OLDEST_AGE_YEARS = 120
@@ -122,7 +119,7 @@ def _classify(
         )
 
     if kind in (ColumnKind.TEXT, ColumnKind.CATEGORY):
-        embedded = _classify_free_text(sample)
+        embedded = classify_free_text(sample)
         if embedded is not None:
             return embedded
 
@@ -151,23 +148,6 @@ def _from_name_or_generic(
     if name_category is not None:
         return name_category, _NAME_ONLY_CONFIDENCE, f"{reason}; the name suggests it"
     return _generic(kind), 1.0, reason
-
-
-def _classify_free_text(sample: pd.Series) -> tuple[DataCategory, float, str] | None:
-    texts = sample.astype(str)
-    # One identifier per cell is a column of identifiers, not prose that mentions one.
-    if texts.map(lambda text: len(text.split())).mean() < _FREE_TEXT_MIN_WORDS:
-        return None
-    contains_any = texts.map(_contains_personal_data)
-    share = float(contains_any.mean())
-    if share < _EMBEDDED_MATCH_SHARE:
-        return None
-    evidence = f"{share:.0%} of sampled texts contain an email, document number or phone"
-    return DataCategory.FREE_TEXT_WITH_PII, min(1.0, 0.5 + share), evidence
-
-
-def _contains_personal_data(text: str) -> bool:
-    return any(recognizer.find_spans(text) for recognizer in TEXT_RECOGNIZERS)
 
 
 def _looks_like_birth_dates(sample: pd.Series) -> bool:

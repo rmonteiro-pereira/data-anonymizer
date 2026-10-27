@@ -210,21 +210,34 @@ def passes_luhn(value: str) -> bool:
     return bool(digits) and total % 10 == 0
 
 
+def _card_lengths(number: str) -> range | tuple[int, ...]:
+    """Return the lengths the issuing network of this card prefix uses, or none."""
+    if number[:2] in ("34", "37"):
+        return (15,)
+    if number[0] == "4":
+        return (13, 16, 19)
+    if number[:2] in ("51", "52", "53", "54", "55") or 2221 <= int(number[:4]) <= 2720:
+        return (16,)
+    # Diners Club.
+    if number[:2] in ("36", "38", "39") or number[:3] in ("300", "301", "302", "303", "304", "305"):
+        return range(14, 20)
+    # JCB (35), UnionPay, Discover, Hipercard and Elo (6), Maestro and Elo (50, 56-58).
+    if number[:2] in ("35", "50", "56", "57", "58") or number[0] == "6":
+        return range(16, 20)
+    return ()
+
+
 def is_valid_card(value: str) -> bool:
     """A payment card number: Luhn, a known network prefix and a length that network uses.
 
-    The prefix rule keeps IMEIs (15 digits, Luhn) and order numbers out: 15-digit
+    The length rule keeps IMEIs (15 digits, Luhn) and order numbers out: 15-digit
     cards only exist on American Express, whose numbers start with 34 or 37.
     """
     digits = digits_of(value)
     if not 13 <= len(digits) <= 19 or not passes_luhn(value):
         return False
-    text = "".join(map(str, digits))
-    if len(digits) == 15:
-        return text[:2] in ("34", "37")
-    if text[0] in "3456":
-        return True
-    return text[0] == "2" and 2221 <= int(text[:4]) <= 2720
+    number = "".join(map(str, digits))
+    return len(number) in _card_lengths(number)
 
 
 def is_valid_imei(value: str) -> bool:
@@ -359,6 +372,15 @@ def is_valid_fiscal_code(value: str) -> bool:
         else:
             total += int(character) if character.isdigit() else ord(character) - ord("A")
     return compact[15] == chr(total % 26 + ord("A"))
+
+
+def has_enough_ipv6_groups(value: str) -> bool:
+    """True when an address-like span has at least three groups of hex digits.
+
+    In prose, `::` and `std::vector` parse as valid IPv6 addresses, so a span found inside
+    text needs more than that to count.
+    """
+    return sum(1 for group in value.split(":") if group) >= 3
 
 
 def is_ip_address(value: str) -> bool:

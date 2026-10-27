@@ -1,9 +1,11 @@
 """Recognizers that decide whether a value looks like a known kind of personal data.
 
 Each recognizer pairs a regular expression with an optional checksum from
-`checksums.py`. Two flags limit where a recognizer may fire:
+`checksums.py`. These settings limit where a recognizer may fire:
 - `in_text`: whether it is searched for inside free text. Bare-digit formats such
-  as NIS or CNH are left out, because prose is full of numbers that fit them.
+  as NIS, CNH or IMEI are left out, because prose is full of numbers that fit them.
+- `chance_rate`: how often a random number of the right shape passes the validator. Free
+  text must show clearly more hits than this before it counts as holding personal data.
 - `needs_name_hint`: whether a matching column also needs a column name that
   points to the category, for formats with no checksum that ordinary codes share,
   such as UUIDs, which may be PIX keys or plain record keys.
@@ -34,6 +36,8 @@ class ValueRecognizer:
     in_text: bool = True
     needs_name_hint: bool = False
     digit_length: int | None = None
+    text_validator: Callable[[str], bool] | None = None
+    chance_rate: float = 0.0
 
     def matches(self, value: str) -> bool:
         """Return True when the whole value is an instance of this kind."""
@@ -51,7 +55,8 @@ class ValueRecognizer:
         """Return the start and end of every valid occurrence inside free text."""
         spans = []
         for match in self.pattern.finditer(text):
-            if self._is_valid(match.group(0)):
+            found = match.group(0)
+            if self._is_valid(found) and self._is_valid_in_text(found):
                 spans.append(match.span())
         return spans
 
@@ -59,6 +64,11 @@ class ValueRecognizer:
         if self.validator is None:
             return True
         return self.validator(value)
+
+    def _is_valid_in_text(self, value: str) -> bool:
+        if self.text_validator is None:
+            return True
+        return self.text_validator(value)
 
 
 def _recognizer(
@@ -70,6 +80,8 @@ def _recognizer(
     in_text: bool = True,
     needs_name_hint: bool = False,
     digit_length: int | None = None,
+    text_validator: Callable[[str], bool] | None = None,
+    chance_rate: float = 0.0,
 ) -> ValueRecognizer:
     return ValueRecognizer(
         category,
@@ -79,6 +91,8 @@ def _recognizer(
         in_text=in_text,
         needs_name_hint=needs_name_hint,
         digit_length=digit_length,
+        text_validator=text_validator,
+        chance_rate=chance_rate,
     )
 
 
@@ -104,15 +118,20 @@ _PHONE_LAYOUTS = (
 # The number must not continue into a longer run of digits on either side.
 _PHONE_PATTERN = r"(?<![\w.+-])(?<!\d[\s.-])(?:" + "|".join(_PHONE_LAYOUTS) + r")(?![\w]|[\s.-]\d)"
 
+# The local part is possessive and may only start after a character outside its class. Without
+# that, a long cell with no "@" is rescanned from every position, which takes quadratic time.
+_EMAIL_PATTERN = r"(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]++@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"
+
 # Order breaks exact ties between recognizers: earlier and more specific wins.
 RECOGNIZERS: tuple[ValueRecognizer, ...] = (
-    _recognizer(_C.EMAIL, "email", r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"),
+    _recognizer(_C.EMAIL, "email", _EMAIL_PATTERN),
     _recognizer(
         _C.CNPJ,
         "CNPJ",
-        r"\b[0-9A-Z]{2}\.?[0-9A-Z]{3}\.?[0-9A-Z]{3}/?[0-9A-Z]{4}-?\d{2}\b",
+        r"(?i)\b[0-9A-Z]{2}\.?[0-9A-Z]{3}\.?[0-9A-Z]{3}/?[0-9A-Z]{4}-?\d{2}\b",
         checksums.is_valid_cnpj,
         digit_length=14,
+        chance_rate=0.01,
     ),
     _recognizer(
         _C.CPF,
@@ -120,6 +139,7 @@ RECOGNIZERS: tuple[ValueRecognizer, ...] = (
         r"\b\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b",
         checksums.is_valid_cpf,
         digit_length=11,
+        chance_rate=0.01,
     ),
     _recognizer(
         _C.CNH, "CNH", r"\b\d{11}\b", checksums.is_valid_cnh, in_text=False, digit_length=11
@@ -161,11 +181,12 @@ RECOGNIZERS: tuple[ValueRecognizer, ...] = (
         "NF-e access key",
         r"\b(?:\d{4}\s?){10}\d{4}\b",
         checksums.is_valid_invoice_key,
+        chance_rate=0.09,
     ),
     _recognizer(
         _C.VEHICLE_PLATE,
         "vehicle plate",
-        r"\b[A-Z]{3}-?\d[A-Z0-9]\d{2}\b",
+        r"(?i)\b[A-Z]{3}-?\d[A-Z0-9]\d{2}\b",
         in_text=False,
         needs_name_hint=True,
     ),
@@ -176,17 +197,29 @@ RECOGNIZERS: tuple[ValueRecognizer, ...] = (
         in_text=False,
         needs_name_hint=True,
     ),
-    _recognizer(_C.IMEI, "IMEI", r"\b\d{2}-?\d{6}-?\d{6}-?\d\b", checksums.is_valid_imei),
     _recognizer(
-        _C.CREDIT_CARD, "payment card", r"\b(?:\d[ -]?){12,18}\d\b", checksums.is_valid_card
+        _C.IMEI,
+        "IMEI",
+        r"\b\d{2}-?\d{6}-?\d{6}-?\d\b",
+        checksums.is_valid_imei,
+        in_text=False,
+        digit_length=15,
+    ),
+    _recognizer(
+        _C.CREDIT_CARD,
+        "payment card",
+        r"\b(?:\d[ -]?){12,18}\d\b",
+        checksums.is_valid_card,
+        chance_rate=0.04,
     ),
     _recognizer(_C.SSN, "US SSN", r"\b\d{3}-\d{2}-\d{4}\b", checksums.is_plausible_ssn),
     _recognizer(_C.NATIONAL_ID, "US ITIN", r"\b9\d{2}-\d{2}-\d{4}\b", checksums.is_plausible_itin),
     _recognizer(
         _C.IBAN,
         "IBAN",
-        r"\b[A-Z]{2}\d{2}(?:\s?[A-Z0-9]{4}){2,7}\s?[A-Z0-9]{1,4}\b",
+        r"(?i)\b[A-Z]{2}\d{2}(?:\s?[A-Z0-9]{4}){2,7}\s?[A-Z0-9]{1,4}\b",
         checksums.is_valid_iban,
+        chance_rate=0.01,
     ),
     _recognizer(
         _C.IP_ADDRESS,
@@ -198,6 +231,7 @@ RECOGNIZERS: tuple[ValueRecognizer, ...] = (
         "IPv6 address",
         r"(?:[0-9A-Fa-f]{0,4}:){2,7}[0-9A-Fa-f]{0,4}",
         checksums.is_ip_address,
+        text_validator=checksums.has_enough_ipv6_groups,
     ),
     _recognizer(
         _C.MAC_ADDRESS,
@@ -206,7 +240,9 @@ RECOGNIZERS: tuple[ValueRecognizer, ...] = (
     ),
     _recognizer(_C.URL, "URL", r"https?://[^\s/$.?#][^\s]*"),
     _recognizer(_C.POSTAL_CODE, "CEP", r"\b\d{5}-\d{3}\b"),
-    _recognizer(_C.PHONE, "phone number", _PHONE_PATTERN, checksums.is_phone_number),
+    _recognizer(
+        _C.PHONE, "phone number", _PHONE_PATTERN, checksums.is_phone_number, chance_rate=0.08
+    ),
     _recognizer(
         _C.NATIONAL_ID,
         "Aadhaar",
@@ -217,8 +253,9 @@ RECOGNIZERS: tuple[ValueRecognizer, ...] = (
     _recognizer(
         _C.NATIONAL_ID,
         "Spanish DNI/NIE",
-        r"\b[0-9XYZ]\d{7}-?[A-Z]\b",
+        r"(?i)\b[0-9XYZ]\d{7}-?[A-Z]\b",
         checksums.is_valid_spanish_id,
+        chance_rate=0.04,
     ),
     _recognizer(
         _C.NATIONAL_ID,
@@ -245,14 +282,15 @@ RECOGNIZERS: tuple[ValueRecognizer, ...] = (
     _recognizer(
         _C.NATIONAL_ID,
         "UK National Insurance number",
-        r"\b[A-Z]{2}\s?\d{2}\s?\d{2}\s?\d{2}\s?[A-D]\b",
+        r"(?i)\b[A-Z]{2}\s?\d{2}\s?\d{2}\s?\d{2}\s?[A-D]\b",
         checksums.is_valid_nino,
     ),
     _recognizer(
         _C.NATIONAL_ID,
         "Italian codice fiscale",
-        r"\b[A-Z]{6}[0-9LMNPQRSTUV]{2}[A-EHLMPR-T][0-9LMNPQRSTUV]{2}[A-Z][0-9LMNPQRSTUV]{3}[A-Z]\b",
+        r"(?i)\b[A-Z]{6}[0-9LMNPQRSTUV]{2}[A-EHLMPR-T][0-9LMNPQRSTUV]{2}[A-Z][0-9LMNPQRSTUV]{3}[A-Z]\b",
         checksums.is_valid_fiscal_code,
+        chance_rate=0.04,
     ),
 )
 

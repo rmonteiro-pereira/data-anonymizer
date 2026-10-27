@@ -1,3 +1,5 @@
+import time
+
 import pandas as pd
 import pytest
 
@@ -287,3 +289,106 @@ def test_unnamed_us_phone_columns_are_phones_and_prose_with_a_phone_is_free_text
 
     assert scan_column("col_a", numbers).category is DataCategory.PHONE
     assert scan_column("notes", prose).category is DataCategory.FREE_TEXT_WITH_PII
+
+
+def _luhn_number(prefix: str, length: int) -> str:
+    return _with_luhn_digit(prefix + "1" * (length - len(prefix) - 1))
+
+
+@pytest.mark.parametrize(
+    ("prefix", "length", "accepted"),
+    [
+        ("4", 13, True),
+        ("4", 16, True),
+        ("4", 19, True),
+        ("4", 14, False),
+        ("4", 17, False),
+        ("51", 16, True),
+        ("2221", 16, True),
+        ("51", 13, False),
+        ("51", 14, False),
+        ("51", 19, False),
+        ("34", 15, True),
+        ("34", 16, False),
+        ("36", 14, True),
+        ("36", 19, True),
+        ("36", 13, False),
+        ("6011", 16, True),
+        ("6011", 19, True),
+        ("62", 17, True),
+        ("6062", 16, True),
+        ("636368", 16, True),
+        ("3528", 16, True),
+        ("3528", 19, True),
+        ("31", 16, False),
+        ("60", 13, False),
+    ],
+)
+def test_card_numbers_must_have_a_length_their_network_issues(prefix, length, accepted):
+    assert checksums.is_valid_card(_luhn_number(prefix, length)) is accepted
+
+
+@pytest.mark.parametrize(
+    ("category", "label", "value"),
+    [
+        (DataCategory.IBAN, "IBAN", "GB82WEST12345698765432"),
+        (DataCategory.NATIONAL_ID, "Spanish DNI/NIE", "12345678Z"),
+        (DataCategory.NATIONAL_ID, "UK National Insurance number", "AB123456C"),
+        (DataCategory.NATIONAL_ID, "Italian codice fiscale", "RSSMRA85T10A562S"),
+        (DataCategory.CNPJ, "CNPJ", "12.ABC.345/01DE-35"),
+        (DataCategory.VEHICLE_PLATE, "vehicle plate", "ABC1D23"),
+    ],
+)
+def test_identifiers_with_letters_are_recognized_in_lower_case(category, label, value):
+    recognizer = _recognizer(category, label)
+
+    assert recognizer.matches(value)
+    assert recognizer.matches(value.lower())
+
+
+def test_email_search_in_a_long_cell_takes_linear_time():
+    email = _recognizer(DataCategory.EMAIL, "email")
+    blob = "Ab3dEf9x" * 25_000 + " end"
+
+    started = time.perf_counter()
+    spans = email.find_spans(blob + " write to ana.silva+x@mail.example.com")
+    elapsed = time.perf_counter() - started
+
+    assert len(spans) == 1
+    assert elapsed < 0.5
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["Module::Class failed", "Score 3::4", "std::vector", "a::b", "::", "12:30:45", "fwd:: x"],
+)
+def test_colons_in_prose_are_not_ipv6_addresses(text):
+    assert _recognizer(DataCategory.IP_ADDRESS, "IPv6 address").find_spans(text) == []
+
+
+def test_ipv6_addresses_with_three_groups_are_found_in_text():
+    spans = _recognizer(DataCategory.IP_ADDRESS, "IPv6 address").find_spans(
+        "login from 2001:db8::8a2e:370:7334 ok"
+    )
+
+    assert spans == [(11, 34)]
+
+
+def test_log_lines_and_order_numbers_in_prose_are_not_free_text_with_pii():
+    log_lines = pd.Series([f"Module::Class failed with code {index}" for index in range(100)])
+    imei_like_orders = pd.Series(
+        [f"Pedido {_with_luhn_digit(f'55{index:012d}')} entregue" for index in range(100)]
+    )
+
+    assert scan_column("notes", log_lines).category is not DataCategory.FREE_TEXT_WITH_PII
+    assert scan_column("notes", imei_like_orders).category is not DataCategory.FREE_TEXT_WITH_PII
+
+
+def test_embedded_hits_must_beat_the_chance_rate_of_the_recognizers_that_fired():
+    bare_mobile_lookalike = "11987654321"
+    cells = [
+        f"Pedido {bare_mobile_lookalike if index % 8 == 0 else '20230100000'} entregue"
+        for index in range(200)
+    ]
+
+    assert scan_column("notes", pd.Series(cells)).category is not DataCategory.FREE_TEXT_WITH_PII

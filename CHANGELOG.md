@@ -20,6 +20,10 @@
     and IMEIs as payment cards.
   - Phone numbers are recognized in North American 3-3-4, compact E.164 and European
     layouts; CPF, CNPJ, IPv4 addresses, versions and dates no longer match.
+  - Payment cards must have a length their network issues. IBAN, DNI/NIE, NINO, codice
+    fiscale, alphanumeric CNPJ and plates match in lower case.
+  - Free text: `::` and `std::vector` no longer count as IPv6, IMEI is not searched in
+    prose, a recognizer must beat its chance rate, and the email pattern runs in linear time.
 - Noise explorer: an interactive page per column, from `explore-noise`. Disclosure
   metrics: record linkage, interval disclosure, per-record shift, and Wasserstein / IQR.
 - Synthesis patterns:
