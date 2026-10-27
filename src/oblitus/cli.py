@@ -16,6 +16,7 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from oblitus.anonymizer import AnonymizationResult, Anonymizer
+from oblitus.differential_privacy import BudgetReport, PrivacyBudget, Statistic
 from oblitus.errors import AnonymizerError, PlanError
 from oblitus.noise_explorer import explore_noise, save_page
 from oblitus.noise_explorer.sweep import DEFAULT_MAX_ROWS
@@ -122,6 +123,33 @@ def _build_parser() -> argparse.ArgumentParser:
     _add_fidelity(synth_parser)
     synth_parser.set_defaults(handler=_synthesize)
 
+    private_synth_parser = commands.add_parser(
+        "dp-synthesize", help="generate a differentially private synthetic copy of a table"
+    )
+    private_synth_parser.add_argument("input", type=Path)
+    private_synth_parser.add_argument("-o", "--output", type=Path, required=True)
+    private_synth_parser.add_argument(
+        "--domains", type=Path, required=True, help="JSON file: public domain of each column"
+    )
+    private_synth_parser.add_argument("--rows", type=int, default=None)
+    _add_privacy_budget(private_synth_parser)
+    private_synth_parser.set_defaults(handler=_dp_synthesize)
+
+    aggregate_parser = commands.add_parser(
+        "dp-aggregate", help="release differentially private counts, sums and means per group"
+    )
+    aggregate_parser.add_argument("input", type=Path)
+    aggregate_parser.add_argument("-o", "--output", type=Path, required=True)
+    aggregate_parser.add_argument(
+        "--spec", type=Path, required=True, help="JSON file: group_by values and statistics"
+    )
+    aggregate_parser.add_argument("--confidence", type=float, default=0.95)
+    aggregate_parser.add_argument(
+        "--accuracy-output", type=Path, help="also write the interval half-width of every value"
+    )
+    _add_privacy_budget(aggregate_parser)
+    aggregate_parser.set_defaults(handler=_dp_aggregate)
+
     noise_parser = commands.add_parser(
         "explore-noise", help="write an interactive page showing how noise moves a column"
     )
@@ -170,6 +198,22 @@ def _add_protection(parser: argparse.ArgumentParser) -> None:
         default=Protection.ANONYMIZATION,
         help="pseudonymization keeps keyed links; anonymization removes every link and checks it",
     )
+
+
+def _add_privacy_budget(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--epsilon", type=float, help="total epsilon of the release")
+    parser.add_argument("--delta", type=float, help="failure probability; allows Gaussian noise")
+    parser.add_argument("--rho", type=float, help="total zCDP rho, instead of epsilon")
+
+
+def _privacy_budget(arguments: argparse.Namespace) -> PrivacyBudget:
+    if arguments.rho is not None:
+        return PrivacyBudget.from_rho(arguments.rho, delta=arguments.delta or 1e-6)
+    if arguments.epsilon is None:
+        raise PlanError("declare the privacy budget with --epsilon (and --delta) or --rho")
+    if arguments.delta is None:
+        return PrivacyBudget.pure(arguments.epsilon)
+    return PrivacyBudget.from_epsilon_delta(arguments.epsilon, arguments.delta)
 
 
 def _add_row_key(parser: argparse.ArgumentParser) -> None:
@@ -266,6 +310,45 @@ def _synthesize(anonymizer: Anonymizer, arguments: argparse.Namespace) -> None:
     )
     write_table(frame, arguments.output)
     print(f"wrote {len(frame)} rows to {arguments.output}")
+
+
+def _dp_synthesize(anonymizer: Anonymizer, arguments: argparse.Namespace) -> None:
+    frame = read_table(arguments.input).to_pandas()
+    domains = json.loads(arguments.domains.read_text(encoding="utf-8"))
+    result = anonymizer.synthesize_private(
+        frame, domains, _privacy_budget(arguments), rows=arguments.rows
+    )
+    write_table(result.data, arguments.output)
+    print(f"wrote {len(result.data)} rows to {arguments.output}")
+    print(_budget_line(result.budget))
+    pairs = ", ".join(f"({first}, {second})" for first, second in result.tree_edges)
+    print(f"column pairs measured: {pairs or 'none'}")
+
+
+def _dp_aggregate(anonymizer: Anonymizer, arguments: argparse.Namespace) -> None:
+    frame = read_table(arguments.input).to_pandas()
+    spec = json.loads(arguments.spec.read_text(encoding="utf-8"))
+    statistics = [Statistic.model_validate(item) for item in spec["statistics"]]
+    result = anonymizer.aggregate_private(
+        frame,
+        spec.get("group_by", {}),
+        statistics,
+        _privacy_budget(arguments),
+        confidence=arguments.confidence,
+    )
+    write_table(result.table, arguments.output)
+    if arguments.accuracy_output is not None:
+        write_table(result.accuracy, arguments.accuracy_output)
+    print(f"wrote {len(result.table)} groups to {arguments.output}")
+    print(_budget_line(result.budget))
+
+
+def _budget_line(report: BudgetReport) -> str:
+    delta = f" at delta {report.delta:g}" if report.delta else ""
+    return (
+        f"privacy spent: epsilon {report.spent_epsilon:.4g} of {report.declared_epsilon:.4g}"
+        f"{delta} (rho {report.spent_rho:.4g})"
+    )
 
 
 def _explore_noise(anonymizer: Anonymizer, arguments: argparse.Namespace) -> None:

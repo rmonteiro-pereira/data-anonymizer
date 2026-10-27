@@ -15,3 +15,8 @@ class SchemaError(AnonymizerError):
 
 class TableFormatError(AnonymizerError):
     """A table file has an extension the library cannot read or write."""
+
+
+class PrivacyBudgetError(AnonymizerError):
+    """A differential-privacy request lacks a declared bound or domain, or would spend more
+    privacy budget than was declared."""

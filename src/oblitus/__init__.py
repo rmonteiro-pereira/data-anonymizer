@@ -4,7 +4,14 @@ import logging
 
 from oblitus.anonymizer import AnonymizationResult, Anonymizer
 from oblitus.detection import ColumnFinding
-from oblitus.errors import AnonymizerError, PlanError, SchemaError, TableFormatError
+from oblitus.differential_privacy import PrivacyBudget, Statistic
+from oblitus.errors import (
+    AnonymizerError,
+    PlanError,
+    PrivacyBudgetError,
+    SchemaError,
+    TableFormatError,
+)
 from oblitus.evaluation import PrivacyReport, UtilityReport
 from oblitus.plan import AnonymizationPlan, ColumnAction, Fidelity, Protection
 from oblitus.protection import ProtectionAssessment, ProtectionLevel
@@ -34,12 +41,15 @@ __all__ = [
     "DatasetSchema",
     "Fidelity",
     "PlanError",
+    "PrivacyBudget",
+    "PrivacyBudgetError",
     "PrivacyReport",
     "Protection",
     "ProtectionAssessment",
     "ProtectionLevel",
     "SchemaError",
     "Sensitivity",
+    "Statistic",
     "StatisticalEffect",
     "TableFormatError",
     "Technique",

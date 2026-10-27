@@ -10,6 +10,14 @@ import numpy as np
 import pandas as pd
 
 from oblitus.detection import ColumnFinding, scan, scan_column
+from oblitus.differential_privacy import (
+    PrivacyBudget,
+    PrivateAggregates,
+    PrivateSynthesis,
+    Statistic,
+    private_aggregates,
+    synthesize_mst,
+)
 from oblitus.engines import (
     Engine,
     WorkingFrame,
@@ -292,6 +300,42 @@ class Anonymizer:
             surrogates=surrogates,
             stratify_by=stratify_by,
         )
+
+    def synthesize_private(
+        self,
+        reference: pd.DataFrame,
+        domains: Mapping[str, Any],
+        budget: PrivacyBudget,
+        rows: int | None = None,
+    ) -> PrivateSynthesis:
+        """Synthesize a copy of `reference` under differential privacy, with MST.
+
+        `domains` gives every released column's public domain: a list of values, or the
+        lower and upper bounds and bin count of a number. They must come from public
+        knowledge, not from the data. The result carries the table, the budget report and
+        the column pairs the model measured. Without `rows`, the row count is the noisy one.
+
+        A fixed `seed` makes the noise reproducible, so anyone who knows it can remove the
+        noise: use it for tests and demos only. Without a seed, the noise is fresh.
+        """
+        rng = np.random.default_rng(self._seed)
+        return synthesize_mst(reference, domains, budget, rng, rows)
+
+    def aggregate_private(
+        self,
+        frame: pd.DataFrame,
+        group_domains: Mapping[str, Sequence[object]],
+        statistics: Sequence[Statistic],
+        budget: PrivacyBudget,
+        confidence: float = 0.95,
+    ) -> PrivateAggregates:
+        """Release noisy counts, sums and means per group with OpenDP (`oblitus[opendp]`).
+
+        `group_domains` lists every value of each group-by column, and each sum or mean
+        declares its lower and upper bounds, all from public knowledge. The result has the
+        noisy table, the confidence-interval half-width of every value and the budget report.
+        """
+        return private_aggregates(frame, group_domains, statistics, budget, confidence)
 
     def challenge(self, schema: DatasetSchema, rows: int | None = None) -> Challenge:
         """Generate a data-science challenge from a schema with a `question`.
