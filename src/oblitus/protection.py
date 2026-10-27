@@ -272,6 +272,7 @@ def _confident_inferences(plan: AnonymizationPlan, released: WorkingFrame) -> li
         confidence=plan.inference_confidence,
         gain=plan.inference_gain,
         discrete_limit=DISCRETE_LIMIT,
+        entity_column=plan.entity_column,
     )
     return [
         f"{finding.attribute}: in {_describe_group(finding.group)} "
@@ -361,7 +362,8 @@ def _rescaling_caveats(plan: AnonymizationPlan) -> list[str]:
 def _isolated_records(plan: AnonymizationPlan, released: WorkingFrame) -> list[str]:
     names = released.collect_schema().names()
     removed = set(plan.direct_identifiers) | set(plan.sensitive_attributes)
-    candidates = [column for column in names if column not in removed]
+    entity = plan.entity_column if plan.entity_column in names else None
+    candidates = [column for column in names if column not in removed and column != entity]
     row_count = first_row(released.select(nw.len().alias("rows")))["rows"]
     if not candidates or row_count == 0:
         return []
@@ -381,11 +383,13 @@ def _isolated_records(plan: AnonymizationPlan, released: WorkingFrame) -> list[s
         return []
     sizes = nw.col(GROUP_SIZE)
     singles = nw.when(sizes == 1).then(1).otherwise(0).sum().alias("unique_rows")
-    unique_rows = int(first_row(group_sizes(released, columns).select(singles))["unique_rows"])
+    singled_out = group_sizes(released, columns, entity).select(singles)
+    unique_rows = int(first_row(singled_out)["unique_rows"])
     if unique_rows == 0:
         return []
+    counted = "rows" if entity is None else "entities"
     return [
-        f"{unique_rows} rows are unique across their discrete columns "
+        f"{unique_rows} {counted} are unique across their discrete columns "
         f"({', '.join(columns)}), so they can be singled out"
     ]
 

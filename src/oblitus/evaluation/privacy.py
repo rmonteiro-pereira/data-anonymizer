@@ -133,12 +133,17 @@ def t_closeness(
     }
 
 
-def group_sizes(frame: WorkingFrame, columns: Sequence[str]) -> WorkingFrame:
-    """One row per distinct combination of `columns`, with its row count in `GROUP_SIZE`.
+def group_sizes(
+    frame: WorkingFrame, columns: Sequence[str], entity_column: str | None = None
+) -> WorkingFrame:
+    """One row per distinct combination of `columns`, with its size in `GROUP_SIZE`.
 
-    Blank cells form a group of their own, as they do for an attacker who sees them.
+    The size is the row count, or with `entity_column` the number of distinct entities, so a
+    person with many rows counts once. Blank cells form a group of their own, as they do for
+    an attacker who sees them.
     """
-    return frame.group_by(list(columns)).agg(nw.len().alias(GROUP_SIZE))
+    size = nw.len() if entity_column is None else nw.col(entity_column).n_unique()
+    return frame.group_by(list(columns)).agg(size.alias(GROUP_SIZE))
 
 
 def _counts(frame: WorkingFrame, attributes: Sequence[str]) -> dict[str, int]:

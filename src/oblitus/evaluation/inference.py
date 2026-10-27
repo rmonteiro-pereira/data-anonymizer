@@ -54,21 +54,26 @@ def confident_inferences(
     confidence: float = DEFAULT_CONFIDENCE,
     gain: float = DEFAULT_GAIN,
     discrete_limit: int = 50,
+    entity_column: str | None = None,
 ) -> list[ConfidentInference]:
     """For each sensitive attribute, its most exposed group, if any group is exposed.
 
     Blank sensitive cells are left out. A numeric attribute with more than `discrete_limit`
-    distinct values is skipped, since no single value of it has a meaningful share.
+    distinct values is skipped, since no single value of it has a meaningful share. With
+    `entity_column`, an entity counts once per group and value, however many rows it has.
     """
     names = frame.collect_schema().names()
     columns = [column for column in quasi_identifiers if column in names]
     if not columns:
         return []
+    entity = entity_column if entity_column in names and entity_column not in columns else None
     findings = []
     for attribute in sensitive_attributes:
         if attribute not in names:
             continue
-        finding = _worst_exposure(frame, columns, attribute, confidence, gain, discrete_limit)
+        finding = _worst_exposure(
+            frame, columns, attribute, confidence, gain, discrete_limit, entity
+        )
         if finding is not None:
             findings.append(finding)
     return findings
@@ -81,10 +86,11 @@ def _worst_exposure(
     confidence: float,
     gain: float,
     discrete_limit: int,
+    entity: str | None,
 ) -> ConfidentInference | None:
-    counted = collect(
-        frame.drop_nulls(attribute).group_by([*columns, attribute]).agg(nw.len().alias(_ROWS))
-    ).rows()
+    present = frame.drop_nulls(attribute)
+    size = nw.len() if entity is None else nw.col(entity).n_unique()
+    counted = collect(present.group_by([*columns, attribute]).agg(size.alias(_ROWS))).rows()
     table_counts: dict[object, int] = {}
     group_totals: dict[tuple[object, ...], int] = {}
     for *group, value, count in counted:

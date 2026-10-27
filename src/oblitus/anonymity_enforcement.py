@@ -41,7 +41,11 @@ def enforce_plan_targets(released: WorkingFrame, plan: AnonymizationPlan) -> Enf
     changed: list[str] = []
     for step in plan.joint_microaggregation:
         outcome = microaggregate_jointly(
-            released, step.columns, step.group_size, row_key=ROW_KEY_COLUMN
+            released,
+            step.columns,
+            step.group_size,
+            row_key=ROW_KEY_COLUMN,
+            entity_column=plan.entity_column,
         )
         released = outcome.data
         changed += step.columns
