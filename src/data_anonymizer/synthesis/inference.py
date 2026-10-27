@@ -7,15 +7,19 @@ direct identifiers get a fake-value category instead of their observed values.
 from collections.abc import Sequence
 from typing import Any
 
+import numpy as np
 import pandas as pd
 
 from data_anonymizer.detection import ColumnFinding, scan
 from data_anonymizer.detection.kinds import as_datetime
 from data_anonymizer.surrogates import SURROGATE_CATEGORIES
-from data_anonymizer.synthesis.schema import ColumnSchema, DatasetSchema
+from data_anonymizer.synthesis.schema import ColumnSchema, DatasetSchema, Distribution
 from data_anonymizer.taxonomy import NUMERIC_KINDS, ColumnKind, DataCategory, Sensitivity
 
 _RARE_REPLACEMENT = "OTHER"
+
+# Tail points are added down to this many observations beyond the outermost point.
+_MIN_TAIL_OBSERVATIONS = 10
 
 
 def infer_schema(
@@ -98,14 +102,40 @@ def _numeric_column(
             unique=unique,
             **common,
         )
+    # Quantile points follow skewed, heavy-tailed and zero-inflated shapes that a normal
+    # distribution with the same mean and std would distort.
+    probabilities = _quantile_probabilities(len(numbers))
+    points = np.quantile(numbers.to_numpy(dtype=float), probabilities)
     return ColumnSchema(
         kind=finding.kind,
         minimum=float(numbers.min()),
         maximum=float(numbers.max()),
-        mean=float(numbers.mean()),
-        std=float(numbers.std(ddof=0)),
+        distribution=Distribution.QUANTILES,
+        quantiles={
+            float(probability): float(point)
+            for probability, point in zip(probabilities, points, strict=True)
+        },
         **common,
     )
+
+
+def _quantile_probabilities(count: int) -> list[float]:
+    """Return the probabilities whose quantiles describe a numeric column.
+
+    These are the deciles, the 5% and 95% points, and finer points in each tail (2%, 1%,
+    0.5%, 0.2%, ...) while enough observations remain beyond them. Without the tail points, a
+    single extreme value would be stretched in a straight line over the whole outer 5%.
+    """
+    tail = [0.05]
+    scale = 0.01
+    while scale * count >= _MIN_TAIL_OBSERVATIONS:
+        tail.extend(scale * mantissa for mantissa in (2, 1, 0.5))
+        scale /= 10
+    lower = sorted({0.0, *tail})
+    upper = [1 - probability for probability in reversed(lower)]
+    deciles = [step / 10 for step in range(1, 10)]
+    points = {round(value, 10) for value in (*lower, *deciles, *upper)}
+    return sorted(points)
 
 
 def _category_column(

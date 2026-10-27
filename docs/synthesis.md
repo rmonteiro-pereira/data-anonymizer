@@ -140,6 +140,11 @@ synthetic = anonymizer.synthesize(5_000, reference=customers, fidelity=Fidelity.
   Identifiers are always regenerated as fakes, never sampled from the reference.
 - **`privacy`**: every column is drawn independently from an inferred schema, so no
   row-level structure survives. Categories seen fewer than 5 times become `OTHER`.
+  Numeric columns are inferred as `quantiles`: the deciles, the 5% and 95% points, finer
+  points in each tail while the sample is large enough, and the minimum and maximum. They
+  follow zero-inflated and heavy-tailed shapes, such as a capital gain that is zero for 92%
+  of people, where a normal distribution with the same mean and std would invent negative
+  values and a wrong mean. The mean of a heavy tail still varies by some percent.
 
 Patterns in a schema you pass along, such as formulas, conditions and constraints, apply
 in both modes. `anonymize infer-schema` writes the inferred schema so you can edit it and

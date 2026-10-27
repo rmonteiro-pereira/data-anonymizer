@@ -1,11 +1,13 @@
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import pytest
 
 from data_anonymizer import Anonymizer, ColumnSchema, DatasetSchema, Fidelity, SchemaError
 from data_anonymizer.detection.patterns import is_valid_cpf
 from data_anonymizer.synthesis import infer_schema
+from data_anonymizer.synthesis.schema import Distribution
 from data_anonymizer.taxonomy import ColumnKind, DataCategory
 
 
@@ -90,6 +92,22 @@ def test_privacy_synthesis_drops_correlations(people):
     synthetic = Anonymizer(seed=5).synthesize(1000, reference=people, fidelity=Fidelity.PRIVACY)
 
     assert abs(synthetic["age"].corr(synthetic["salary"])) < 0.15
+
+
+def test_privacy_synthesis_keeps_the_mean_and_sign_of_zero_inflated_heavy_tailed_columns():
+    generator = np.random.default_rng(3)
+    gains = np.where(generator.random(20000) < 0.92, 0.0, generator.lognormal(8.5, 1.2, 20000))
+    balance = generator.lognormal(1.0, 1.0, 20000) * np.where(generator.random(20000) < 0.02, -1, 1)
+    reference = pd.DataFrame({"gain": gains.round(2), "balance": balance.round(2)})
+
+    schema = infer_schema(reference)
+    synthetic = Anonymizer(seed=9).synthesize(20000, reference=reference, fidelity=Fidelity.PRIVACY)
+
+    assert all(column.distribution is Distribution.QUANTILES for column in schema.columns)
+    assert (synthetic["gain"] >= 0).all()
+    assert synthetic["gain"].mean() == pytest.approx(reference["gain"].mean(), rel=0.25)
+    assert (synthetic["balance"] < 0).mean() == pytest.approx(0.02, abs=0.01)
+    assert synthetic["balance"].mean() == pytest.approx(reference["balance"].mean(), rel=0.3)
 
 
 def test_privacy_inference_hides_rare_categories():
