@@ -64,6 +64,11 @@ class AnonymizationPlan(BaseModel):
     are blanked in rows whose combination is shared by fewer than `k_target` rows.
     `l_target` is the fewest distinct sensitive values each such group must hold for
     the result to count as anonymized.
+
+    `shuffle_rows` says whether the released rows come back in a fresh random order, with a
+    fresh index for pandas. None, the default, shuffles under anonymization and keeps the
+    input order and index under pseudonymization. Without a shuffle, an anonymized release
+    lines up with the original, and with any other release of the same table, row by row.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -81,6 +86,7 @@ class AnonymizationPlan(BaseModel):
     k_target: int = Field(default=5, ge=1)
     l_target: int = Field(default=2, ge=1)
     enforce_k_anonymity: bool = False
+    shuffle_rows: bool | None = None
 
     @model_validator(mode="after")
     def _one_action_per_column(self) -> "AnonymizationPlan":
@@ -90,6 +96,13 @@ class AnonymizationPlan(BaseModel):
                 raise ValueError(f"column {action.column!r} has more than one action")
             seen.add(action.column)
         return self
+
+    @property
+    def shuffles_rows(self) -> bool:
+        """True when the released rows are put in a fresh random order."""
+        if self.shuffle_rows is None:
+            return self.protection is Protection.ANONYMIZATION
+        return self.shuffle_rows
 
     def action_for(self, column: str) -> ColumnAction | None:
         """Return the action planned for a column, or None when it is left alone."""

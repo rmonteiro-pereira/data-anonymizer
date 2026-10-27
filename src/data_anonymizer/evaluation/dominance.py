@@ -6,7 +6,9 @@ segment gives its size away. Two standard rules are used here:
 - (1, k) dominance: the largest contributor holds more than k% of the segment total;
 - p% rule: the second-largest contributor could estimate the largest one to within
   p% by subtracting its own value from the total.
-Both only matter while the values are still in their original units.
+A segment with fewer than three contributors is flagged outright: with one or two, each
+contributor can read the other's size off the total, whatever the shares are.
+Each rule only matters while the values are still in their original units.
 """
 
 from dataclasses import dataclass
@@ -17,6 +19,9 @@ import pandas as pd
 # Released values count as being in original units when their spread and centre
 # are within this factor of the original ones.
 _UNIT_FACTOR = 2.0
+
+# A segment needs at least this many contributors before its total hides each one's share.
+MIN_CONTRIBUTORS = 3
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,7 +84,10 @@ def dominant_segments(
             continue
         largest = float(ranked[0])
         second = float(ranked[1]) if len(ranked) > 1 else 0.0
-        if largest / total > dominance_share:
+        if len(ranked) < MIN_CONTRIBUTORS:
+            rule = f"only {len(ranked)} contributor(s)"
+            found.append(DominantSegment(group_column, str(group), largest / total, rule))
+        elif largest / total > dominance_share:
             found.append(DominantSegment(group_column, str(group), largest / total, "dominance"))
         elif total - largest - second < p_percent * largest:
             found.append(DominantSegment(group_column, str(group), largest / total, "p% rule"))

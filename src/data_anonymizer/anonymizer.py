@@ -12,6 +12,7 @@ import pandas as pd
 from data_anonymizer.detection import ColumnFinding, scan, scan_column
 from data_anonymizer.engines import (
     Engine,
+    WorkingFrame,
     column_names,
     engine_of,
     pandas_columns,
@@ -33,6 +34,7 @@ from data_anonymizer.protection import (
     assess_protection,
     linking_actions,
 )
+from data_anonymizer.row_order import shuffle_rows
 from data_anonymizer.surrogates import SurrogateFactory
 from data_anonymizer.synthesis import (
     Challenge,
@@ -181,7 +183,7 @@ class Anonymizer:
         sample = align_sample(original, released, engine, key=self._sample_key)
         released_table = released.drop(ROW_KEY_COLUMN)
         return AnonymizationResult(
-            data=table.as_user_frame(released_table, also_changed=suppressed_columns),
+            data=_user_data(table, released, plan, context, suppressed_columns),
             plan=plan,
             suppressed_cells=suppressed_cells,
             privacy_before=self._privacy(original, plan),
@@ -318,6 +320,26 @@ class Anonymizer:
             plan.sensitive_attributes,
             k_target=plan.k_target,
         )
+
+
+def _user_data(
+    table: Table,
+    released: WorkingFrame,
+    plan: AnonymizationPlan,
+    context: TechniqueContext,
+    suppressed_columns: list[str],
+) -> Any:
+    """The released rows in the user's form, shuffled when the plan says so.
+
+    The checks have already read the rows in their original order by now, so the shuffle
+    only changes what the user receives.
+    """
+    row_order = None
+    if plan.shuffles_rows:
+        released, row_order = shuffle_rows(released, table.engine, context)
+    return table.as_user_frame(
+        released.drop(ROW_KEY_COLUMN), also_changed=suppressed_columns, row_order=row_order
+    )
 
 
 def _resolved_rows(rows: int | None, schema: DatasetSchema | None) -> int:

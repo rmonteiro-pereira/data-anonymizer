@@ -87,14 +87,14 @@ The checks follow the three criteria of the EDPB Guidelines 02/2026 on anonymisa
 
 | Criterion | Check |
 |---|---|
-| No record isolation | Every quasi-identifier combination is shared by at least `k_target` rows (default 5). No row is unique across its discrete released columns, meaning those with at most 50 distinct values, excluding sensitive attributes. No column with at least 20 rows and 90% distinct values is released unchanged, since such a column is a fingerprint |
-| No linkage | No action uses a linking technique. For noise and perturbation columns, nearest-value matching re-links at most 1 record in `k_target`: no better odds than k-anonymity already accepts |
+| No record isolation | Every quasi-identifier combination is shared by at least `k_target` rows (default 5). No row is unique across its discrete released columns, meaning those with at most 50 distinct values, excluding sensitive attributes. No column with at least 20 rows and 90% distinct values is released unchanged, since such a column is a fingerprint. A text column that a technique does not replace (such as `partial_mask`, or `redact_entities` on JSON) counts the same way. An untreated text or integer column outside the plan's lists, with at least 1,000 distinct values that repeat across rows (an account or card key), is reported too; a product or category code with fewer values is not |
+| No linkage | No action uses a linking technique. For noise and perturbation columns, nearest-value matching re-links at most 1 record in `k_target`: no better odds than k-anonymity already accepts. The same limit applies to all perturbed numeric columns taken together, matching each released vector to its nearest original vector on standardized columns. `randomized_response` on a plan with an `entity_column` needs `by`, so a person's rows share one draw |
 | No inference | Within each quasi-identifier group, every sensitive attribute takes at least `l_target` distinct values (default 2). A sensitive column released entirely blank is skipped. A numeric sensitive column still in its original units must not let a segment's dominant contributor be read off (dominance and p% rules, see [business-confidentiality.md](business-confidentiality.md)) |
 
 | Level | Meaning |
 |---|---|
 | `anonymized` | No link to people, and every check passed |
-| `at_risk` | No link to people, but a record can still be isolated or a sensitive value inferred |
+| `at_risk` | No link to people, but a record can still be isolated or a sensitive value inferred. A column cleaned with `redact_entities` always stays here: no pattern finds names written into a sentence or a JSON field |
 | `pseudonymized` | Identifiers replaced, but a linking technique lets the key holder re-link them |
 | `identifiable` | A direct identifier was left as it was. This is checked on the data: more than 1% of a direct identifier's values surviving unchanged counts, whatever the technique. For `redact_entities`, any text that still holds a recognisable document, email or phone counts |
 
@@ -133,6 +133,8 @@ assessment, is still required.
 Columns without an action are left unchanged. A plan is checked before anything runs.
 A missing column, an unknown technique, an unknown parameter, or a linking technique in
 an anonymization plan raises `PlanError`.
+
+`shuffle_rows` says whether the released rows come back in a fresh random order with a fresh pandas index. `null` (the default) shuffles under anonymization, so the release cannot be lined up with the original or another release row by row, and keeps order and index under pseudonymization. The protection checks still compare the rows before the shuffle.
 
 `row_key` names the column that identifies each row, such as a record ID. `propose`
 sets it to the first column found to hold a different value in nearly every row. It does

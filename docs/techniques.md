@@ -8,9 +8,9 @@
 | `redact` | masking | no | no | distorts | any | `replacement` | Replace with a constant. |
 | `suppress` | masking | no | no | distorts | any | — | Replace with missing. |
 | `partial_mask` | masking | no | no | distorts | category, integer, text | `keep_first`, `keep_last`, `mask_char` | Hide all but the first or last characters, keeping separators. |
-| `redact_entities` | masking | no | no | distorts | category, text | `categories` | Replace emails, documents and phones inside free text with labels. |
+| `redact_entities` | masking | no | no | distorts | category, text | `categories` | Replace emails, documents and phones inside free text with labels. Text is normalized first (zero-width characters, look-alike letters and digits, `[at]` and `[dot]`, document numbers split by spaces or punctuation, phones split by number words). Names stay. |
 | `keyed_hash` | pseudonymization | no | yes | preserves relationships | any | `length`, `prefix`, `algorithm` | Replace with a keyed HMAC digest (SHA-2, SHA-3 or BLAKE2); consistent per key. `length` is 16 to 128 hex characters. |
-| `scramble_categories` | pseudonymization | no | only with `keyed: true` | preserves relationships | any | `prefix`, `min_count`, `keyed` | Replace labels with opaque codes in random order; labels with fewer than `min_count` rows become `<prefix>-OTHER`. |
+| `scramble_categories` | pseudonymization | no | only with `keyed: true` | preserves relationships | any | `prefix`, `min_count`, `min_entities`, `by`, `keyed` | Replace labels with opaque codes in random order; labels with fewer than `min_count` rows, or held by fewer than `min_entities` distinct values of the `by` column, become `<prefix>-OTHER`. |
 | `scramble_characters` | pseudonymization | no | yes | preserves relationships | category, integer, text | — | Replace digits with digits and letters with letters, keeping the format. Uses FF1 per character class, so distinct values stay distinct; runs shorter than 6 digits or 5 letters fall back to a keyed hash. |
 | `surrogate` | pseudonymization | no | yes, unless `consistent: false` | preserves relationships | category, integer, text | `category`, `unique`, `consistent` | Replace with a realistic fake; consistent per value, or random per cell. |
 | `argon2_hash` | pseudonymization | no | yes | preserves relationships | any | `time_cost`, `memory_cost`, `parallelism`, `hash_length`, `deterministic` | Replace with a slow, memory-hard Argon2id hash; a keyed salt keeps joins. |
@@ -31,7 +31,7 @@
 | `shuffle` | perturbation | no | no | preserves distribution | any | — | Reorder values among rows; exact distribution, no link to other columns. |
 | `rank_swap` | perturbation | no | no | preserves distribution | datetime, float, integer | `max_distance_percent` | Swap values with near neighbours in rank; exact distribution. |
 | `microaggregate` | perturbation | no | no | preserves distribution | float, integer | `group_size` | Replace values with the mean of groups of at least k; exact mean. |
-| `randomized_response` | perturbation | no | no | distorts | boolean, category | `keep_probability` | Randomly replace some categories; deniable, local differential privacy. |
+| `randomized_response` | perturbation | no | no | distorts | boolean, category | `keep_probability`, `by` | Randomly replace some categories; deniable, local differential privacy. With `by`, all rows of one entity share one draw, so averaging them reveals nothing. |
 
 Numeric techniques compute in 64-bit floating point, so integers above 2^53 (about
 9 × 10^15) lose precision when a numeric technique transforms them. Use a key technique

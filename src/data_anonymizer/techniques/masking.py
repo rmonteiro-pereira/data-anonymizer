@@ -3,6 +3,7 @@
 import narwhals as nw
 
 from data_anonymizer.detection.patterns import ValueRecognizer, recognizers_for
+from data_anonymizer.detection.text_entities import find_entities
 from data_anonymizer.table import Table
 from data_anonymizer.taxonomy import DataCategory
 from data_anonymizer.techniques.context import TechniqueContext
@@ -67,16 +68,21 @@ def redact_entities(
     *,
     categories: list[str] | None = None,
 ) -> nw.Expr:
-    """Replace personal data found inside free text with labels such as `<EMAIL>`."""
+    """Replace personal data found inside free text with labels such as `<EMAIL>`.
+
+    The text is normalized before it is read, so zero-width characters, look-alike letters
+    and digits, `[at]` for an at-sign, and document numbers split by spaces or punctuation
+    are found and removed too. Names and other details no pattern recognizes stay in the
+    text.
+    """
     wanted = None if categories is None else [DataCategory(item) for item in categories]
     recognizers = recognizers_for(wanted)
     return lookup_distinct(table, column, lambda text: _redact_text(text, recognizers))
 
 
 def _redact_text(text: str, recognizers: tuple[ValueRecognizer, ...]) -> str:
-    for recognizer in recognizers:
-        label = f"<{recognizer.category.value.upper()}>"
-        # Replacing from the end keeps the earlier spans' offsets valid.
-        for start, end in reversed(recognizer.find_spans(text)):
-            text = text[:start] + label + text[end:]
+    # Replacing from the end keeps the earlier spans' offsets valid.
+    for span in reversed(find_entities(text, recognizers)):
+        label = f"<{span.category.value.upper()}>"
+        text = text[: span.start] + label + text[span.end :]
     return text

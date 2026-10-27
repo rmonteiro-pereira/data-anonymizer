@@ -22,6 +22,7 @@ from data_anonymizer.techniques.context import TechniqueContext
 from data_anonymizer.techniques.ff1 import FF1
 from data_anonymizer.techniques.value_mapping import (
     canonical_value,
+    distinct_entity_counts,
     lookup_distinct,
     lookup_per_row,
     present_counts,
@@ -302,6 +303,8 @@ def scramble_categories(
     *,
     prefix: str = "C",
     min_count: int = 1,
+    min_entities: int = 1,
+    by: str | None = None,
     keyed: bool = False,
 ) -> nw.Expr:
     """Replace each category with an opaque code such as `C-03`, the same code for the same label.
@@ -309,10 +312,14 @@ def scramble_categories(
     Codes are handed out in a random order, so they reveal neither the alphabetical
     order nor the size of the categories. Categories seen fewer than `min_count`
     times are first merged into one `<prefix>-OTHER` code, because a segment with
-    one or two members identifies them. With `keyed`, the order comes from the
-    secret key instead, so the same label gets the same code in every release: a
-    pseudonym that the key holder can link.
+    one or two members identifies them. A label with many rows can still belong to only
+    one or two entities, such as a segment of two stores with 72 monthly rows between them.
+    With `by` (the entity column) and `min_entities`, labels held by fewer distinct entities
+    are merged too. With `keyed`, the order comes from the secret key instead, so the same
+    label gets the same code in every release: a pseudonym that the key holder can link.
     """
+    if min_entities > 1 and by is None:
+        raise ValueError("min_entities needs `by`, the column that identifies the entity")
     counts_by_label: Counter[str] = Counter()
     raw_by_label: dict[str, list[Any]] = {}
     for value, count in present_counts(table, column).items():
@@ -320,7 +327,12 @@ def scramble_categories(
         counts_by_label[label] += count
         raw_by_label.setdefault(label, []).append(value)
 
-    common = sorted(label for label, count in counts_by_label.items() if count >= min_count)
+    entities_by_label = _entities_by_label(table, column, by, min_entities)
+    common = sorted(
+        label
+        for label, count in counts_by_label.items()
+        if count >= min_count and entities_by_label.get(label, min_entities) >= min_entities
+    )
     if keyed:
         ordered = sorted(common, key=lambda label: context.keyed_digest(label))
     else:
@@ -333,3 +345,14 @@ def scramble_categories(
         value: codes.get(label, other) for label, values in raw_by_label.items() for value in values
     }
     return table.lookup(column, mapping, nw.String)
+
+
+def _entities_by_label(
+    table: Table, column: str, by: str | None, min_entities: int
+) -> Counter[str]:
+    if by is None or min_entities <= 1:
+        return Counter()
+    entities: Counter[str] = Counter()
+    for value, count in distinct_entity_counts(table, column, by).items():
+        entities[canonical_value(value)] += count
+    return entities

@@ -12,6 +12,7 @@ from dataclasses import dataclass
 
 import numpy as np
 from scipy import stats
+from scipy.spatial import cKDTree
 
 from data_anonymizer.evaluation.utility import relative_change
 
@@ -76,6 +77,28 @@ def linkage_rate(original: np.ndarray, released: np.ndarray) -> float:
     tied = np.maximum(high - low, 1)
     own_is_nearest = np.abs(original - released) <= nearest + tolerance
     return float(np.mean(own_is_nearest / tied))
+
+
+def joint_linkage_rate(original: np.ndarray, released: np.ndarray) -> float:
+    """Share of released records whose nearest original record, over all columns, is theirs.
+
+    Both arguments hold one row per record and one column per released number. The columns
+    are standardized by the original's spread first, so no column dominates the distance.
+    Ties count as in `linkage_rate`. Pure chance gives 1 / rows.
+    """
+    original = np.asarray(original, dtype=float)
+    released = np.asarray(released, dtype=float)
+    spread = original.std(axis=0)
+    spread[spread == 0] = 1.0
+    centre = original.mean(axis=0)
+    scaled_original = (original - centre) / spread
+    scaled_released = (released - centre) / spread
+    tree = cKDTree(scaled_original)
+    nearest = tree.query(scaled_released)[0]
+    reach = nearest + 1e-9 * (1 + nearest)
+    tied = tree.query_ball_point(scaled_released, r=reach, return_length=True)
+    own_distance = np.linalg.norm(scaled_original - scaled_released, axis=1)
+    return float(np.mean((own_distance <= reach) / np.maximum(tied, 1)))
 
 
 def _ks_statistic(original: np.ndarray, released: np.ndarray) -> float:

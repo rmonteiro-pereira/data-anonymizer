@@ -58,6 +58,18 @@ def present_counts(table: Table, column: str) -> Counter[Any]:
     return Counter(dict(_collected(grouped).iter_rows()))
 
 
+def distinct_entity_counts(table: Table, column: str, by: str) -> Counter[Any]:
+    """How many distinct entities (values of `by`) have each present value of the column.
+
+    The entity is read from its original values, so an earlier action that replaced it does
+    not change the count.
+    """
+    entity = table.original_column(by)
+    pairs = table.frame.select(nw.col(column), nw.col(entity)).drop_nulls().unique()
+    grouped = pairs.group_by(column).agg(nw.len())
+    return Counter(dict(_collected(grouped).iter_rows()))
+
+
 def _collected(frame: nw.DataFrame[Any] | nw.LazyFrame[Any]) -> nw.DataFrame[Any]:
     if isinstance(frame, nw.LazyFrame):
         return frame.collect()

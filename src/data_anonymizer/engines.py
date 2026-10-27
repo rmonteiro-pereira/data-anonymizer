@@ -144,12 +144,20 @@ def _is_missing(item: Any) -> bool:
     return item is None or (isinstance(item, float) and item != item)
 
 
-def to_pandas_like(frame: WorkingFrame, original: Any, changed: Collection[str]) -> Any:
+def to_pandas_like(
+    frame: WorkingFrame,
+    original: Any,
+    changed: Collection[str],
+    *,
+    row_order: Sequence[int] | None = None,
+) -> Any:
     """Return an in-memory frame as pandas, shaped like the user's original pandas table.
 
     Columns no action changed are the user's own columns, with their dtype and values.
     Changed integer and boolean columns with gaps keep nullable pandas types, so large
-    integers stay exact. The original index is restored.
+    integers stay exact. The original index is restored, unless `row_order` says the rows
+    were moved: it gives the original position of each row, and the index is then a fresh
+    range.
     """
     released = collect(frame).to_native()
     columns = {}
@@ -157,11 +165,18 @@ def to_pandas_like(frame: WorkingFrame, original: Any, changed: Collection[str])
         if name in changed or name not in original.columns:
             columns[name] = _pandas_column(released.get_column(name), original.get(name))
         else:
-            columns[name] = original[name].reset_index(drop=True)
+            columns[name] = _own_column(original[name], row_order)
     result = pd.DataFrame(columns)
-    if len(result) == len(original):
+    if row_order is None and len(result) == len(original):
         result.index = original.index
     return result
+
+
+def _own_column(values: Any, row_order: Sequence[int] | None) -> Any:
+    plain = values.reset_index(drop=True)
+    if row_order is None:
+        return plain
+    return plain.iloc[list(row_order)].reset_index(drop=True)
 
 
 def _pandas_column(values: pl.Series, original: Any) -> Any:

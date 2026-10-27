@@ -179,6 +179,7 @@ def test_extra_techniques_can_be_used_in_plans(people):
     plan = AnonymizationPlan(
         fidelity=Fidelity.STATISTICAL,
         actions=[ColumnAction(column="full_name", technique="uppercase")],
+        shuffle_rows=False,
     )
 
     result = Anonymizer(extra_techniques=[shout]).apply(people, plan)
