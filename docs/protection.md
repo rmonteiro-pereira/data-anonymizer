@@ -252,8 +252,10 @@ records that share one vector and one diagnosis make the release `at_risk`.
 
 MDAV counts rows, not people. With an `entity_column` in the plan, each entity becomes one
 point (the mean of its rows), every group holds at least `group_size` distinct entities, and
-all the rows of an entity get its group's vector; the isolated-record and skew checks then count
-entities too. Without an `entity_column`, the five identical visits of one person are five
+all the rows of an entity get its group's vector; the k-anonymity, isolated-record and skew
+checks then count distinct entities per combination of all released quasi-identifiers (listed
+ones and joint columns together), so two people who share a vector and a district are a group of
+two, not of ten rows (t-closeness still weighs groups by rows). Without an `entity_column`, the five identical visits of one person are five
 records and can form a group on their own.
 
 Limits: the work grows

@@ -242,8 +242,9 @@ def _surviving_share(before: pd.Series, after: pd.Series) -> float:
 def _exposures(plan: AnonymizationPlan, privacy: PrivacyReport) -> list[str]:
     problems = []
     if privacy.k_anonymity < plan.k_target:
+        counted = "entities" if privacy.counts_entities else "rows"
         problems.append(
-            f"{privacy.rows_below_target} rows sit in quasi-identifier groups smaller than "
+            f"{privacy.rows_below_target} {counted} sit in quasi-identifier groups smaller than "
             f"{plan.k_target} (k-anonymity is {privacy.k_anonymity})"
         )
     for attribute, diversity in privacy.l_diversity.items():

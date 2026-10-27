@@ -243,3 +243,32 @@ def test_without_an_entity_column_repeated_rows_of_one_person_count_as_several()
 
     outlier = outcome.data[(outcome.data["height"] == 999.1) & (outcome.data["weight"] == 800.2)]
     assert outlier["person"].nunique() == 1
+
+
+def test_k_counts_people_per_combination_of_a_quasi_identifier_and_the_joint_columns():
+    people = np.repeat(np.arange(5), 5)
+    frame = pd.DataFrame(
+        {
+            "person": people,
+            "height": np.repeat(999.1, 25),
+            "weight": np.repeat(800.2, 25),
+            "district": np.where(people < 2, "north", "south"),
+        }
+    )
+    plan = AnonymizationPlan(
+        fidelity=Fidelity.STATISTICAL,
+        protection=Protection.ANONYMIZATION,
+        entity_column="person",
+        direct_identifiers=["person"],
+        quasi_identifiers=["district"],
+        actions=[ColumnAction(column="person", technique="scramble_categories")],
+        joint_microaggregation=[JointMicroaggregation(columns=["height", "weight"], group_size=5)],
+        k_target=5,
+    )
+
+    result = Anonymizer(seed=1).apply(frame, plan)
+
+    assert result.privacy_after.k_anonymity == 2
+    assert result.privacy_after.counts_entities
+    assert result.protection.level is ProtectionLevel.AT_RISK
+    assert any("entities sit in" in problem for problem in result.protection.problems)

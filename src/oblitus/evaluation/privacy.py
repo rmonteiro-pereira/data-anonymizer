@@ -45,6 +45,7 @@ class PrivacyReport:
     l_diversity: dict[str, int] = field(default_factory=dict)
     t_closeness: dict[str, float] = field(default_factory=dict)
     t_target: float | None = None
+    counts_entities: bool = False
 
     @property
     def meets_target(self) -> bool:
@@ -66,15 +67,20 @@ def assess_privacy(
     *,
     k_target: int = 5,
     t_target: float | None = None,
+    entity_column: str | None = None,
 ) -> PrivacyReport:
     """Compute k-anonymity and l-diversity of a pandas, Polars or DuckDB table.
 
-    With a `t_target`, t-closeness is measured too and held against that threshold.
+    With a `t_target`, t-closeness is measured too and held against that threshold. With an
+    `entity_column` present in the table, a group's size is its number of distinct entities,
+    so k is the smallest number of people (not rows) sharing one quasi-identifier combination,
+    and `rows_below_target` counts the entities in groups below the target.
     """
     working = as_working_frame(frame)
     names = working.collect_schema().names()
     columns = [column for column in quasi_identifiers if column in names]
-    counts = _counts(working, [a for a in sensitive_attributes if a in names])
+    entity = entity_column if entity_column in names and entity_column not in columns else None
+    counts = _counts(working, [a for a in sensitive_attributes if a in names], entity)
     total = counts[_ROWS]
     if not columns or total == 0:
         return PrivacyReport(
@@ -83,6 +89,7 @@ def assess_privacy(
             k_target=k_target,
             rows_below_target=0,
             share_below_target=0.0,
+            counts_entities=entity is not None,
         )
 
     # A sensitive column released blank, or with one value for everyone, teaches an attacker
@@ -92,7 +99,7 @@ def assess_privacy(
         attribute for attribute, distinct in counts.items() if attribute != _ROWS and distinct >= 2
     ]
     groups = working.group_by(columns).agg(
-        nw.len().alias(GROUP_SIZE),
+        _group_size(entity).alias(GROUP_SIZE),
         *[distinct_present(attribute).alias(attribute) for attribute in scored],
     )
     sizes = nw.col(GROUP_SIZE)
@@ -112,6 +119,7 @@ def assess_privacy(
         l_diversity={attribute: int(summary[attribute]) for attribute in scored},
         t_closeness=t_closeness(working, columns, scored) if t_target is not None else {},
         t_target=t_target,
+        counts_entities=entity is not None,
     )
 
 
@@ -142,14 +150,20 @@ def group_sizes(
     person with many rows counts once. Blank cells form a group of their own, as they do for
     an attacker who sees them.
     """
-    size = nw.len() if entity_column is None else nw.col(entity_column).n_unique()
-    return frame.group_by(list(columns)).agg(size.alias(GROUP_SIZE))
+    return frame.group_by(list(columns)).agg(_group_size(entity_column).alias(GROUP_SIZE))
 
 
-def _counts(frame: WorkingFrame, attributes: Sequence[str]) -> dict[str, int]:
+def _group_size(entity_column: str | None) -> nw.Expr:
+    return nw.len() if entity_column is None else nw.col(entity_column).n_unique()
+
+
+def _counts(
+    frame: WorkingFrame, attributes: Sequence[str], entity_column: str | None = None
+) -> dict[str, int]:
+    """The size of the table (rows, or entities when given) and each attribute's distinct count."""
     row = first_row(
         frame.select(
-            nw.len().alias(_ROWS),
+            _group_size(entity_column).alias(_ROWS),
             *[distinct_present(attribute).alias(attribute) for attribute in attributes],
         )
     )

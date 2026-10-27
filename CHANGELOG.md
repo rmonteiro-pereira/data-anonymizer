@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **k-anonymity counts people when the plan has an `entity_column`.** The reported k and the
+  rows-below-target figure count distinct entities per combination of every released
+  quasi-identifier, joint microaggregation columns included, so a group the extra column
+  splits down to two people is `at_risk` (`PrivacyReport.counts_entities` says which unit).
 - **The skew check covers text columns of any cardinality.** A diagnosis column with more than
   50 distinct values no longer switches the check off; only numeric columns above 50 values are
   skipped.

@@ -521,6 +521,7 @@ class Anonymizer:
             plan.sensitive_attributes,
             k_target=plan.k_target,
             t_target=plan.t_target,
+            entity_column=plan.entity_column,
         )
 
 
