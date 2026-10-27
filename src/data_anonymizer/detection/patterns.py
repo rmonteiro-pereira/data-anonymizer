@@ -1,9 +1,16 @@
 """Recognizers that decide whether a value looks like a known kind of personal data.
 
 Each recognizer pairs a regular expression with an optional checksum from
-`checksums.py`. Two flags limit where a recognizer may fire:
+`checksums.py`. These settings limit where a recognizer may fire:
 - `in_text`: whether it is searched for inside free text. Bare-digit formats such
-  as NIS or CNH are left out, because prose is full of numbers that fit them.
+  as NIS, CNH or IMEI are left out, because prose is full of numbers that fit them.
+- `strong`: whether a match is unlikely to be an accident (about 1-3% of random values pass).
+  The value evidence trusts a strong recognizer at half the values, and keeps it in
+  columns whose names say they hold business codes.
+- `chance_rate`: how often a random number of the right shape passes the validator. Free
+  text must show clearly more hits than this before it counts as holding personal data.
+- `max_lost_zeros`: how many leading zeros may be restored, for checks that random
+  numbers often pass.
 - `needs_name_hint`: whether a matching column also needs a column name that
   points to the category, for formats with no checksum that ordinary codes share,
   such as UUIDs, which may be PIX keys or plain record keys.
@@ -34,6 +41,10 @@ class ValueRecognizer:
     in_text: bool = True
     needs_name_hint: bool = False
     digit_length: int | None = None
+    max_lost_zeros: int | None = None
+    text_validator: Callable[[str], bool] | None = None
+    chance_rate: float = 0.0
+    strong: bool = False
 
     def matches(self, value: str) -> bool:
         """Return True when the whole value is an instance of this kind."""
@@ -42,16 +53,25 @@ class ValueRecognizer:
         return self._is_valid(value)
 
     def matches_padded(self, value: str) -> bool:
-        """Like `matches`, but restores leading zeros lost when numbers were stored as integers."""
-        if self.digit_length is not None and value.isdigit() and len(value) < self.digit_length:
-            value = value.zfill(self.digit_length)
+        """Like `matches`, but restores leading zeros lost to integer storage or a spreadsheet."""
+        if self._lost_zeros(value):
+            value = value.zfill(self.digit_length or len(value))
         return self.matches(value)
+
+    def _lost_zeros(self, value: str) -> bool:
+        if self.digit_length is None or not value.isdigit():
+            return False
+        missing = self.digit_length - len(value)
+        if self.max_lost_zeros is None:
+            return missing > 0
+        return 0 < missing <= self.max_lost_zeros
 
     def find_spans(self, text: str) -> list[tuple[int, int]]:
         """Return the start and end of every valid occurrence inside free text."""
         spans = []
         for match in self.pattern.finditer(text):
-            if self._is_valid(match.group(0)):
+            found = match.group(0)
+            if self._is_valid(found) and self._is_valid_in_text(found):
                 spans.append(match.span())
         return spans
 
@@ -59,6 +79,11 @@ class ValueRecognizer:
         if self.validator is None:
             return True
         return self.validator(value)
+
+    def _is_valid_in_text(self, value: str) -> bool:
+        if self.text_validator is None:
+            return True
+        return self.text_validator(value)
 
 
 def _recognizer(
@@ -70,6 +95,10 @@ def _recognizer(
     in_text: bool = True,
     needs_name_hint: bool = False,
     digit_length: int | None = None,
+    max_lost_zeros: int | None = None,
+    text_validator: Callable[[str], bool] | None = None,
+    chance_rate: float = 0.0,
+    strong: bool = False,
 ) -> ValueRecognizer:
     return ValueRecognizer(
         category,
@@ -79,20 +108,54 @@ def _recognizer(
         in_text=in_text,
         needs_name_hint=needs_name_hint,
         digit_length=digit_length,
+        max_lost_zeros=max_lost_zeros,
+        text_validator=text_validator,
+        chance_rate=chance_rate,
+        strong=strong,
     )
 
 
 _C = DataCategory
 
+# Phone layouts, as alternatives. Each alternative fixes the size of its digit groups, so
+# CPF (3-3-3-2), IPv4, version strings and dates never fit. The digit count is left to
+# `is_phone_number`.
+_PHONE_LAYOUTS = (
+    # An international prefix makes any grouping safe: +44 7911 123456, +14155552671.
+    r"\+\d{1,3}(?:[\s.-]?\(?\d{1,5}\)?){2,5}",
+    # North America: 3-3-4, with or without a leading 1 and brackets around the area code.
+    r"(?:1[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}",
+    # Brazil, Portugal, the UK and Australia: area code, 4-5 digits, 4 digits.
+    r"(?:\+?\d{1,3}[\s.-])?\(?\d{2,4}\)?[\s.-]?\d{4,5}[\s.-]?\d{4}",
+    # 4-3-3 and 4-3-4: 0800 123 4567, 0412 345 678.
+    r"\d{4}[\s.-]\d{3}[\s.-]\d{3,4}",
+    # France: five pairs.
+    r"\d{2}(?:[\s.-]\d{2}){4}",
+    # UK mobiles and India: 4-5 digits, then 5-6.
+    r"\d{4,5}[\s.-]\d{5,6}",
+)
+# The number must not continue into a longer run of digits on either side.
+_PHONE_PATTERN = r"(?<![\w.+-])(?<!\d[\s.-])(?:" + "|".join(_PHONE_LAYOUTS) + r")(?![\w]|[\s.-]\d)"
+
+# The local part is possessive and may only start after a character outside its class. Without
+# that, a long cell with no "@" is rescanned from every position, which takes quadratic time.
+_EMAIL_PATTERN = r"(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]++@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"
+
+# A one-digit check passes one random number in ten, so padding a short number with many
+# zeros would make small codes look like IMEIs or BSNs. Real leading zeros are one or two.
+_WEAK_CHECK_LOST_ZEROS = 2
+
 # Order breaks exact ties between recognizers: earlier and more specific wins.
 RECOGNIZERS: tuple[ValueRecognizer, ...] = (
-    _recognizer(_C.EMAIL, "email", r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"),
+    _recognizer(_C.EMAIL, "email", _EMAIL_PATTERN, strong=True),
     _recognizer(
         _C.CNPJ,
         "CNPJ",
-        r"\b[0-9A-Z]{2}\.?[0-9A-Z]{3}\.?[0-9A-Z]{3}/?[0-9A-Z]{4}-?\d{2}\b",
+        r"(?i)\b[0-9A-Z]{2}\.?[0-9A-Z]{3}\.?[0-9A-Z]{3}/?[0-9A-Z]{4}-?\d{2}\b",
         checksums.is_valid_cnpj,
         digit_length=14,
+        chance_rate=0.01,
+        strong=True,
     ),
     _recognizer(
         _C.CPF,
@@ -100,9 +163,17 @@ RECOGNIZERS: tuple[ValueRecognizer, ...] = (
         r"\b\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b",
         checksums.is_valid_cpf,
         digit_length=11,
+        chance_rate=0.01,
+        strong=True,
     ),
     _recognizer(
-        _C.CNH, "CNH", r"\b\d{11}\b", checksums.is_valid_cnh, in_text=False, digit_length=11
+        _C.CNH,
+        "CNH",
+        r"\b\d{11}\b",
+        checksums.is_valid_cnh,
+        in_text=False,
+        digit_length=11,
+        strong=True,
     ),
     _recognizer(
         _C.NIS,
@@ -127,6 +198,7 @@ RECOGNIZERS: tuple[ValueRecognizer, ...] = (
         r"\b\d{3}\s?\d{4}\s?\d{4}\s?\d{4}\b",
         checksums.is_valid_cns,
         in_text=False,
+        strong=True,
     ),
     _recognizer(
         _C.VOTER_ID,
@@ -135,17 +207,19 @@ RECOGNIZERS: tuple[ValueRecognizer, ...] = (
         checksums.is_valid_voter_id,
         in_text=False,
         digit_length=12,
+        strong=True,
     ),
     _recognizer(
         _C.INVOICE_KEY,
         "NF-e access key",
         r"\b(?:\d{4}\s?){10}\d{4}\b",
         checksums.is_valid_invoice_key,
+        chance_rate=0.09,
     ),
     _recognizer(
         _C.VEHICLE_PLATE,
         "vehicle plate",
-        r"\b[A-Z]{3}-?\d[A-Z0-9]\d{2}\b",
+        r"(?i)\b[A-Z]{3}-?\d[A-Z0-9]\d{2}\b",
         in_text=False,
         needs_name_hint=True,
     ),
@@ -156,17 +230,31 @@ RECOGNIZERS: tuple[ValueRecognizer, ...] = (
         in_text=False,
         needs_name_hint=True,
     ),
-    _recognizer(_C.IMEI, "IMEI", r"\b\d{2}-?\d{6}-?\d{6}-?\d\b", checksums.is_valid_imei),
     _recognizer(
-        _C.CREDIT_CARD, "payment card", r"\b(?:\d[ -]?){12,18}\d\b", checksums.is_valid_card
+        _C.IMEI,
+        "IMEI",
+        r"\b\d{2}-?\d{6}-?\d{6}-?\d\b",
+        checksums.is_valid_imei,
+        in_text=False,
+        digit_length=15,
+        max_lost_zeros=_WEAK_CHECK_LOST_ZEROS,
+    ),
+    _recognizer(
+        _C.CREDIT_CARD,
+        "payment card",
+        r"\b(?:\d[ -]?){12,18}\d\b",
+        checksums.is_valid_card,
+        chance_rate=0.04,
     ),
     _recognizer(_C.SSN, "US SSN", r"\b\d{3}-\d{2}-\d{4}\b", checksums.is_plausible_ssn),
     _recognizer(_C.NATIONAL_ID, "US ITIN", r"\b9\d{2}-\d{2}-\d{4}\b", checksums.is_plausible_itin),
     _recognizer(
         _C.IBAN,
         "IBAN",
-        r"\b[A-Z]{2}\d{2}(?:\s?[A-Z0-9]{4}){2,7}\s?[A-Z0-9]{1,4}\b",
+        r"(?i)\b[A-Z]{2}\d{2}(?:\s?[A-Z0-9]{4}){2,7}\s?[A-Z0-9]{1,4}\b",
         checksums.is_valid_iban,
+        chance_rate=0.01,
+        strong=True,
     ),
     _recognizer(
         _C.IP_ADDRESS,
@@ -178,19 +266,17 @@ RECOGNIZERS: tuple[ValueRecognizer, ...] = (
         "IPv6 address",
         r"(?:[0-9A-Fa-f]{0,4}:){2,7}[0-9A-Fa-f]{0,4}",
         checksums.is_ip_address,
+        text_validator=checksums.has_enough_ipv6_groups,
     ),
     _recognizer(
         _C.MAC_ADDRESS,
         "MAC address",
         r"\b(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}\b",
     ),
-    _recognizer(_C.URL, "URL", r"https?://[^\s/$.?#][^\s]*"),
+    _recognizer(_C.URL, "URL", r"https?://[^\s/$.?#][^\s]*", strong=True),
     _recognizer(_C.POSTAL_CODE, "CEP", r"\b\d{5}-\d{3}\b"),
     _recognizer(
-        _C.PHONE,
-        "phone number",
-        r"(?:\+\d{1,3}[\s.-]?)?\(?\b\d{2,3}\)?[\s.-]?\d{4,5}[\s.-]?\d{4}\b",
-        checksums.is_phone_number,
+        _C.PHONE, "phone number", _PHONE_PATTERN, checksums.is_phone_number, chance_rate=0.08
     ),
     _recognizer(
         _C.NATIONAL_ID,
@@ -202,8 +288,9 @@ RECOGNIZERS: tuple[ValueRecognizer, ...] = (
     _recognizer(
         _C.NATIONAL_ID,
         "Spanish DNI/NIE",
-        r"\b[0-9XYZ]\d{7}-?[A-Z]\b",
+        r"(?i)\b[0-9XYZ]\d{7}-?[A-Z]\b",
         checksums.is_valid_spanish_id,
+        chance_rate=0.04,
     ),
     _recognizer(
         _C.NATIONAL_ID,
@@ -219,6 +306,7 @@ RECOGNIZERS: tuple[ValueRecognizer, ...] = (
         checksums.is_valid_dutch_bsn,
         in_text=False,
         digit_length=9,
+        max_lost_zeros=_WEAK_CHECK_LOST_ZEROS,
     ),
     _recognizer(
         _C.NATIONAL_ID,
@@ -230,14 +318,15 @@ RECOGNIZERS: tuple[ValueRecognizer, ...] = (
     _recognizer(
         _C.NATIONAL_ID,
         "UK National Insurance number",
-        r"\b[A-Z]{2}\s?\d{2}\s?\d{2}\s?\d{2}\s?[A-D]\b",
+        r"(?i)\b[A-Z]{2}\s?\d{2}\s?\d{2}\s?\d{2}\s?[A-D]\b",
         checksums.is_valid_nino,
     ),
     _recognizer(
         _C.NATIONAL_ID,
         "Italian codice fiscale",
-        r"\b[A-Z]{6}[0-9LMNPQRSTUV]{2}[A-EHLMPR-T][0-9LMNPQRSTUV]{2}[A-Z][0-9LMNPQRSTUV]{3}[A-Z]\b",
+        r"(?i)\b[A-Z]{6}[0-9LMNPQRSTUV]{2}[A-EHLMPR-T][0-9LMNPQRSTUV]{2}[A-Z][0-9LMNPQRSTUV]{3}[A-Z]\b",
         checksums.is_valid_fiscal_code,
+        chance_rate=0.04,
     ),
 )
 

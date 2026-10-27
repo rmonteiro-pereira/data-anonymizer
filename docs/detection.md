@@ -11,9 +11,9 @@
 
 | Sensitivity | Meaning | Categories |
 |---|---|---|
-| direct identifier | Points at one person on its own | email, phone, person_name, cpf, cnpj, ssn, credit_card, iban, ip_address, street_address, cnh, nis, health_card, voter_id, vehicle_registration, vehicle_plate, pix_key, invoice_key, national_id, imei, mac_address, record_id, free_text_with_pii |
-| quasi-identifier | Identifies in combination | url, postal_code, city, date_of_birth, age, gender, geo_coordinate |
-| sensitive | What an attacker wants to learn | income, health |
+| direct identifier | Points at one person, or one company, on its own | email, phone, person_name, cpf, cnpj, ssn, credit_card, iban, ip_address, street_address, cnh, nis, health_card, voter_id, vehicle_registration, vehicle_plate, pix_key, invoice_key, national_id, imei, mac_address, organization, record_id, free_text_with_pii |
+| quasi-identifier | Identifies in combination | url, postal_code, city, date_of_birth, age, gender, geo_coordinate, nationality, marital_status, business_segment, floor_area |
+| sensitive | What an attacker wants to learn | income, health, special_category (race, religion, politics, union, sexual orientation, biometric, genetic), business_revenue, rent |
 | non-sensitive | Nothing found | generic_numeric, generic_category, generic_datetime, generic_text |
 
 A CNPJ is kept as a direct identifier, because for a sole proprietor (MEI) it identifies a
@@ -27,19 +27,19 @@ person under the LGPD.
 | CNPJ | Two mod-11 check digits. The alphanumeric format in use since July 2026 is supported: each letter counts as its ASCII code minus 48 |
 | CNH | Two check digits with the offset rule |
 | PIS / PASEP / NIS / NIT | Mod-11 check digit, weights 3,2,9,8,7,6,5,4,3,2 |
-| RENAVAM | Mod-11 check digit. The check is equivalent to NIS, so it is only chosen when the column name says `renavam` |
+| RENAVAM | Mod-11 check digit. The check is equivalent to NIS, so it is only chosen when the column name says `renavam`. The legacy 9-digit form is padded with two zeros first |
 | CNS (health card) | Mod-11 rule for cards starting 7–9; reconstruction rule for cards starting 1–2 |
 | Título de Eleitor | State code 01–28 and two check digits. Both the general rule and the SP/MG remainder rule are accepted |
 | NF-e access key | 44 digits, mod-11 check digit |
 | Vehicle plate | Old and Mercosul formats; needs a name hint (`placa`, `plate`) |
 | PIX random key | UUID v4; needs a name hint (`pix`, `chave_pix`), otherwise a unique UUID column is a record ID |
 | CEP | `00000-000` |
-| Phone | Formatted numbers with 10–13 digits. Bare digit strings only when they look like a Brazilian mobile (area code then 9), because bare 10–12 digit numbers are usually timestamps or order numbers |
-| Payment card | Luhn, a known network prefix, and that network's length. 15-digit numbers must start 34 or 37, which keeps IMEIs out |
-| IMEI | 15 digits with a Luhn check digit |
+| Phone | Layouts with fixed digit groups: North American 3-3-4 with any separators or brackets, `+<country>` numbers in any grouping (including compact E.164), Brazilian, Portuguese, British, Australian and French groupings. Formatted numbers need 10–13 digits. Bare digit strings only when they look like a Brazilian mobile (area code then 9), because bare 10–12 digit numbers are usually timestamps or order numbers. CPF, CNPJ, IPv4 addresses, version strings and dates never match |
+| Payment card | Luhn, a known network prefix, and that network's length: Visa 13, 16 or 19; Mastercard (51–55, 2221–2720) 16; American Express (34, 37) 15; Diners Club 14–19; Discover, JCB, UnionPay, Elo, Hipercard and Maestro 16–19. 15-digit numbers must start 34 or 37, which keeps IMEIs out |
+| IMEI | 15 digits with a Luhn check digit. Not searched for inside free text, where 15-digit order numbers pass the check one time in ten |
 | IBAN | ISO 13616 mod-97, with or without spaces |
 | US SSN / ITIN | Issued ranges; ITIN group 70–88 or 90–99 except 93 |
-| IPv4 / IPv6 | Parsed by the standard library |
+| IPv4 / IPv6 | Parsed by the standard library. Inside free text an IPv6 address needs at least three groups, so `::` and `std::vector` do not count |
 | MAC address | Six hexadecimal pairs |
 | Aadhaar | 12 digits, Verhoeff check |
 | Spanish DNI / NIE | Mod-23 check letter |
@@ -50,40 +50,77 @@ person under the LGPD.
 | Italian codice fiscale | Check letter |
 | Email, URL | Format |
 
-These have no value check and are found by column name only: person names, street
-addresses, cities, RG and passport numbers, age, gender, coordinates, income and
-health. The checks are in `src/data_anonymizer/detection/checksums.py`.
+IBAN, DNI/NIE, UK National Insurance, codice fiscale, alphanumeric CNPJ and vehicle plates are matched in upper and lower case.
+
+These have no value check and are found by column name only: street addresses, cities,
+RG and passport numbers, age, gender, coordinates, income, health, special categories,
+nationality, marital status and the business figures (segment, revenue, rent, floor
+area). Organizations are found by name only. Person names are found by name, and a
+column named after a person (`customer`, `titular`, `owner`) also needs values shaped
+like names. The checks are in `src/data_anonymizer/detection/checksums.py`.
 
 ## How a column is classified
 
 1. **Storage kind.** It comes from the dtype and values: integer, float, boolean,
    category, datetime or text. Whole-number floats count as integers, and text that
-   parses as dates counts as dates.
+   parses as dates counts as dates. Placeholder text counts as missing first: blanks,
+   `-`, `--`, `N/D`, `NA`, `n/a`, `null`, `none`, `nan`, `?`, `sem informação`, and
+   numbers made of one repeated digit, such as `000.000.000-00`.
 2. **Name hints.** The column name is split into tokens, with accents removed and
    camelCase split. It is then matched against English and Portuguese hints, such as
-   `dataNascimento` → date of birth, or `cel` → phone. Negative hints, such as `order`,
-   `pedido`, `protocolo`, `sku`, `timestamp` and `nsu`, mark business codes. In those
-   columns, bare digit strings are never treated as documents or phones.
-3. **Value evidence.** Every recognizer runs on a sample of up to 1000 values. Integer
-   columns get their lost leading zeros back first. A recognizer that needs a name hint
+   `dataNascimento` → date of birth, or `cel` → phone. A name word (`nome`, `name`, `nm`)
+   next to a person word (`cliente`, `paciente`, `mae`, `titular`, `owner`, `given`, ...),
+   in any order and with `do`/`da`/`de`/`of` between, is a person name. A qualifier word
+   (`count`, `qtd`, `type`, `tipo`, `status`, `flag`, `score`, `brand`, `ratio`,
+   `verified`, `calls`, `total`, `rate`) beside a hint means the column describes the
+   category rather than holding it, so `email_count` and `address_type` suggest nothing.
+   Negative hints, such as `order`,
+   `pedido`, `protocolo`, `sku`, `ref`, `code`, `timestamp` and `nsu`, mark business
+   codes. In those columns only the recognizers with a strong check run (CPF, CNPJ, CNH,
+   Título de Eleitor, CNS, IBAN, email, URL), so a part number is not taken for a phone,
+   a version string for an IP address or a Luhn-valid reference for a card. A hint
+   the name itself spells out stays active: `order_cpf` is still checked for CPFs.
+3. **Value evidence.** Every recognizer runs on a sample of up to 1000 values. Digit-only
+   values get their lost leading zeros back first, whether stored as integers or as text. A recognizer that needs a name hint
    only runs when the name points to it. A category passes when:
    - 80% of values pass its checksum, or
-   - 90% match its format, when the category has no checksum.
+   - 90% match its format, when the category has no checksum, or
+   - 50% of values pass a strong check (CPF, CNPJ, CNH, Título de Eleitor, CNS, IBAN,
+     email, URL), with the confidence capped at 0.55 so the plan asks for review.
+
+   A column that mixes strong direct identifiers, such as CPF and CNPJ, passes on the
+   share of values that fit any of them. It takes the larger category, and the evidence
+   names the split.
 4. **Confidence tiers.**
    - Values pass a checksum: the confidence is the share of passing values.
-   - The name also agrees: plus 0.15.
+   - The name also agrees: plus 0.15. When two candidates tie, the one the name agrees
+     with wins.
    - A format match only: 0.8 times the share.
    - A runner-up within 0.05 of the winner, with no name to settle it: the evidence
      names both, and confidence drops by 0.25.
 5. **Fallbacks, in order.**
-   1. A name hint alone gives 0.7. When the values contradict a checkable hint, the
-      confidence is 0.4 and the plan asks for review.
-   2. Text averaging at least two words per value, where 10% of values embed personal
-      data, is classed as free text with personal data. Recognizers that random numbers
-      in prose would trigger, such as CNH, NIS or CNS, are not used inside text.
-   3. Gender labels.
-   4. Dates in the past, spread over decades and with no time of day, are birth dates
+   1. A column named after a person whose values are two to five alphabetic words in
+      title case, such as `Ana da Silva`, is a person name (0.7).
+   2. A name hint alone gives 0.55, so the plan always asks for review. When the values
+      contradict a checkable hint, the confidence is 0.4. When the storage kind cannot
+      hold the category, such as a boolean `email` or a float `sexo`, it is 0.3.
+   3. Dates in the past that are mostly adult, spread over decades (a standard deviation
+      of 8 to 30 years), with no time of day and a typical age under 100, are birth dates
       (0.5).
-   5. Nearly unique short values are a record ID (0.5).
+   4. Text averaging at least two words per value, where 10% of values embed personal
+      data, is classed as free text with personal data. Recognizers that random numbers
+      in prose would trigger, such as CNH, NIS, CNS or IMEI, are not used inside text. A
+      recognizer that can fire by chance, such as phone or card, counts only when its hits
+      are more than twice its chance rate.
+   5. Gender labels.
+   6. A strong check that matched more than 20% of values, but too few to pass: that
+      category at 0.4, never "no sign of personal data".
+   7. Nearly unique short values are a record ID (0.5). Integers count only when they look
+      like keys: non-negative, in a range under ten times the row count. Epoch
+      timestamps, amounts in cents and populations stay numeric.
+
+`scan` accepts object columns that hold lists, dicts, sets or arrays by reading their
+text. It raises `TableFormatError` for duplicate column names and `ValueError` for a
+`sample_size` below 1.
 
 Findings below 0.6 confidence get "please review" in the proposed plan.

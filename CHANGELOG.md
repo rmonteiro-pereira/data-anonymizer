@@ -18,6 +18,27 @@
     birth dates recognized from their values.
   - Fixes: bare 10–12 digit numbers (timestamps, order numbers) were classed as phones,
     and IMEIs as payment cards.
+  - Phone numbers are recognized in North American 3-3-4, compact E.164 and European
+    layouts; CPF, CNPJ, IPv4 addresses, versions and dates no longer match.
+  - Payment cards must have a length their network issues. IBAN, DNI/NIE, NINO, codice
+    fiscale, alphanumeric CNPJ and plates match in lower case.
+  - Values: placeholders (blanks, `N/D`, `000.000.000-00`) count as missing; a strong check
+    passes at 50% of values with a review-level confidence; a column that mixes CPF and
+    CNPJ is detected; a name that agrees wins ties (`renavam` is no longer a NIS); digit
+    strings in text columns get their leading zeros back; negative name hints drop every
+    recognizer without a strong check, yet keep the category the name spells out.
+  - Names: person-name columns in many spellings (`nome_do_cliente`, `nm_paciente`,
+    `mother_name`) and person-word columns with name-shaped values; organizations,
+    more street hints and `bairro`; special categories (race, religion, politics, union,
+    biometric, genetic), nationality, marital status, segment, revenue, rent and floor
+    area. Qualifier words (`count`, `type`, `status`, ...) suppress a name hint.
+  - A name-only guess is 0.55, so the plan always asks for review, and 0.3 when the storage
+    kind cannot hold the category.
+  - Integer columns are record IDs only when the values look like keys, and birth dates
+    need mostly adult ages. `scan` reads nested object columns, refuses duplicate column
+    names with `TableFormatError`, and refuses a `sample_size` below 1.
+  - Free text: `::` and `std::vector` no longer count as IPv6, IMEI is not searched in
+    prose, a recognizer must beat its chance rate, and the email pattern runs in linear time.
 - Noise explorer: an interactive page per column, from `explore-noise`. Disclosure
   metrics: record linkage, interval disclosure, per-record shift, and Wasserstein / IQR.
 - Synthesis patterns:

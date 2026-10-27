@@ -4,7 +4,7 @@ import warnings
 
 import pandas as pd
 
-from data_anonymizer.taxonomy import ColumnKind
+from data_anonymizer.taxonomy import ColumnKind, DataCategory
 
 # A text column with at most this many distinct values, or where distinct values
 # are under this share of the rows, is treated as a set of categories.
@@ -13,6 +13,33 @@ _MAX_CATEGORY_SHARE = 0.5
 
 # Share of text values that must parse as dates before the column counts as dates.
 _DATE_PARSE_SHARE = 0.9
+
+
+_TEXTUAL = frozenset({ColumnKind.TEXT, ColumnKind.CATEGORY})
+# Documents, names and addresses are text, or digits that integer storage can hold.
+_IDENTIFYING = _TEXTUAL | {ColumnKind.INTEGER}
+_AMOUNTS = frozenset({ColumnKind.INTEGER, ColumnKind.FLOAT, ColumnKind.TEXT})
+_KINDS_THAT_CAN_HOLD: dict[DataCategory, frozenset[ColumnKind]] = {
+    DataCategory.AGE: frozenset({ColumnKind.INTEGER, ColumnKind.FLOAT}),
+    DataCategory.GENDER: _IDENTIFYING | {ColumnKind.BOOLEAN},
+    DataCategory.GEO_COORDINATE: frozenset({ColumnKind.FLOAT, ColumnKind.INTEGER, ColumnKind.TEXT}),
+    DataCategory.DATE_OF_BIRTH: _IDENTIFYING | {ColumnKind.DATETIME},
+    DataCategory.INCOME: _AMOUNTS,
+    DataCategory.BUSINESS_REVENUE: _AMOUNTS,
+    DataCategory.RENT: _AMOUNTS,
+    DataCategory.FLOOR_AREA: _AMOUNTS,
+    DataCategory.HEALTH: _IDENTIFYING | {ColumnKind.BOOLEAN},
+    DataCategory.SPECIAL_CATEGORY: _IDENTIFYING | {ColumnKind.BOOLEAN},
+}
+
+
+def can_hold(kind: ColumnKind, category: DataCategory) -> bool:
+    """True when a column stored as this kind could hold values of this category.
+
+    A boolean or float column cannot hold an email, and a float cannot hold a gender, so a
+    column name that suggests either is a coincidence.
+    """
+    return kind in _KINDS_THAT_CAN_HOLD.get(category, _IDENTIFYING)
 
 
 def infer_kind(values: pd.Series) -> ColumnKind:
