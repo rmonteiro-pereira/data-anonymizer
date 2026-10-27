@@ -75,16 +75,59 @@ def test_every_group_holds_at_least_k_rows_and_no_cell_is_blanked():
     assert released["state"].notna().all()
 
 
-def test_numbers_are_replaced_by_the_range_of_their_group():
+def test_numbers_are_replaced_by_the_cuts_that_bound_their_group():
     frame = pd.DataFrame({"age": [20, 22, 30, 31, 40, 41, 50, 52]})
 
     outcome = enforce_k_anonymity_by_mondrian(frame, ["age"], 2)
 
-    assert sorted(set(outcome.data["age"])) == ["20-22", "30-31", "40-41", "50-52"]
-    ranges = outcome.data["age"]
-    for original, text in zip(frame["age"], ranges, strict=True):
-        low, high = (int(part) for part in text.split("-"))
-        assert low <= original <= high
+    assert outcome.data["age"].tolist() == [
+        "under 30",
+        "under 30",
+        "30 to under 40",
+        "30 to under 40",
+        "40 to under 50",
+        "40 to under 50",
+        "50 or more",
+        "50 or more",
+    ]
+
+
+def test_an_outlier_does_not_move_the_description_of_its_group():
+    ages = [20] * 5 + [40] * 5 + [90]
+    for style in (RangeStyle.RANGE, RangeStyle.MIDPOINT):
+        with_outlier = pd.DataFrame({"age": ages})
+        without_outlier = pd.DataFrame({"age": ages[:-1] + [41]})
+
+        released = enforce_k_anonymity_by_mondrian(with_outlier, ["age"], K, style=style)
+        neighbour = enforce_k_anonymity_by_mondrian(without_outlier, ["age"], K, style=style)
+
+        assert released.data["age"].tolist() == neighbour.data["age"].tolist()
+        assert "90" not in set(released.data["age"].astype(str))
+
+
+def test_the_outermost_groups_are_open_ended():
+    frame = pd.DataFrame({"age": [20] * 5 + [40] * 5 + [90]})
+
+    released = enforce_k_anonymity_by_mondrian(frame, ["age"], K).data["age"]
+
+    assert set(released) == {"under 40", "40 or more"}
+
+
+def test_the_midpoint_style_publishes_the_group_median():
+    frame = pd.DataFrame({"age": [20] * 5 + [40] * 5 + [90]})
+
+    released = enforce_k_anonymity_by_mondrian(frame, ["age"], K, style=RangeStyle.MIDPOINT)
+
+    assert set(released.data["age"]) == {20.0, 40.0}
+
+
+def test_a_date_outlier_does_not_show_in_the_description():
+    days = pd.to_datetime(["2000-01-01"] * 5 + ["2001-01-01"] * 5 + ["2090-01-01"])
+    frame = pd.DataFrame({"birth": days})
+
+    released = enforce_k_anonymity_by_mondrian(frame, ["birth"], K).data["birth"]
+
+    assert set(released) == {"before 2001-01-01", "2001-01-01 or later"}
 
 
 def test_the_midpoint_style_keeps_numbers_and_dates_as_numbers_and_dates():
@@ -98,14 +141,15 @@ def test_the_midpoint_style_keeps_numbers_and_dates_as_numbers_and_dates():
     assert released.groupby(["age", "birth"]).size().min() >= K
 
 
-def test_dates_are_written_as_a_range_of_dates():
+def test_dates_are_written_as_the_cuts_that_bound_their_group():
     frame = _people()
 
     outcome = enforce_k_anonymity_by_mondrian(frame, ["birth"], K)
 
-    sample = outcome.data["birth"].iloc[0]
-    assert " to " in sample
-    assert sample[:4].isdigit()
+    texts = set(outcome.data["birth"])
+    assert any(text.startswith("before 19") for text in texts)
+    assert any(text.endswith(" or later") for text in texts)
+    assert any(" to before " in text for text in texts)
 
 
 def test_categories_become_the_set_of_their_group():

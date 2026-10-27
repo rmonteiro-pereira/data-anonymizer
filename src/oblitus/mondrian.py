@@ -7,15 +7,15 @@ Ramakrishnan, 2006) keeps every row and makes every quasi-identifier coarser ins
    whole table, and cut the group at its median. Rows that share a value stay together
    (the strict variant), so a cut never splits equal values.
 3. Cut each half the same way while both halves would keep at least k rows.
-4. Replace each quasi-identifier cell with the description of its group: the range of its
-   numbers or dates, or the set (or closest ancestor) of its categories.
+4. Replace each quasi-identifier cell with the description of its group: the cuts that bound
+   its numbers or dates, or the set (or closest ancestor) of its categories.
 
 Cutting works on the distinct quasi-identifier combinations and how many rows each has, so
 the work does not grow with duplicated rows, and the result is the same on every engine.
 """
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import narwhals as nw
@@ -23,7 +23,7 @@ import numpy as np
 
 from oblitus.engines import WorkingFrame, to_native, to_working_frame
 from oblitus.generalization_hierarchies import GeneralizationHierarchy
-from oblitus.generalized_column import GeneralizedColumn
+from oblitus.generalized_column import OPEN, GeneralizedColumn
 from oblitus.group_rewrite import distinct_rows, overwrite_by_key
 from oblitus.plan import RangeStyle
 
@@ -85,7 +85,10 @@ def _generalize(
     groups = partition_rows(dimensions, weights, k)
     keys = list(zip(*[combinations.get_column(name).to_list() for name in columns], strict=True))
     replacements = {
-        dimension.name: (_group_descriptions(dimension, groups, len(keys)), dimension.output_dtype)
+        dimension.name: (
+            _group_descriptions(dimension, groups, weights),
+            dimension.output_dtype,
+        )
         for dimension in dimensions
     }
     rewritten = overwrite_by_key(frame, columns, keys, replacements)
@@ -93,41 +96,55 @@ def _generalize(
 
 
 def _group_descriptions(
-    dimension: GeneralizedColumn, groups: list[np.ndarray], combinations: int
+    dimension: GeneralizedColumn, groups: list["Partition"], weights: np.ndarray
 ) -> list[Any]:
     """For each combination, the description of the group it landed in."""
-    descriptions: list[Any] = [None] * combinations
-    for members in groups:
-        description = dimension.describe(members)
-        for position in members:
+    descriptions: list[Any] = [None] * len(weights)
+    for group in groups:
+        bounds = group.bounds.get(dimension.name, OPEN)
+        description = dimension.describe(group.members, weights, bounds)
+        for position in group.members:
             descriptions[position] = description
     return descriptions
 
 
+@dataclass(frozen=True, slots=True)
+class Partition:
+    """A group of combinations and, per column, the cuts that enclose it.
+
+    A bound is a position in the column's order. The group holds values from the low bound up
+    to, not including, the high bound. A bound that no cut set is infinite.
+    """
+
+    members: np.ndarray
+    bounds: dict[str, tuple[float, float]] = field(default_factory=dict)
+
+
 def partition_rows(
     dimensions: Sequence[GeneralizedColumn], weights: np.ndarray, k: int
-) -> list[np.ndarray]:
+) -> list[Partition]:
     """Cut the combinations into groups holding at least k rows each, by median cuts.
 
-    `weights` is the row count of each combination. Returns the positions of the
-    combinations of every group. A combination is never split between groups.
+    `weights` is the row count of each combination. A combination is never split between
+    groups.
     """
-    pending = [np.arange(len(weights))]
-    finished: list[np.ndarray] = []
+    pending = [Partition(np.arange(len(weights)))]
+    finished: list[Partition] = []
     while pending:
-        members = pending.pop()
-        halves = _cut(dimensions, weights, members, k)
+        group = pending.pop()
+        halves = _cut(dimensions, weights, group, k)
         if halves is None:
-            finished.append(members)
+            finished.append(group)
         else:
             pending.extend(halves)
     return finished
 
 
 def _cut(
-    dimensions: Sequence[GeneralizedColumn], weights: np.ndarray, members: np.ndarray, k: int
-) -> tuple[np.ndarray, np.ndarray] | None:
+    dimensions: Sequence[GeneralizedColumn], weights: np.ndarray, group: Partition, k: int
+) -> tuple[Partition, Partition] | None:
     """Split a group in two at the median of its widest column that allows it, or None."""
+    members = group.members
     if weights[members].sum() < 2 * k:
         return None
     by_width = sorted(dimensions, key=lambda dimension: -dimension.relative_width(members))
@@ -136,7 +153,13 @@ def _cut(
             break
         halves = _median_cut(dimension.order, weights, members, k)
         if halves is not None:
-            return halves
+            lower, upper = halves
+            cut = float(dimension.order[upper].min())
+            low_bound, high_bound = group.bounds.get(dimension.name, OPEN)
+            return (
+                Partition(lower, {**group.bounds, dimension.name: (low_bound, cut)}),
+                Partition(upper, {**group.bounds, dimension.name: (cut, high_bound)}),
+            )
     return None
 
 

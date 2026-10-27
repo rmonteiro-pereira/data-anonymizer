@@ -176,9 +176,15 @@ How a group is described, per column type:
 
 | Column | `range_style: "range"` (default) | `range_style: "midpoint"` |
 |---|---|---|
-| Number | `lo-hi`, or the value when all are equal | The midpoint, as a float |
-| Date or timestamp | `lo to hi` in ISO form, or the date when all are equal | The midpoint date, in the column's own type |
+| Number | `20 to under 40`; the outermost groups are open-ended: `under 20`, `90 or more` | The group's median row value, as a float |
+| Date or timestamp | `2000-01-01 to before 2001-01-01`, `before ...`, `... or later`, in ISO form | The group's median date, in the column's own type |
 | Category | The set `{A, B, C}`, or the value when all are equal. With a hierarchy for the column in the plan's `hierarchies`, the closest common ancestor instead | Same as `range` |
+
+The description comes from the cuts that enclose the group, not from the smallest and largest
+value inside it, so one extreme record (a single 90-year-old among teenagers) never shows in
+the release. A column that no cut bounds reads `any value`, unless every value in the table is
+equal. A column with one value in a group is still described by its bounds. Categories are
+described by the set of values present, which can name a rare category.
 
 A missing cell takes its group's description, so that every row of a group holds the same
 value. A group in which the column is missing everywhere keeps it missing. A column of dates

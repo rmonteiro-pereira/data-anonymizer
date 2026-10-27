@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **Mondrian no longer publishes extreme values.** A group of numbers or dates is described by
+  the cuts that bound it (`under 40`, `40 to under 60`, `60 or more`), and the midpoint style
+  publishes the group's median, so one outlier does not show in the release.
 - **Synthetic-data checks.** `Anonymizer.check_synthetic` and `oblitus check-synthetic SYNTHETIC
   --real TRAIN [--holdout HOLDOUT]` measure the share of exact copies, the distance to the closest
   real record (Gower-like, for mixed columns) and the nearest-neighbour distance ratio. With a

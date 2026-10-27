@@ -6,10 +6,14 @@ description of its whole group. This module holds what that needs per column:
 - how wide a group is on this column, relative to the whole table;
 - the text or number that stands in for a group's values.
 
-Numbers and dates are described by their range, written `lo-hi` for numbers and `lo to hi`
-for dates, or by the range's midpoint. Categories are described by the set of their values,
-or by their closest common ancestor when the plan gives a hierarchy. Missing cells take the
-description of their group, so that every row of a group holds the same value.
+Numbers and dates are described by the cuts that bound the group, never by the smallest and
+largest value inside it, because one extreme record would otherwise show in the release. A
+group between two cuts reads `20 to under 40`, and the outermost groups are open-ended: `under
+20` and `90 or more`. The midpoint style publishes the group's median instead. A group that no
+cut bounds on this column reads `any value`, unless all the table's values are equal. Categories are
+described by the set of their values, or by their closest common ancestor when the plan gives a
+hierarchy. Missing cells take the description of their group, so that every row of a group
+holds the same value.
 """
 
 import math
@@ -25,6 +29,7 @@ from oblitus.generalization_hierarchies import GeneralizationHierarchy
 from oblitus.plan import RangeStyle
 
 _EPOCH = datetime(1970, 1, 1)
+OPEN = (-math.inf, math.inf)
 
 
 class ColumnShape(StrEnum):
@@ -84,18 +89,49 @@ class GeneralizedColumn:
             return len(set(self.order[present].tolist())) / self._extent
         return float(self.order[present].max() - self.order[present].min()) / self._extent
 
-    def describe(self, members: np.ndarray) -> Any:
-        """The value that replaces every cell of the members, or None when all are missing."""
+    def describe(
+        self, members: np.ndarray, weights: np.ndarray, bounds: tuple[float, float] = OPEN
+    ) -> Any:
+        """The value that replaces every cell of the members, or None when all are missing.
+
+        `weights` holds the row count of every combination. `bounds` are the cuts that
+        enclose the group on this column, as positions in the column's order: the group
+        holds values from the low bound up to, not including, the high bound.
+        """
         present = members[self._present[members]]
         if present.size == 0:
             return None
         if self.shape is ColumnShape.CATEGORY:
             return self._describe_categories([self._values[position] for position in present])
-        low = self._values[present[np.argmin(self.order[present])]]
-        high = self._values[present[np.argmax(self.order[present])]]
         if self._style is RangeStyle.MIDPOINT:
-            return _midpoint(low, high)
-        return _range_text(low, high)
+            return self._values[self._median_position(present, weights)]
+        if bounds == OPEN and np.unique(self.order[present]).size == 1:
+            return self._bound_text(float(self.order[present[0]]))
+        return self._range_text(bounds)
+
+    def _median_position(self, present: np.ndarray, weights: np.ndarray) -> int:
+        """The combination holding the group's median row, so no single record moves it."""
+        ranked = present[np.argsort(self.order[present], kind="stable")]
+        cumulative = np.cumsum(weights[ranked])
+        return int(ranked[np.searchsorted(cumulative, cumulative[-1] / 2)])
+
+    def _range_text(self, bounds: tuple[float, float]) -> str:
+        low, high = bounds
+        is_date = self.shape is ColumnShape.DATE
+        below, from_here = ("before", "or later") if is_date else ("under", "or more")
+        if math.isinf(low) and math.isinf(high):
+            return "any value"
+        if math.isinf(low):
+            return f"{below} {self._bound_text(high)}"
+        if math.isinf(high):
+            return f"{self._bound_text(low)} {from_here}"
+        return f"{self._bound_text(low)} to {below} {self._bound_text(high)}"
+
+    def _bound_text(self, position: float) -> str:
+        value = self._values[int(np.flatnonzero(self.order == position)[0])]
+        if self.shape is ColumnShape.DATE:
+            return _date_text(value)
+        return _number_text(value)
 
     def _encode(self) -> np.ndarray:
         if self.shape is ColumnShape.NUMBER:
@@ -149,24 +185,6 @@ def _date_position(value: date | datetime | None) -> float:
     if isinstance(value, datetime):
         return (value.replace(tzinfo=None) - _EPOCH).total_seconds()
     return float(value.toordinal())
-
-
-def _midpoint(low: Any, high: Any) -> Any:
-    if isinstance(low, datetime):
-        return low + (high - low) / 2
-    if isinstance(low, date):
-        return date.fromordinal((low.toordinal() + high.toordinal()) // 2)
-    return (float(low) + float(high)) / 2
-
-
-def _range_text(low: Any, high: Any) -> str:
-    if isinstance(low, (date, datetime)):
-        low_text = _date_text(low)
-        high_text = _date_text(high)
-        return low_text if low_text == high_text else f"{low_text} to {high_text}"
-    low_text = _number_text(low)
-    high_text = _number_text(high)
-    return low_text if low_text == high_text else f"{low_text}-{high_text}"
 
 
 def _date_text(value: date | datetime) -> str:

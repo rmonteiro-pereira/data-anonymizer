@@ -139,7 +139,7 @@ The code map below names every module and what must not live in it.
 | `row_order.py` | `shuffle_rows`: the fresh random row order of an anonymized release | Measuring privacy |
 | `anonymity_enforcement.py` | `enforce_plan_targets`: runs the plan's table-level steps on the released table, in order: joint microaggregation, k-anonymity (local suppression or Mondrian), l-diversity | The algorithms; it only decides which run |
 | `mondrian.py` | `enforce_k_anonymity_by_mondrian`: strict Mondrian partitioning on the distinct quasi-identifier combinations, and the write-back of each group's description | Measuring privacy |
-| `generalized_column.py` | `GeneralizedColumn`: one quasi-identifier column's order, relative width and group description (range, midpoint, set or hierarchy ancestor) | Choosing cuts |
+| `generalized_column.py` | `GeneralizedColumn`: one quasi-identifier column's order, relative width and group description (bounding cuts, median, set or hierarchy ancestor) | Choosing cuts |
 | `generalization_hierarchies.py` | `GeneralizationHierarchy`: levels or prefix lengths that make a value coarser, and the built-in `cep` preset | Applying a level to a column; that is the `generalize_hierarchy` technique |
 | `joint_microaggregation.py` | `microaggregate_jointly`: MDAV groups over several numeric columns, replaced by group means | Single-column microaggregation; that is a technique |
 | `diversity_enforcement.py` | `enforce_l_diversity`: blanks groups with too few sensitive values and merges them, on the whole table in its engine | Measuring privacy |
