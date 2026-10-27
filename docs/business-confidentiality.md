@@ -80,8 +80,9 @@ level: at_risk
   90% of the total (dominance); normalize it or merge segments
 ```
 
-The default plan for the same table reaches `anonymized`. Its caveats include the
-rescaling limit described below.
+The default plan for the same table is `at_risk` under anonymization: it rescales revenue and
+rent with `robust`, and the report flags a plain shift and scale as a problem, described below.
+Under pseudonymization it stays a caveat.
 
 ## What remains, and the stronger options
 
@@ -93,7 +94,10 @@ undo the rescaling. **One** known value is enough when the true column total is 
 known, such as a mall's published annual sales: the total fixes the second equation.
 Each column gets its own shift and scale, so undoing revenue does not undo rent, but
 once both are undone the ratio of rent to sales, and with it the percentage-of-sales
-clause, can be read per store. The protection report always lists this caveat.
+clause, can be read per store. Under anonymization the protection report therefore lists any
+`normalize` without `allow_shape_change` as a problem and the level is `at_risk`; the text names
+the inversion (two known values, or one known value plus a true total) and the fix. Under
+pseudonymization it remains a caveat.
 
 To remove the risk entirely, rescale each store against itself. Every method that
 does this changes the distribution's shape, so it needs `allow_shape_change`:
@@ -120,7 +124,7 @@ default `robust` when the provider also needs to compare stores of different siz
 
 1. Run `anonymize apply` and read the protection level and problems.
 2. Confirm no segment, area band or category has fewer than three stores.
-3. Read the caveats. If two tenants could pool their own figures, use `index` by
-   store.
+3. Read the problems and caveats. A rescaled column that the report flags as a problem
+   needs `index` by store (with `allow_shape_change`), or `rank`, to reach `anonymized`.
 4. Remove columns the provider does not need, such as contract numbers and
    contact names.

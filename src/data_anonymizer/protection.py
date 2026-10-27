@@ -118,6 +118,7 @@ def assess_protection(
         + fingerprint_columns(plan, techniques, released_table)
         + entity_key_columns(plan, released_table)
         + _free_text_leftovers(plan)
+        + _affine_rescalings(plan)
         + _independent_draws(plan)
         + _relinkable_columns(plan, techniques, original, released)
         + _jointly_relinkable_columns(plan, techniques, original, released)
@@ -249,13 +250,30 @@ def _contributors(plan: AnonymizationPlan, original: pd.DataFrame) -> pd.Series:
     return pd.Series(original.index, index=original.index)
 
 
-def _rescaling_caveats(plan: AnonymizationPlan) -> list[str]:
-    affine = [
+def _affinely_rescaled_columns(plan: AnonymizationPlan) -> list[str]:
+    return [
         action.column
         for action in plan.actions
         if action.technique == "normalize" and not action.params.get("allow_shape_change")
     ]
-    if not affine:
+
+
+def _affine_rescalings(plan: AnonymizationPlan) -> list[str]:
+    # Shift and scale are two unknowns. Two true values, or one true value and the true total,
+    # solve them and give back every record, so no anonymization claim survives that.
+    affine = _affinely_rescaled_columns(plan)
+    if not affine or plan.protection is not Protection.ANONYMIZATION:
+        return []
+    return [
+        f"{', '.join(affine)} were only shifted and scaled: anyone who knows two true values, "
+        "or one true value and the true total, can undo the scale and recover every record; "
+        "use normalize grouped by the entity with allow_shape_change, or rank"
+    ]
+
+
+def _rescaling_caveats(plan: AnonymizationPlan) -> list[str]:
+    affine = _affinely_rescaled_columns(plan)
+    if not affine or plan.protection is Protection.ANONYMIZATION:
         return []
     return [
         f"{', '.join(affine)} were shifted and scaled: anyone who knows the true value of "

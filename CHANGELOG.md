@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **An affine rescale is a problem under anonymization.** `normalize` with `robust`, `zscore` or
+  `minmax` and no `allow_shape_change` now makes the release `at_risk`, naming the inversion
+  (two known values, or one known value plus a true total) and the fix (`normalize` by entity
+  with `allow_shape_change`, or `rank`). Pseudonymization keeps it as a caveat. The default
+  business proposal, which uses `robust`, is therefore `at_risk` until a column is changed.
 - `surrogate` never draws a fake equal to a real value of the column; random fakes could
   occasionally repeat a real email from the input.
 - **`OTHER` segments are large enough too.** `scramble_categories` with `min_count` or

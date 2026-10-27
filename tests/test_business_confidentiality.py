@@ -7,6 +7,7 @@ from data_anonymizer import (
     Anonymizer,
     ColumnAction,
     Fidelity,
+    Protection,
     ProtectionLevel,
 )
 from data_anonymizer.techniques.pseudonymization import scramble_categories
@@ -71,12 +72,51 @@ def test_the_default_plan_hides_revenue_and_rent_but_keeps_the_pattern(mall):
     assert not released["segmento"].isin(SEGMENTS).any()
     assert released["faturamento"].abs().max() < 1_000
     assert not any("original units" in problem for problem in result.protection.problems)
-    assert any("two records" in caveat for caveat in result.protection.caveats)
+    assert result.protection.level is ProtectionLevel.AT_RISK
+    assert any("two true values" in problem for problem in result.protection.problems)
+    assert result.protection.caveats == []
 
     # The monthly pattern of every store survives: same rank order over time.
     original_monthly = mall.groupby("month")["faturamento"].sum()
     released_monthly = released.groupby("month")["faturamento"].sum()
     assert original_monthly.corr(released_monthly, method="spearman") > 0.95
+
+
+def _normalize_plan(protection: Protection, params: dict) -> AnonymizationPlan:
+    action = ColumnAction(column="faturamento", technique="normalize", params=params)
+    return AnonymizationPlan(fidelity=Fidelity.STATISTICAL, protection=protection, actions=[action])
+
+
+def test_an_affine_rescale_under_anonymization_names_the_inversion_and_the_fix(mall):
+    plan = _normalize_plan(Protection.ANONYMIZATION, {"method": "zscore"})
+
+    protection = Anonymizer().apply(mall, plan).protection
+
+    assert protection.level is ProtectionLevel.AT_RISK
+    problem = next(problem for problem in protection.problems if "faturamento" in problem)
+    assert "one true value and the true total" in problem
+    assert "allow_shape_change" in problem
+
+
+def test_rank_and_grouped_normalization_are_not_affine_rescalings(mall):
+    rank = {"method": "rank", "allow_shape_change": True}
+    grouped = {"method": "index", "by": "store_name", "allow_shape_change": True}
+
+    for params in (rank, grouped):
+        plan = _normalize_plan(Protection.ANONYMIZATION, params)
+
+        problems = Anonymizer().apply(mall, plan).protection.problems
+
+        assert not any("shifted and scaled" in problem for problem in problems)
+
+
+def test_an_affine_rescale_under_pseudonymization_stays_a_caveat(mall):
+    plan = _normalize_plan(Protection.PSEUDONYMIZATION, {"method": "robust"})
+
+    protection = Anonymizer().apply(mall, plan).protection
+
+    assert not any("shifted and scaled" in problem for problem in protection.problems)
+    assert any("two records" in caveat for caveat in protection.caveats)
 
 
 def test_robust_normalization_keeps_the_distribution_shape(run, context):
