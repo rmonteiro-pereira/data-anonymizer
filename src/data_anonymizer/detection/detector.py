@@ -7,8 +7,14 @@ import pandas as pd
 from data_anonymizer.detection.column_names import category_from_name, has_negative_hint
 from data_anonymizer.detection.free_text import classify_free_text
 from data_anonymizer.detection.kinds import as_datetime, infer_kind
+from data_anonymizer.detection.missing_values import blank_out_placeholders
 from data_anonymizer.detection.patterns import RECOGNIZERS
-from data_anonymizer.detection.value_evidence import decide_from_values, value_candidates
+from data_anonymizer.detection.value_evidence import (
+    Candidate,
+    decide_from_values,
+    decide_from_weak_match,
+    value_candidates,
+)
 from data_anonymizer.taxonomy import (
     NUMERIC_KINDS,
     ColumnKind,
@@ -62,13 +68,14 @@ def scan_column(
     column: str, values: pd.Series, *, sample_size: int = 1000, seed: int = 0
 ) -> ColumnFinding:
     """Classify a single column from its name and a sample of its values."""
+    values = blank_out_placeholders(values)
     kind = infer_kind(values)
     name_category = category_from_name(column)
     present = values.dropna()
     sample = _sample(present, sample_size, seed)
 
     category, confidence, evidence = _classify(
-        kind, name_category, present, sample, ignore_bare_digits=has_negative_hint(column)
+        kind, name_category, present, sample, negative_hint=has_negative_hint(column)
     )
     return ColumnFinding(
         column=column,
@@ -92,17 +99,18 @@ def _classify(
     present: pd.Series,
     sample: pd.Series,
     *,
-    ignore_bare_digits: bool,
+    negative_hint: bool,
 ) -> tuple[DataCategory, float, str]:
     if sample.empty:
         return _from_name_or_generic(kind, name_category, "the column has no values")
 
+    candidates: list[Candidate] = []
     if kind in (ColumnKind.TEXT, ColumnKind.CATEGORY, ColumnKind.INTEGER):
         candidates = value_candidates(
             sample,
             name_category=name_category,
             integers=kind is ColumnKind.INTEGER,
-            ignore_bare_digits=ignore_bare_digits,
+            negative_hint=negative_hint,
         )
         by_value = decide_from_values(candidates)
         if by_value is not None:
@@ -125,6 +133,10 @@ def _classify(
 
     if kind is ColumnKind.CATEGORY and _looks_like_gender(sample):
         return DataCategory.GENDER, _NAME_ONLY_CONFIDENCE, "values are gender labels"
+
+    weak_match = decide_from_weak_match(candidates)
+    if weak_match is not None:
+        return weak_match
 
     if _looks_like_identifier(kind, present):
         return (

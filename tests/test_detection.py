@@ -2,6 +2,7 @@ import time
 
 import pandas as pd
 import pytest
+from faker import Faker
 
 from data_anonymizer.detection import checksums, scan, scan_column
 from data_anonymizer.detection.column_names import category_from_name, name_tokens
@@ -392,3 +393,152 @@ def test_embedded_hits_must_beat_the_chance_rate_of_the_recognizers_that_fired()
     ]
 
     assert scan_column("notes", pd.Series(cells)).category is not DataCategory.FREE_TEXT_WITH_PII
+
+
+_FAKER = Faker("pt_BR")
+_FAKER.seed_instance(11)
+_PLACEHOLDERS = ["", "   ", "-", "N/D", "n/a", "null", "sem informação", "000.000.000-00"]
+
+
+def _cpfs(count: int) -> list[str]:
+    return [_FAKER.cpf() for _ in range(count)]
+
+
+def _cnpjs(count: int) -> list[str]:
+    return [_FAKER.cnpj() for _ in range(count)]
+
+
+def _break_check_digit(document: str) -> str:
+    last = document[-1]
+    return document[:-1] + str((int(last) + 1) % 10)
+
+
+def _renavam(first_ten_digits: str) -> str:
+    weights = [3, 2, 9, 8, 7, 6, 5, 4, 3, 2]
+    total = sum(
+        int(digit) * weight for digit, weight in zip(first_ten_digits, weights, strict=True)
+    )
+    return first_ten_digits + str((total * 10) % 11 % 10)
+
+
+@pytest.mark.parametrize("placeholder", _PLACEHOLDERS)
+def test_placeholders_are_missing_values_not_evidence_against_the_column(placeholder):
+    documents = _cpfs(150) + [placeholder] * 100
+
+    finding = scan_column("documento", pd.Series(documents))
+
+    assert finding.category is DataCategory.CPF
+    assert finding.confidence == 1.0
+
+
+def test_dates_stored_as_text_survive_blank_cells():
+    dates = pd.date_range("1950-01-01", "2005-01-01", periods=200).strftime("%Y-%m-%d")
+    column = pd.Series([date if index % 5 else "" for index, date in enumerate(dates)])
+
+    finding = scan_column("dt", column)
+
+    assert finding.kind is ColumnKind.DATETIME
+    assert finding.category is DataCategory.DATE_OF_BIRTH
+
+
+def test_a_strong_checksum_passes_at_half_the_values_but_asks_for_review():
+    documents = [
+        _break_check_digit(cpf) if index % 10 < 4 else cpf for index, cpf in enumerate(_cpfs(200))
+    ]
+
+    finding = scan_column("col_a", pd.Series(documents))
+
+    assert finding.category is DataCategory.CPF
+    assert finding.confidence < 0.6
+
+
+def test_a_sizeable_share_of_valid_documents_is_never_reported_as_clean():
+    documents = [
+        cpf if index % 10 < 3 else _break_check_digit(cpf) for index, cpf in enumerate(_cpfs(200))
+    ]
+
+    finding = scan_column("col_a", pd.Series(documents))
+
+    assert finding.confidence < 0.6
+    assert "no sign of personal data" not in finding.evidence
+
+
+def test_a_column_that_mixes_cpf_and_cnpj_is_detected_and_names_the_mix():
+    documents = _cpfs(180) + _cnpjs(120)
+    shuffled = pd.Series(documents).sample(frac=1, random_state=3).reset_index(drop=True)
+
+    finding = scan_column("documento", shuffled)
+
+    assert finding.category is DataCategory.CPF
+    assert finding.confidence == 1.0
+    assert "CPF" in finding.evidence
+    assert "CNPJ" in finding.evidence
+
+
+def test_the_larger_document_type_names_a_mixed_column():
+    documents = _cpfs(100) + _cnpjs(200)
+    shuffled = pd.Series(documents).sample(frac=1, random_state=3).reset_index(drop=True)
+
+    assert scan_column("documento", shuffled).category is DataCategory.CNPJ
+
+
+def test_a_name_that_agrees_wins_a_tie_between_recognizers():
+    renavams = pd.Series([_renavam(f"{index * 7919 + 1000003:010d}") for index in range(300)])
+
+    finding = scan_column("renavam", renavams)
+
+    assert finding.category is DataCategory.VEHICLE_REGISTRATION
+    assert "also fit" not in finding.evidence
+
+
+def test_legacy_nine_digit_renavam_is_recognized():
+    legacy = pd.Series([_renavam(f"00{index * 7919 + 100003:08d}")[2:] for index in range(300)])
+
+    assert scan_column("renavam", legacy).category is DataCategory.VEHICLE_REGISTRATION
+
+
+@pytest.mark.parametrize(
+    ("column", "values", "wrong_category"),
+    [
+        ("sku", [f"{100 + i}-{1000 + i * 3}-{8000 + i}" for i in range(100)], DataCategory.PHONE),
+        ("app_version", [f"4.{i % 12}.{i % 90}.{i}" for i in range(100)], DataCategory.IP_ADDRESS),
+        (
+            "ref",
+            [_with_luhn_digit(f"4{i:014d}") for i in range(100)],
+            DataCategory.CREDIT_CARD,
+        ),
+        (
+            "claim_code",
+            [f"AB{100000 + i}C" for i in range(100)],
+            DataCategory.NATIONAL_ID,
+        ),
+    ],
+)
+def test_a_negative_name_hint_drops_every_recognizer_without_a_strong_checksum(
+    column, values, wrong_category
+):
+    assert scan_column(column, pd.Series(values)).category is not wrong_category
+
+
+@pytest.mark.parametrize("as_integers", [False, True])
+def test_a_negative_hint_does_not_cancel_the_category_the_name_itself_names(as_integers):
+    digits = [cpf.replace(".", "").replace("-", "") for cpf in _cpfs(60)]
+    values = pd.Series([int(digit) for digit in digits] if as_integers else digits)
+
+    finding = scan_column("order_cpf", values)
+
+    assert finding.category is DataCategory.CPF
+    assert "do not match" not in finding.evidence
+
+
+def test_text_identifiers_with_stripped_leading_zeros_are_padded_back():
+    zero_led = [cpf for cpf in _cpfs(4000) if cpf.startswith("0")][:30]
+    stripped = pd.Series([cpf.replace(".", "").replace("-", "").lstrip("0") for cpf in zero_led])
+
+    assert scan_column("col_a", stripped).category is DataCategory.CPF
+
+
+def test_imeis_starting_with_zero_stored_as_integers_are_recognized():
+    imeis = pd.Series([int(_with_luhn_digit(f"01{index:012d}")) for index in range(40)])
+
+    assert scan_column("device", imeis).category is DataCategory.IMEI

@@ -27,7 +27,7 @@ person under the LGPD.
 | CNPJ | Two mod-11 check digits. The alphanumeric format in use since July 2026 is supported: each letter counts as its ASCII code minus 48 |
 | CNH | Two check digits with the offset rule |
 | PIS / PASEP / NIS / NIT | Mod-11 check digit, weights 3,2,9,8,7,6,5,4,3,2 |
-| RENAVAM | Mod-11 check digit. The check is equivalent to NIS, so it is only chosen when the column name says `renavam` |
+| RENAVAM | Mod-11 check digit. The check is equivalent to NIS, so it is only chosen when the column name says `renavam`. The legacy 9-digit form is padded with two zeros first |
 | CNS (health card) | Mod-11 rule for cards starting 7–9; reconstruction rule for cards starting 1–2 |
 | Título de Eleitor | State code 01–28 and two check digits. Both the general rule and the SP/MG remainder rule are accepted |
 | NF-e access key | 44 digits, mod-11 check digit |
@@ -60,20 +60,32 @@ health. The checks are in `src/data_anonymizer/detection/checksums.py`.
 
 1. **Storage kind.** It comes from the dtype and values: integer, float, boolean,
    category, datetime or text. Whole-number floats count as integers, and text that
-   parses as dates counts as dates.
+   parses as dates counts as dates. Placeholder text counts as missing first: blanks,
+   `-`, `--`, `N/D`, `NA`, `n/a`, `null`, `none`, `nan`, `?`, `sem informação`, and
+   numbers made of one repeated digit, such as `000.000.000-00`.
 2. **Name hints.** The column name is split into tokens, with accents removed and
    camelCase split. It is then matched against English and Portuguese hints, such as
    `dataNascimento` → date of birth, or `cel` → phone. Negative hints, such as `order`,
-   `pedido`, `protocolo`, `sku`, `timestamp` and `nsu`, mark business codes. In those
-   columns, bare digit strings are never treated as documents or phones.
-3. **Value evidence.** Every recognizer runs on a sample of up to 1000 values. Integer
-   columns get their lost leading zeros back first. A recognizer that needs a name hint
+   `pedido`, `protocolo`, `sku`, `ref`, `code`, `timestamp` and `nsu`, mark business
+   codes. In those columns only the recognizers with a strong check run (CPF, CNPJ, CNH,
+   Título de Eleitor, CNS, IBAN, email, URL), so a part number is not taken for a phone,
+   a version string for an IP address or a Luhn-valid reference for a card. A hint
+   the name itself spells out stays active: `order_cpf` is still checked for CPFs.
+3. **Value evidence.** Every recognizer runs on a sample of up to 1000 values. Digit-only
+   values get their lost leading zeros back first, whether stored as integers or as text. A recognizer that needs a name hint
    only runs when the name points to it. A category passes when:
    - 80% of values pass its checksum, or
-   - 90% match its format, when the category has no checksum.
+   - 90% match its format, when the category has no checksum, or
+   - 50% of values pass a strong check (CPF, CNPJ, CNH, Título de Eleitor, CNS, IBAN,
+     email, URL), with the confidence capped at 0.55 so the plan asks for review.
+
+   A column that mixes strong direct identifiers, such as CPF and CNPJ, passes on the
+   share of values that fit any of them. It takes the larger category, and the evidence
+   names the split.
 4. **Confidence tiers.**
    - Values pass a checksum: the confidence is the share of passing values.
-   - The name also agrees: plus 0.15.
+   - The name also agrees: plus 0.15. When two candidates tie, the one the name agrees
+     with wins.
    - A format match only: 0.8 times the share.
    - A runner-up within 0.05 of the winner, with no name to settle it: the evidence
      names both, and confidence drops by 0.25.
@@ -88,6 +100,8 @@ health. The checks are in `src/data_anonymizer/detection/checksums.py`.
    3. Gender labels.
    4. Dates in the past, spread over decades and with no time of day, are birth dates
       (0.5).
-   5. Nearly unique short values are a record ID (0.5).
+   5. A strong check that matched more than 20% of values, but too few to pass: that
+      category at 0.4, never "no sign of personal data".
+   6. Nearly unique short values are a record ID (0.5).
 
 Findings below 0.6 confidence get "please review" in the proposed plan.

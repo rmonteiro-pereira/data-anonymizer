@@ -4,6 +4,9 @@ Each recognizer pairs a regular expression with an optional checksum from
 `checksums.py`. These settings limit where a recognizer may fire:
 - `in_text`: whether it is searched for inside free text. Bare-digit formats such
   as NIS, CNH or IMEI are left out, because prose is full of numbers that fit them.
+- `strong`: whether a match is unlikely to be an accident (about 1-3% of random values pass).
+  The value evidence trusts a strong recognizer at half the values, and keeps it in
+  columns whose names say they hold business codes.
 - `chance_rate`: how often a random number of the right shape passes the validator. Free
   text must show clearly more hits than this before it counts as holding personal data.
 - `needs_name_hint`: whether a matching column also needs a column name that
@@ -38,6 +41,7 @@ class ValueRecognizer:
     digit_length: int | None = None
     text_validator: Callable[[str], bool] | None = None
     chance_rate: float = 0.0
+    strong: bool = False
 
     def matches(self, value: str) -> bool:
         """Return True when the whole value is an instance of this kind."""
@@ -82,6 +86,7 @@ def _recognizer(
     digit_length: int | None = None,
     text_validator: Callable[[str], bool] | None = None,
     chance_rate: float = 0.0,
+    strong: bool = False,
 ) -> ValueRecognizer:
     return ValueRecognizer(
         category,
@@ -93,6 +98,7 @@ def _recognizer(
         digit_length=digit_length,
         text_validator=text_validator,
         chance_rate=chance_rate,
+        strong=strong,
     )
 
 
@@ -124,7 +130,7 @@ _EMAIL_PATTERN = r"(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]++@[A-Za-z0-9.-]+\.[A-Za
 
 # Order breaks exact ties between recognizers: earlier and more specific wins.
 RECOGNIZERS: tuple[ValueRecognizer, ...] = (
-    _recognizer(_C.EMAIL, "email", _EMAIL_PATTERN),
+    _recognizer(_C.EMAIL, "email", _EMAIL_PATTERN, strong=True),
     _recognizer(
         _C.CNPJ,
         "CNPJ",
@@ -132,6 +138,7 @@ RECOGNIZERS: tuple[ValueRecognizer, ...] = (
         checksums.is_valid_cnpj,
         digit_length=14,
         chance_rate=0.01,
+        strong=True,
     ),
     _recognizer(
         _C.CPF,
@@ -140,9 +147,16 @@ RECOGNIZERS: tuple[ValueRecognizer, ...] = (
         checksums.is_valid_cpf,
         digit_length=11,
         chance_rate=0.01,
+        strong=True,
     ),
     _recognizer(
-        _C.CNH, "CNH", r"\b\d{11}\b", checksums.is_valid_cnh, in_text=False, digit_length=11
+        _C.CNH,
+        "CNH",
+        r"\b\d{11}\b",
+        checksums.is_valid_cnh,
+        in_text=False,
+        digit_length=11,
+        strong=True,
     ),
     _recognizer(
         _C.NIS,
@@ -167,6 +181,7 @@ RECOGNIZERS: tuple[ValueRecognizer, ...] = (
         r"\b\d{3}\s?\d{4}\s?\d{4}\s?\d{4}\b",
         checksums.is_valid_cns,
         in_text=False,
+        strong=True,
     ),
     _recognizer(
         _C.VOTER_ID,
@@ -175,6 +190,7 @@ RECOGNIZERS: tuple[ValueRecognizer, ...] = (
         checksums.is_valid_voter_id,
         in_text=False,
         digit_length=12,
+        strong=True,
     ),
     _recognizer(
         _C.INVOICE_KEY,
@@ -220,6 +236,7 @@ RECOGNIZERS: tuple[ValueRecognizer, ...] = (
         r"(?i)\b[A-Z]{2}\d{2}(?:\s?[A-Z0-9]{4}){2,7}\s?[A-Z0-9]{1,4}\b",
         checksums.is_valid_iban,
         chance_rate=0.01,
+        strong=True,
     ),
     _recognizer(
         _C.IP_ADDRESS,
@@ -238,7 +255,7 @@ RECOGNIZERS: tuple[ValueRecognizer, ...] = (
         "MAC address",
         r"\b(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}\b",
     ),
-    _recognizer(_C.URL, "URL", r"https?://[^\s/$.?#][^\s]*"),
+    _recognizer(_C.URL, "URL", r"https?://[^\s/$.?#][^\s]*", strong=True),
     _recognizer(_C.POSTAL_CODE, "CEP", r"\b\d{5}-\d{3}\b"),
     _recognizer(
         _C.PHONE, "phone number", _PHONE_PATTERN, checksums.is_phone_number, chance_rate=0.08

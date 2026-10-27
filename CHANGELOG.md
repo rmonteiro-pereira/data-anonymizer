@@ -22,6 +22,11 @@
     layouts; CPF, CNPJ, IPv4 addresses, versions and dates no longer match.
   - Payment cards must have a length their network issues. IBAN, DNI/NIE, NINO, codice
     fiscale, alphanumeric CNPJ and plates match in lower case.
+  - Values: placeholders (blanks, `N/D`, `000.000.000-00`) count as missing; a strong check
+    passes at 50% of values with a review-level confidence; a column that mixes CPF and
+    CNPJ is detected; a name that agrees wins ties (`renavam` is no longer a NIS); digit
+    strings in text columns get their leading zeros back; negative name hints drop every
+    recognizer without a strong check, yet keep the category the name spells out.
   - Free text: `::` and `std::vector` no longer count as IPv6, IMEI is not searched in
     prose, a recognizer must beat its chance rate, and the email pattern runs in linear time.
 - Noise explorer: an interactive page per column, from `explore-noise`. Disclosure

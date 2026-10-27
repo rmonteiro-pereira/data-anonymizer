@@ -100,8 +100,8 @@ _EXACT_NAMES: dict[str, DataCategory] = {
 
 _ID_TOKENS = {"id", "uuid", "guid"}
 
-# Names of columns that hold business codes, counters or timestamps. Bare digit
-# strings in these columns are not treated as document numbers or phones.
+# Names of columns that hold business codes, counters or timestamps. In these columns only
+# recognizers with a strong check run, so a part number is not taken for a phone number.
 _NEGATIVE_TOKENS = {
     "order",
     "pedido",
@@ -121,6 +121,13 @@ _NEGATIVE_TOKENS = {
     "versao",
     "serial",
     "invoice_number",
+    "ref",
+    "reference",
+    "referencia",
+    "code",
+    "codigo",
+    "part",
+    "claim",
 }
 
 
