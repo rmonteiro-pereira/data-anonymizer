@@ -223,6 +223,37 @@ line, `oblitus apply-many` reads a manifest:
 Relative paths are read from the manifest's folder, and a table without a `plan` gets a
 proposed one. The exit code is 3 when any table misses its protection target.
 
+## Where keys come from
+
+By default the secret key and the anonymization throwaway key come from `os.urandom`.
+`oblitus keygen` and `oblitus.key_generation.generate_key` mix more sources into the key:
+
+| Source | Reads | Needs |
+|---|---|---|
+| `os` | `os.urandom` | Always included |
+| `hardware` | `/dev/hwrng` | A readable Linux hardware generator |
+| `microphone` | Low 2 bits of a second of audio samples (thermal noise of the input) | Extra `audio` and the PortAudio library |
+| `camera` | Low 2 bits of a few frames (sensor noise) | Extra `camera` and a camera |
+| `timing` | Low 2 bits of CPU timing differences | Nothing |
+| `beacon` | Latest drand and NIST beacon values over HTTPS, 5 second timeout | Network; opt-in |
+
+Each source's output is tagged with its name and length, concatenated, and extracted with
+HKDF-SHA256 into the key. `os.urandom` is always first and cannot be removed, so a weak,
+broken or hostile extra source can never make the key weaker than `os.urandom` alone; the
+extras only add independence in case the operating system generator is flawed.
+
+Each physical source must deliver at least 64 bytes with a most-common-value min-entropy
+estimate of 2 bits per byte or more. Otherwise it is skipped and the report says why. The
+report lists bytes, estimated min-entropy and status per source. A missing device is skipped
+with a reason, not an error.
+
+A beacon's output is **public**. It adds no secrecy, only that nobody could have predicted the
+key before the beacon pulse was published. It is mixed in, never used alone, and the library
+never fetches it unless asked.
+
+In Python, `Anonymizer(throwaway_key_source=lambda: generate_key(sources).key)` draws the
+anonymization throwaway key from the mix. The library reads no environment variables.
+
 ## What keyed noise cannot hide
 
 Noise is computed from the secret key, the seed and the row key, so whoever can recompute it

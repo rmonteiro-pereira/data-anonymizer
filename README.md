@@ -78,6 +78,8 @@ Python 3.12 or later:
 pip install oblitus
 # with DuckDB support:
 pip install "oblitus[duckdb]"
+# microphone and camera entropy sources for `oblitus keygen`:
+pip install "oblitus[audio]" "oblitus[camera]"
 ```
 
 `uv add oblitus` works too. The package imports as `oblitus` and installs the `oblitus`
@@ -172,6 +174,14 @@ In Python, pass `secret_key=` to `Anonymizer`; the library never reads the envir
 Treat the key like a password. Anyone who holds it can decrypt the reversible columns,
 and can test whether a guessed real value produces a given pseudonym.
 
+Generate a key with `oblitus keygen`, which mixes `os.urandom` (always) with the extra
+sources you name: `hardware` (`/dev/hwrng`), `microphone` and `camera` (low-order bits of
+ambient noise, extras `audio` and `camera`), `timing` (CPU jitter) and `beacon` (drand and
+NIST, opt-in, public). A source that is absent or fails its health check is skipped and
+reported on stderr. See [docs/protection.md](docs/protection.md#where-keys-come-from).
+In Python, `generate_key(sources)` returns the key and a report, and
+`Anonymizer(throwaway_key_source=...)` draws the anonymization throwaway key from the same mix.
+
 ## Command line
 
 All commands take `--seed N` (reproducible noise and synthesis; with a secret key the
@@ -191,6 +201,7 @@ locale for fake values, such as `pt_BR`; default `en_US`). Tables can be `.csv` 
 | `oblitus infer-schema INPUT [--fidelity F] [-o SCHEMA]` | Learns a generation schema from a table |
 | `oblitus synthesize -o OUTPUT [--rows N] [--schema SCHEMA] [--reference INPUT] [--fidelity F]` | Generates a synthetic table |
 | `oblitus challenge --schema SCHEMA [--rows N] -o FOLDER` | Generates a data-science challenge: `train.csv`, `test.csv`, `QUESTION.md`, and `answers/` with the answer key |
+| `oblitus keygen [--source NAME ...] [--format hex\|base64]` | Prints a key for `OBLITUS_SECRET_KEY` on stdout and the per-source report on stderr. `NAME` is `hardware`, `microphone`, `camera`, `timing` or `beacon`; `os` is always mixed in |
 | `oblitus techniques` | Lists every technique, its parameters and whether it is reversible |
 
 `P` is `anonymization` (the default) or `pseudonymization`. `F` is `statistical` (the

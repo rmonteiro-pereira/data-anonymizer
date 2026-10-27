@@ -15,3 +15,11 @@ class SchemaError(AnonymizerError):
 
 class TableFormatError(AnonymizerError):
     """A table file has an extension the library cannot read or write."""
+
+
+class KeyGenerationError(AnonymizerError):
+    """A key cannot be generated: an unknown entropy source or an unusable key length."""
+
+
+class EntropySourceUnavailableError(AnonymizerError):
+    """An entropy source cannot deliver now, such as a missing device or no network."""
