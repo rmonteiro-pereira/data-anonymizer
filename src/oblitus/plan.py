@@ -116,6 +116,10 @@ class AnonymizationPlan(BaseModel):
     distance (earth mover's distance, 0 to 1) a group's sensitive values may have from the
     whole table's for the result to count as anonymized.
 
+    Under anonymization, a group in which one sensitive value has a share of at least
+    `inference_confidence` and a share at least `inference_gain` above its share in the whole
+    table is reported too, so a skewed group cannot pass on l-diversity alone.
+
     `joint_microaggregation` lists sets of numeric columns replaced together, in groups, after
     the column actions run and before k-anonymity is enforced.
 
@@ -145,6 +149,8 @@ class AnonymizationPlan(BaseModel):
     hierarchies: dict[str, GeneralizationHierarchy] = Field(default_factory=dict)
     enforce_l_diversity: bool = False
     t_target: float | None = Field(default=None, gt=0, le=1)
+    inference_confidence: float = Field(default=0.9, gt=0, le=1)
+    inference_gain: float = Field(default=0.3, gt=0, le=1)
     joint_microaggregation: list[JointMicroaggregation] = Field(default_factory=list)
     shuffle_rows: bool | None = None
 

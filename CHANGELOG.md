@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Skewed groups are flagged.** Under anonymization, a quasi-identifier group where one sensitive
+  value is at least 90% of the group and at least 30 points above its share in the table makes
+  the release `at_risk`, even when l-diversity passes. The limits are the plan fields
+  `inference_confidence` and `inference_gain`.
 - **Mondrian no longer publishes extreme values.** A group of numbers or dates is described by
   the cuts that bound it (`under 40`, `40 to under 60`, `60 or more`), and the midpoint style
   publishes the group's median, so one outlier does not show in the release.

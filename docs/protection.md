@@ -123,7 +123,7 @@ The checks follow the three criteria of the EDPB Guidelines 02/2026 on anonymisa
 |---|---|
 | No record isolation | Every quasi-identifier combination is shared by at least `k_target` rows (default 5). No row is unique across its discrete released columns, meaning those with at most 50 distinct values, excluding sensitive attributes. No column with at least 20 rows and 90% distinct values is released unchanged, since such a column is a fingerprint. A text column that a technique does not replace (such as `partial_mask`, or `redact_entities` on JSON) counts the same way. An untreated text, integer or whole-number float column (at least 99% of present values whole) outside the plan's lists, with at least 20 distinct values that group rows, is reported too, however many rows each value has: statistics cannot tell an account or card key from a product code, and anyone who knows their own value finds their rows. Pairs of such columns (the 10 with the most distinct values) are checked too: a pair with at least 100 distinct joint values and at most 10 rows on the typical pair is reported as a key that works only together. Replace the column (`scramble_categories` gives fresh codes that keep the grouping) or list it in the plan |
 | No linkage | No action uses a linking technique. For noise and perturbation columns, nearest-value matching re-links at most 1 record in `k_target`: no better odds than k-anonymity already accepts. The same limit applies to all perturbed numeric columns taken together, matching each released vector to its nearest original vector on standardized columns. `randomized_response` on a plan with an `entity_column` needs `by`, so a person's rows share one draw |
-| No inference | Within each quasi-identifier group, every sensitive attribute takes at least `l_target` distinct values (default 2). When the plan sets `t_target`, no group's distribution of a sensitive attribute may be farther than that from the whole table's (earth mover's distance). A sensitive column released entirely blank is skipped. A numeric sensitive column still in its original units must not let a segment's dominant contributor be read off (dominance and p% rules, see [business-confidentiality.md](business-confidentiality.md)) |
+| No inference | Within each quasi-identifier group, every sensitive attribute takes at least `l_target` distinct values (default 2). When the plan sets `t_target`, no group's distribution of a sensitive attribute may be farther than that from the whole table's (earth mover's distance). Under anonymization, no group may let an attacker guess a sensitive value with high confidence: one value with a share of at least `inference_confidence` (default 0.9) in the group and at least `inference_gain` (default 0.3) above its share in the whole table (see [Skewed groups](#skewed-groups)). A sensitive column released entirely blank is skipped. A numeric sensitive column still in its original units must not let a segment's dominant contributor be read off (dominance and p% rules, see [business-confidentiality.md](business-confidentiality.md)) |
 
 | Level | Meaning |
 |---|---|
@@ -267,6 +267,24 @@ sensitive cells are left out of both distributions. A small `t_target` is hard t
 small groups: nothing here enforces it, so the usual fixes are larger groups (a higher
 `k_target`), coarser quasi-identifiers or fewer sensitive attributes.
 
+### Skewed groups
+
+l-diversity and t-closeness can both pass while a group still gives a value away: a group of
+100 rows with 99 `diabetes` and 1 `healthy` holds two values, and with a loose `t_target` it
+passes too. Under anonymization the protection check therefore also looks, per sensitive
+attribute, for a quasi-identifier group where one value has
+- a share of at least `inference_confidence` (default 0.9), so a guess is right nine times in
+  ten, and
+- a share at least `inference_gain` (default 0.3) above its share in the whole table, so the
+  release taught the attacker something. This stops a table that is 95 percent `healthy` from
+  being flagged for a group that is 99 percent `healthy`.
+
+It follows the idea of beta-likeness (Cao and Karras, 2012): bound how much a group's
+distribution can raise the attacker's confidence over the base rate. Both limits are plan
+fields. A hit is a problem naming the worst group, its value and the shares, and makes the
+release `at_risk`. Fix it with `t_target`, coarser quasi-identifiers, or larger groups.
+Numeric sensitive columns with more than 50 distinct values and blank cells are skipped.
+
 ## Attack-based risk with Anonymeter
 
 The checks above describe how a table is built. `assess_attack_risks` plays the attacker
@@ -332,7 +350,8 @@ an anonymization plan raises `PlanError`.
 
 The table-level fields, all optional, are `k_anonymity_method` (`local_suppression` or
 `mondrian`), `range_style` (`range` or `midpoint`), `hierarchies`, `joint_microaggregation`,
-`enforce_l_diversity` and `t_target`. Each is described above. Every one defaults to the
+`enforce_l_diversity`, `t_target`, `inference_confidence` and `inference_gain`. Each is
+described above. Every one defaults to the
 behaviour before it existed.
 
 `shuffle_rows` says whether the released rows come back in a fresh random order with a fresh

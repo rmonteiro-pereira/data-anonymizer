@@ -200,3 +200,67 @@ def test_a_loose_t_target_adds_no_problem():
     result = Anonymizer(seed=1).apply(_clinic(), _plan(t_target=1.0, l_target=1))
 
     assert not any("t-closeness" in problem for problem in result.protection.problems)
+
+
+def _skewed_clinic() -> pd.DataFrame:
+    """North holds 99 diabetes and 1 healthy, where the table as a whole holds 11 percent."""
+    north = ["D"] * 99 + ["H"]
+    south = ["D"] + ["H"] * 99
+    east = ["H"] * 695 + ["D"] * 5
+    return pd.DataFrame(
+        {
+            "id": range(900),
+            "area": ["north"] * 100 + ["south"] * 100 + ["east"] * 700,
+            "diagnosis": north + south + east,
+        }
+    )
+
+
+def _skew_plan(**overrides) -> AnonymizationPlan:
+    settings = {
+        "fidelity": Fidelity.PRIVACY,
+        "protection": Protection.ANONYMIZATION,
+        "actions": [
+            ColumnAction(column="id", technique="suppress"),
+            ColumnAction(column="diagnosis", technique="keep"),
+        ],
+        "direct_identifiers": ["id"],
+        "quasi_identifiers": ["area"],
+        "sensitive_attributes": ["diagnosis"],
+        "enforce_k_anonymity": True,
+        "enforce_l_diversity": True,
+    }
+    settings.update(overrides)
+    return AnonymizationPlan(**settings)
+
+
+def test_a_group_that_is_99_percent_one_value_is_at_risk_despite_l_diversity():
+    result = Anonymizer(seed=1).apply(_skewed_clinic(), _skew_plan())
+
+    assert result.protection.level is ProtectionLevel.AT_RISK
+    problem = next(text for text in result.protection.problems if "diagnosis" in text)
+    assert "area = 'north'" in problem
+    assert "'D'" in problem
+    assert "t_target" in problem
+
+
+def test_a_naturally_lopsided_attribute_is_not_flagged_for_what_everyone_knows():
+    frame = pd.DataFrame(
+        {
+            "id": range(400),
+            "area": ["a"] * 200 + ["b"] * 200,
+            "diagnosis": ["H"] * 190 + ["D"] * 10 + ["H"] * 196 + ["D"] * 4,
+        }
+    )
+
+    result = Anonymizer(seed=1).apply(frame, _skew_plan())
+
+    assert result.protection.level is ProtectionLevel.ANONYMIZED
+
+
+def test_the_confidence_and_gain_limits_come_from_the_plan():
+    strict = _skew_plan(inference_confidence=0.995)
+
+    result = Anonymizer(seed=1).apply(_skewed_clinic(), strict)
+
+    assert result.protection.level is ProtectionLevel.ANONYMIZED

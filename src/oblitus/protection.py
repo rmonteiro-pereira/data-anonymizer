@@ -8,7 +8,8 @@ The checks follow the three criteria of the EDPB's 2026 anonymisation guidelines
   not lead back to their records by nearest value;
 - no inference: each group holds at least l distinct sensitive values, no group's sensitive
   distribution lies farther than the plan's t-closeness target (when one is set) from the
-  whole table's, and no sensitive number left in its original units lets one contributor's
+  whole table's, no group lets a sensitive value be guessed with high confidence and well
+  above its base rate, and no sensitive number left in its original units lets one contributor's
   size be read off a segment it dominates.
 Record isolation and fingerprints are counted on the whole released table. The checks that
 compare each released value with its original run on an aligned in-memory sample of at
@@ -33,6 +34,7 @@ from oblitus.evaluation import PrivacyReport
 from oblitus.evaluation.aligned_sample import AlignedSample
 from oblitus.evaluation.disclosure import joint_linkage_rate, linkage_rate
 from oblitus.evaluation.dominance import dominant_segments, keeps_original_units
+from oblitus.evaluation.inference import confident_inferences
 from oblitus.evaluation.privacy import GROUP_SIZE, group_sizes
 from oblitus.identifying_columns import entity_key_columns, fingerprint_columns
 from oblitus.plan import AnonymizationPlan, ColumnAction, Protection
@@ -118,6 +120,7 @@ def assess_protection(
     exposures = (
         _exposures(plan, privacy)
         + _isolated_records(plan, released_table)
+        + _confident_inferences(plan, released_table)
         + fingerprint_columns(plan, techniques, released_table)
         + entity_key_columns(plan, released_table)
         + _free_text_leftovers(plan)
@@ -230,6 +233,31 @@ def _exposures(plan: AnonymizationPlan, privacy: PrivacyReport) -> list[str]:
                     f"above the t-closeness target of {plan.t_target:g}"
                 )
     return problems
+
+
+def _confident_inferences(plan: AnonymizationPlan, released: WorkingFrame) -> list[str]:
+    if plan.protection is not Protection.ANONYMIZATION:
+        return []
+    findings = confident_inferences(
+        released,
+        plan.quasi_identifiers,
+        plan.sensitive_attributes,
+        confidence=plan.inference_confidence,
+        gain=plan.inference_gain,
+        discrete_limit=DISCRETE_LIMIT,
+    )
+    return [
+        f"{finding.attribute}: in {_describe_group(finding.group)} "
+        f"({finding.group_rows} rows), {finding.group_share:.0%} have {finding.value!r}, "
+        f"against {finding.table_share:.0%} in the whole table; {finding.exposed_groups} "
+        "group(s) let an attacker guess this value with high confidence. Set t_target, "
+        "generalize the quasi-identifiers further, or merge these groups"
+        for finding in findings
+    ]
+
+
+def _describe_group(group: Mapping[str, object]) -> str:
+    return ", ".join(f"{column} = {value!r}" for column, value in group.items())
 
 
 def _magnitude_disclosures(
