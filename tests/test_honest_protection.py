@@ -143,3 +143,35 @@ def test_a_surviving_obfuscated_identifier_makes_the_release_identifiable():
     )
 
     assert Anonymizer(seed=1).apply(frame, plan).protection.level is ProtectionLevel.IDENTIFIABLE
+
+
+def _repeated_key_frame(distinct: int, rows_each: int, as_float: bool) -> pd.DataFrame:
+    keys = np.repeat(np.arange(distinct), rows_each)
+    if as_float:
+        return pd.DataFrame({"account": keys.astype(float) + 4e15})
+    return pd.DataFrame({"account": [f"K{key:06d}" for key in keys]})
+
+
+def test_a_key_below_a_thousand_accounts_is_still_an_account_key():
+    problems = _problems(_repeated_key_frame(999, 5, as_float=False), _plan([]))
+
+    assert any(problem.startswith("account was not treated") for problem in problems)
+
+
+def test_a_whole_number_float_key_is_an_account_key():
+    problems = _problems(_repeated_key_frame(1001, 5, as_float=True), _plan([]))
+
+    assert any(problem.startswith("account was not treated") for problem in problems)
+
+
+def test_a_fractional_float_repeated_by_chance_is_not_an_account_key():
+    rng = np.random.default_rng(0)
+    frame = pd.DataFrame({"price": rng.choice(np.arange(100) + 0.5, 3000)})
+
+    assert not any("price was not treated" in p for p in _problems(frame, _plan([])))
+
+
+def test_a_code_with_many_rows_per_value_is_not_an_account_key_even_when_small():
+    frame = _repeated_key_frame(60, 100, as_float=False).rename(columns={"account": "category"})
+
+    assert not any("category was not treated" in p for p in _problems(frame, _plan([])))

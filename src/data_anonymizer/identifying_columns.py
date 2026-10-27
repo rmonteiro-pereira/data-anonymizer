@@ -5,7 +5,7 @@ Two kinds, both counted on the whole released table:
   value elsewhere finds the row. A text column that a technique only partly changed (a
   masked ID, a JSON or note column with its patterns redacted) is a fingerprint too, since
   the rest of its text still differs from row to row;
-- an entity key: a text or integer column that was never treated and repeats across rows
+- an entity key: a text or whole-number column that was never treated and repeats across rows
   like an account number, a card or a device. Each value ties together all the rows of one
   entity, so whoever knows one row of the entity can follow it through the whole table.
 """
@@ -24,9 +24,11 @@ from data_anonymizer.techniques import Technique
 FINGERPRINT_SHARE = 0.9
 FINGERPRINT_MIN_ROWS = 20
 
-# An entity key has thousands of distinct values, each on several rows. A product, city or
-# category code has hundreds at most, and a value on one row is the fingerprint case above.
-ENTITY_KEY_MIN_DISTINCT = 1000
+# An entity key ties a few rows to each of many values: at least 50 distinct values, and no more
+# than 10 rows on the typical (median) value. Product, city and category codes put dozens or
+# hundreds of rows on each value, and a value on one row is the fingerprint case above.
+ENTITY_KEY_MIN_DISTINCT = 50
+ENTITY_KEY_MAX_MEDIAN_ROWS = 10
 
 
 def fingerprint_columns(
@@ -67,6 +69,8 @@ def entity_key_columns(plan: AnonymizationPlan, released: WorkingFrame) -> list[
             continue
         if distinct[column] / present[column] >= FINGERPRINT_SHARE:
             continue
+        if not _links_rows_like_a_key(released, column):
+            continue
         rows_per_value = present[column] / distinct[column]
         problems.append(
             f"{column} was not treated and holds {distinct[column]:,} distinct values on "
@@ -101,8 +105,33 @@ def _can_be_entity_key(plan: AnonymizationPlan, column: str, dtype: Any) -> bool
     listed = {*plan.direct_identifiers, *plan.quasi_identifiers, *plan.sensitive_attributes}
     if column in listed:
         return False
-    # Decimals and timestamps are measurements, which many rows share only by chance.
-    return dtype == nw.String or dtype == nw.Categorical or dtype.is_integer()
+    # Fractional decimals and timestamps are measurements, which many rows share only by chance.
+    # A decimal column that holds only whole numbers is an integer column stored as floats.
+    return dtype == nw.String or dtype == nw.Categorical or dtype.is_integer() or dtype.is_float()
+
+
+def _links_rows_like_a_key(released: WorkingFrame, column: str) -> bool:
+    if released.collect_schema()[column].is_float() and not _holds_only_whole_numbers(
+        released, column
+    ):
+        return False
+    return _median_rows_per_value(released, column) <= ENTITY_KEY_MAX_MEDIAN_ROWS
+
+
+def _holds_only_whole_numbers(released: WorkingFrame, column: str) -> bool:
+    reading = nw.col(column)
+    whole = first_row(released.select((reading.round(0) == reading).all().alias(column)))
+    return bool(whole[column])
+
+
+def _median_rows_per_value(released: WorkingFrame, column: str) -> float:
+    rows_per_value = (
+        released.filter(~nw.col(column).is_null())
+        .group_by(column)
+        .agg(nw.len().alias("rows"))
+        .select(nw.col("rows").median())
+    )
+    return float(first_row(rows_per_value)["rows"])
 
 
 def _present_and_distinct(
