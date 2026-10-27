@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 
 from oblitus.detection.patterns import TEXT_RECOGNIZERS, ValueRecognizer
+from oblitus.detection.text_names import has_names_in_prose
 from oblitus.taxonomy import DataCategory
 
 # Free text is flagged when at least this share of values contains personal data.
@@ -32,7 +33,9 @@ def classify_free_text(sample: pd.Series) -> tuple[DataCategory, float, str] | N
     share = float(_cells_with_personal_data(texts).mean())
     if share < _EMBEDDED_MATCH_SHARE:
         return None
-    evidence = f"{share:.0%} of sampled texts contain an email, document number or phone"
+    evidence = (
+        f"{share:.0%} of sampled texts contain an email, document number, phone, name or city"
+    )
     return DataCategory.FREE_TEXT_WITH_PII, min(1.0, _BASE_CONFIDENCE + share), evidence
 
 
@@ -42,7 +45,11 @@ def _cells_with_personal_data(texts: pd.Series) -> np.ndarray:
         hits = _cells_with_hits(texts, recognizer)
         if hits.mean() > recognizer.chance_rate * _CHANCE_MARGIN:
             found |= hits
-    return found
+    return found | _cells_with_names(texts)
+
+
+def _cells_with_names(texts: pd.Series) -> np.ndarray:
+    return np.fromiter(map(has_names_in_prose, texts), dtype=bool, count=len(texts))
 
 
 def _cells_with_hits(texts: pd.Series, recognizer: ValueRecognizer) -> np.ndarray:

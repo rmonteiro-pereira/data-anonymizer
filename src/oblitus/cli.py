@@ -25,6 +25,7 @@ from oblitus.differential_privacy import BudgetReport, PrivacyBudget, Statistic
 from oblitus.entropy_sources import sources_by_name
 from oblitus.errors import AnonymizerError, PlanError, SchemaError
 from oblitus.evaluation import AttackRiskReport, SyntheticPrivacyReport, assess_attack_risks
+from oblitus.evaluation.isolated_records import IsolatedRecordCopies
 from oblitus.key_generation import GeneratedKey, SourceStatus, generate_key
 from oblitus.noise_explorer import explore_noise, save_page
 from oblitus.noise_explorer.sweep import DEFAULT_MAX_ROWS
@@ -557,6 +558,8 @@ def _synthetic_privacy_lines(report: SyntheticPrivacyReport) -> list[str]:
         f"median distance to the closest training row: {report.median_distance_to_train:.3f}",
         f"median nearest-neighbour distance ratio: {report.median_nndr:.3f}",
     ]
+    if report.isolated_records is not None:
+        lines.append(_isolated_records_line(report.isolated_records))
     if report.dcr_share is not None and report.membership is not None:
         attack = report.membership
         lines.append(
@@ -573,6 +576,16 @@ def _synthetic_privacy_lines(report: SyntheticPrivacyReport) -> list[str]:
     lines.append(f"verdict: {verdict}")
     lines.extend(f"  finding: {finding}" for finding in report.findings)
     return lines
+
+
+def _isolated_records_line(isolated: IsolatedRecordCopies) -> str:
+    line = (
+        f"isolated training records copied exactly: {isolated.train_copies} "
+        f"of {isolated.cohort_size}"
+    )
+    if isolated.holdout_copies is None:
+        return line
+    return f"{line} (isolated holdout records: {isolated.holdout_copies})"
 
 
 def _dp_aggregate(anonymizer: Anonymizer, arguments: argparse.Namespace) -> None:

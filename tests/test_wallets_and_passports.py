@@ -116,3 +116,52 @@ def test_wallet_columns_get_an_action_in_the_proposed_plan():
     plan = anonymizer.propose(frame)
 
     assert plan.action_for("wallet") is not None
+
+
+def _found_categories(text: str) -> list[DataCategory]:
+    return [span.category for span in find_entities(text, TEXT_RECOGNIZERS)]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        f"Beneficiary wallet_{CHECKSUMMED_ETHEREUM.lower()} approved",
+        f"key_{CHECKSUMMED_ETHEREUM}",
+        f"{CHECKSUMMED_ETHEREUM}_backup",
+        f"payout_{LEGACY_BITCOIN}_old",
+        "cpf_52998224725 ok",
+        "cartao_4111111111111111 ok",
+        "mail me: owner_x@example.org",
+        "tel_11987654321 ok",
+    ],
+)
+def test_identifiers_tagged_with_underscores_are_found_in_text(text):
+    assert _found_categories(text)
+
+
+def test_identifiers_glued_to_letters_are_still_not_found():
+    assert not _found_categories(f"abc{CHECKSUMMED_ETHEREUM.lower()}x")
+
+
+def test_a_wallet_with_an_underscore_tag_is_redacted_in_the_proposed_release():
+    wallet = CHECKSUMMED_ETHEREUM.lower()
+    notes = [f"Beneficiary wallet_{wallet} approved", f"Beneficiary wallet_{wallet[:-4]}ffff ok"]
+    frame = pd.DataFrame({"note": notes * 10, "diagnosis": ["D", "H"] * 10})
+    anonymizer = Anonymizer(seed=1)
+
+    result = anonymizer.apply(frame, anonymizer.propose(frame))
+
+    assert not result.data["note"].str.contains("0x").any()
+
+
+def test_a_lowercase_passport_zone_is_found_and_validated():
+    lowered = MRZ.lower()
+
+    assert is_valid_passport_mrz(lowered)
+    assert _found_categories(f"scan: {lowered} end") == [DataCategory.NATIONAL_ID]
+    finding = scan_column("travel_document", pd.Series([lowered] * 30))
+    assert finding.category is DataCategory.NATIONAL_ID
+
+
+def test_a_lowercase_passport_zone_with_a_broken_check_digit_is_rejected():
+    assert not is_valid_passport_mrz(MRZ.lower().replace("7408122", "7408123"))

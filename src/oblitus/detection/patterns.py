@@ -21,6 +21,11 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 
 from oblitus.detection import checksums, crypto_wallets, passport_mrz
+from oblitus.detection.identifier_boundaries import (
+    NOT_AFTER_ALPHANUMERIC,
+    NOT_BEFORE_ALPHANUMERIC,
+    bounded,
+)
 from oblitus.detection.international_identifiers import (
     STDNUM_IDENTIFIERS,
     stdnum_is_installed,
@@ -141,7 +146,14 @@ _PHONE_LAYOUTS = (
     r"\d{4,5}[\s.-]\d{5,6}",
 )
 # The number must not continue into a longer run of digits on either side.
-_PHONE_PATTERN = r"(?<![\w.+-])(?<!\d[\s.-])(?:" + "|".join(_PHONE_LAYOUTS) + r")(?![\w]|[\s.-]\d)"
+_PHONE_PATTERN = (
+    NOT_AFTER_ALPHANUMERIC
+    + r"(?<![.+-])(?<!\d[\s.-])(?:"
+    + "|".join(_PHONE_LAYOUTS)
+    + r")"
+    + NOT_BEFORE_ALPHANUMERIC
+    + r"(?![\s.-]\d)"
+)
 
 # The local part is possessive and may only start after a character outside its class. Without
 # that, a long cell with no "@" is rescanned from every position, which takes quadratic time.
@@ -151,13 +163,18 @@ _EMAIL_PATTERN = r"(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]++@[A-Za-z0-9.-]+\.[A-Za
 # zeros would make small codes look like IMEIs or BSNs. Real leading zeros are one or two.
 _WEAK_CHECK_LOST_ZEROS = 2
 
+_BITCOIN_PATTERN = (
+    f"(?:{bounded('bc1[02-9ac-hj-np-z]{11,71}', ignore_case=True)})"
+    f"|(?:{bounded('[13][a-km-zA-HJ-NP-Z1-9]{25,34}')})"
+)
+
 # Order breaks exact ties between recognizers: earlier and more specific wins.
 _BUILT_IN_RECOGNIZERS: tuple[ValueRecognizer, ...] = (
     _recognizer(_C.EMAIL, "email", _EMAIL_PATTERN, strong=True),
     _recognizer(
         _C.CNPJ,
         "CNPJ",
-        r"(?i)\b[0-9A-Z]{2}\.?[0-9A-Z]{3}\.?[0-9A-Z]{3}/?[0-9A-Z]{4}-?\d{2}\b",
+        bounded(r"[0-9A-Z]{2}\.?[0-9A-Z]{3}\.?[0-9A-Z]{3}/?[0-9A-Z]{4}-?\d{2}", ignore_case=True),
         checksums.is_valid_cnpj,
         digit_length=14,
         chance_rate=0.01,
@@ -166,7 +183,7 @@ _BUILT_IN_RECOGNIZERS: tuple[ValueRecognizer, ...] = (
     _recognizer(
         _C.CPF,
         "CPF",
-        r"\b\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b",
+        bounded(r"\d{3}\.?\d{3}\.?\d{3}-?\d{2}"),
         checksums.is_valid_cpf,
         digit_length=11,
         chance_rate=0.01,
@@ -175,7 +192,7 @@ _BUILT_IN_RECOGNIZERS: tuple[ValueRecognizer, ...] = (
     _recognizer(
         _C.CNH,
         "CNH",
-        r"\b\d{11}\b",
+        bounded(r"\d{11}"),
         checksums.is_valid_cnh,
         in_text=False,
         digit_length=11,
@@ -184,7 +201,7 @@ _BUILT_IN_RECOGNIZERS: tuple[ValueRecognizer, ...] = (
     _recognizer(
         _C.NIS,
         "PIS/PASEP/NIS",
-        r"\b\d{3}\.?\d{5}\.?\d{2}-?\d\b",
+        bounded(r"\d{3}\.?\d{5}\.?\d{2}-?\d"),
         checksums.is_valid_nis,
         in_text=False,
         digit_length=11,
@@ -192,7 +209,7 @@ _BUILT_IN_RECOGNIZERS: tuple[ValueRecognizer, ...] = (
     _recognizer(
         _C.VEHICLE_REGISTRATION,
         "RENAVAM",
-        r"\b\d{11}\b",
+        bounded(r"\d{11}"),
         checksums.is_valid_renavam,
         in_text=False,
         needs_name_hint=True,
@@ -201,7 +218,7 @@ _BUILT_IN_RECOGNIZERS: tuple[ValueRecognizer, ...] = (
     _recognizer(
         _C.HEALTH_CARD,
         "CNS",
-        r"\b\d{3}\s?\d{4}\s?\d{4}\s?\d{4}\b",
+        bounded(r"\d{3}\s?\d{4}\s?\d{4}\s?\d{4}"),
         checksums.is_valid_cns,
         in_text=False,
         strong=True,
@@ -209,7 +226,7 @@ _BUILT_IN_RECOGNIZERS: tuple[ValueRecognizer, ...] = (
     _recognizer(
         _C.VOTER_ID,
         "Título de Eleitor",
-        r"\b\d{4}\s?\d{4}\s?\d{4}\b",
+        bounded(r"\d{4}\s?\d{4}\s?\d{4}"),
         checksums.is_valid_voter_id,
         in_text=False,
         digit_length=12,
@@ -218,28 +235,31 @@ _BUILT_IN_RECOGNIZERS: tuple[ValueRecognizer, ...] = (
     _recognizer(
         _C.INVOICE_KEY,
         "NF-e access key",
-        r"\b(?:\d{4}\s?){10}\d{4}\b",
+        bounded(r"(?:\d{4}\s?){10}\d{4}"),
         checksums.is_valid_invoice_key,
         chance_rate=0.09,
     ),
     _recognizer(
         _C.VEHICLE_PLATE,
         "vehicle plate",
-        r"(?i)\b[A-Z]{3}-?\d[A-Z0-9]\d{2}\b",
+        bounded(r"[A-Z]{3}-?\d[A-Z0-9]\d{2}", ignore_case=True),
         in_text=False,
         needs_name_hint=True,
     ),
     _recognizer(
         _C.PIX_KEY,
         "PIX random key",
-        r"\b[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b",
+        bounded(
+            r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}",
+            ignore_case=True,
+        ),
         in_text=False,
         needs_name_hint=True,
     ),
     _recognizer(
         _C.IMEI,
         "IMEI",
-        r"\b\d{2}-?\d{6}-?\d{6}-?\d\b",
+        bounded(r"\d{2}-?\d{6}-?\d{6}-?\d"),
         checksums.is_valid_imei,
         in_text=False,
         digit_length=15,
@@ -248,16 +268,18 @@ _BUILT_IN_RECOGNIZERS: tuple[ValueRecognizer, ...] = (
     _recognizer(
         _C.CREDIT_CARD,
         "payment card",
-        r"\b(?:\d[ -]?){12,18}\d\b",
+        bounded(r"(?:\d[ -]?){12,18}\d"),
         checksums.is_valid_card,
         chance_rate=0.04,
     ),
-    _recognizer(_C.SSN, "US SSN", r"\b\d{3}-\d{2}-\d{4}\b", checksums.is_plausible_ssn),
-    _recognizer(_C.NATIONAL_ID, "US ITIN", r"\b9\d{2}-\d{2}-\d{4}\b", checksums.is_plausible_itin),
+    _recognizer(_C.SSN, "US SSN", bounded(r"\d{3}-\d{2}-\d{4}"), checksums.is_plausible_ssn),
+    _recognizer(
+        _C.NATIONAL_ID, "US ITIN", bounded(r"9\d{2}-\d{2}-\d{4}"), checksums.is_plausible_itin
+    ),
     _recognizer(
         _C.IBAN,
         "IBAN",
-        r"(?i)\b[A-Z]{2}\d{2}(?:\s?[A-Z0-9]{4}){2,7}\s?[A-Z0-9]{1,4}\b",
+        bounded(r"[A-Z]{2}\d{2}(?:\s?[A-Z0-9]{4}){2,7}\s?[A-Z0-9]{1,4}", ignore_case=True),
         checksums.is_valid_iban,
         chance_rate=0.01,
         strong=True,
@@ -265,7 +287,7 @@ _BUILT_IN_RECOGNIZERS: tuple[ValueRecognizer, ...] = (
     _recognizer(
         _C.IP_ADDRESS,
         "IPv4 address",
-        r"\b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)\b",
+        bounded(r"(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)"),
     ),
     _recognizer(
         _C.IP_ADDRESS,
@@ -277,38 +299,38 @@ _BUILT_IN_RECOGNIZERS: tuple[ValueRecognizer, ...] = (
     _recognizer(
         _C.MAC_ADDRESS,
         "MAC address",
-        r"\b(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}\b",
+        bounded(r"(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}"),
     ),
     _recognizer(_C.URL, "URL", r"https?://[^\s/$.?#][^\s]*", strong=True),
-    _recognizer(_C.POSTAL_CODE, "CEP", r"\b\d{5}-\d{3}\b"),
+    _recognizer(_C.POSTAL_CODE, "CEP", bounded(r"\d{5}-\d{3}")),
     _recognizer(
         _C.PHONE, "phone number", _PHONE_PATTERN, checksums.is_phone_number, chance_rate=0.08
     ),
     _recognizer(
         _C.NATIONAL_ID,
         "Aadhaar",
-        r"\b[2-9]\d{3}\s?\d{4}\s?\d{4}\b",
+        bounded(r"[2-9]\d{3}\s?\d{4}\s?\d{4}"),
         checksums.is_valid_aadhaar,
         in_text=False,
     ),
     _recognizer(
         _C.NATIONAL_ID,
         "Spanish DNI/NIE",
-        r"(?i)\b[0-9XYZ]\d{7}-?[A-Z]\b",
+        bounded(r"[0-9XYZ]\d{7}-?[A-Z]", ignore_case=True),
         checksums.is_valid_spanish_id,
         chance_rate=0.04,
     ),
     _recognizer(
         _C.NATIONAL_ID,
         "Portuguese NIF",
-        r"\b[1-9]\d{8}\b",
+        bounded(r"[1-9]\d{8}"),
         checksums.is_valid_portuguese_nif,
         in_text=False,
     ),
     _recognizer(
         _C.NATIONAL_ID,
         "Dutch BSN",
-        r"\b\d{9}\b",
+        bounded(r"\d{9}"),
         checksums.is_valid_dutch_bsn,
         in_text=False,
         digit_length=9,
@@ -317,20 +339,23 @@ _BUILT_IN_RECOGNIZERS: tuple[ValueRecognizer, ...] = (
     _recognizer(
         _C.NATIONAL_ID,
         "German tax ID",
-        r"\b[1-9]\d{10}\b",
+        bounded(r"[1-9]\d{10}"),
         checksums.is_valid_german_tax_id,
         in_text=False,
     ),
     _recognizer(
         _C.NATIONAL_ID,
         "UK National Insurance number",
-        r"(?i)\b[A-Z]{2}\s?\d{2}\s?\d{2}\s?\d{2}\s?[A-D]\b",
+        bounded(r"[A-Z]{2}\s?\d{2}\s?\d{2}\s?\d{2}\s?[A-D]", ignore_case=True),
         checksums.is_valid_nino,
     ),
     _recognizer(
         _C.NATIONAL_ID,
         "Italian codice fiscale",
-        r"(?i)\b[A-Z]{6}[0-9LMNPQRSTUV]{2}[A-EHLMPR-T][0-9LMNPQRSTUV]{2}[A-Z][0-9LMNPQRSTUV]{3}[A-Z]\b",
+        bounded(
+            r"[A-Z]{6}[0-9LMNPQRSTUV]{2}[A-EHLMPR-T][0-9LMNPQRSTUV]{2}[A-Z][0-9LMNPQRSTUV]{3}[A-Z]",
+            ignore_case=True,
+        ),
         checksums.is_valid_fiscal_code,
         chance_rate=0.04,
     ),
@@ -344,14 +369,14 @@ _BUILT_IN_RECOGNIZERS: tuple[ValueRecognizer, ...] = (
     _recognizer(
         _C.CRYPTO_WALLET,
         "Bitcoin address",
-        r"(?i:\bbc1[02-9ac-hj-np-z]{11,71}\b)|\b[13][a-km-zA-HJ-NP-Z1-9]{25,34}\b",
+        _BITCOIN_PATTERN,
         crypto_wallets.is_valid_bitcoin_address,
         strong=True,
     ),
     _recognizer(
         _C.CRYPTO_WALLET,
         "Ethereum address",
-        r"\b0x[0-9a-fA-F]{40}\b",
+        bounded(r"0[xX][0-9a-fA-F]{40}"),
         crypto_wallets.is_valid_ethereum_address,
         strong=True,
     ),

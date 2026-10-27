@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from functools import cache
 from types import ModuleType
 
+from oblitus.detection.identifier_boundaries import bounded
+
 
 @dataclass(frozen=True, slots=True)
 class StdnumIdentifier:
@@ -26,21 +28,27 @@ class StdnumIdentifier:
 # Only formats with punctuation, letters or a check that random digits rarely pass are listed,
 # because bare digit strings would match order numbers and timestamps.
 STDNUM_IDENTIFIERS: tuple[StdnumIdentifier, ...] = (
-    StdnumIdentifier("Mexican CURP", r"(?i)\b[A-Z]{4}\d{6}[HM][A-Z]{5}[A-Z0-9]\d\b", "mx.curp"),
-    StdnumIdentifier("Chilean RUT", r"\b\d{1,2}\.?\d{3}\.?\d{3}-[\dkK]\b", "cl.rut"),
-    StdnumIdentifier("Argentine CUIT/CUIL", r"\b\d{2}-\d{8}-\d\b", "ar.cuit"),
-    StdnumIdentifier("Swedish personnummer", r"\b\d{6}[-+]\d{4}\b", "se.personnummer"),
-    StdnumIdentifier("Danish CPR", r"\b\d{6}-\d{4}\b", "dk.cpr"),
-    StdnumIdentifier("Finnish HETU", r"(?i)\b\d{6}[-+A]\d{3}[0-9A-Y]\b", "fi.hetu"),
-    StdnumIdentifier("Irish PPS number", r"(?i)\b\d{7}[A-W][A-IW]?\b", "ie.pps"),
-    StdnumIdentifier("Belgian national number", r"\b\d{2}\.\d{2}\.\d{2}-\d{3}\.\d{2}\b", "be.nn"),
-    StdnumIdentifier("Swiss AHV number", r"\b756\.\d{4}\.\d{4}\.\d{2}\b", "ch.ssn"),
+    StdnumIdentifier(
+        "Mexican CURP", bounded(r"[A-Z]{4}\d{6}[HM][A-Z]{5}[A-Z0-9]\d", ignore_case=True), "mx.curp"
+    ),
+    StdnumIdentifier("Chilean RUT", bounded(r"\d{1,2}\.?\d{3}\.?\d{3}-[\dkK]"), "cl.rut"),
+    StdnumIdentifier("Argentine CUIT/CUIL", bounded(r"\d{2}-\d{8}-\d"), "ar.cuit"),
+    StdnumIdentifier("Swedish personnummer", bounded(r"\d{6}[-+]\d{4}"), "se.personnummer"),
+    StdnumIdentifier("Danish CPR", bounded(r"\d{6}-\d{4}"), "dk.cpr"),
+    StdnumIdentifier(
+        "Finnish HETU", bounded(r"\d{6}[-+A]\d{3}[0-9A-Y]", ignore_case=True), "fi.hetu"
+    ),
+    StdnumIdentifier("Irish PPS number", bounded(r"\d{7}[A-W][A-IW]?", ignore_case=True), "ie.pps"),
+    StdnumIdentifier(
+        "Belgian national number", bounded(r"\d{2}\.\d{2}\.\d{2}-\d{3}\.\d{2}"), "be.nn"
+    ),
+    StdnumIdentifier("Swiss AHV number", bounded(r"756\.\d{4}\.\d{4}\.\d{2}"), "ch.ssn"),
     StdnumIdentifier(
         "French NIR",
-        r"\b[12]\s?\d{2}\s?\d{2}\s?(?:\d{2}|2[AB])\s?\d{3}\s?\d{3}\s?\d{2}\b",
+        bounded(r"[12]\s?\d{2}\s?\d{2}\s?(?:\d{2}|2[AB])\s?\d{3}\s?\d{3}\s?\d{2}"),
         "fr.nir",
     ),
-    StdnumIdentifier("Indian PAN", r"(?i)\b[A-Z]{5}\d{4}[A-Z]\b", "in_.pan"),
+    StdnumIdentifier("Indian PAN", bounded(r"[A-Z]{5}\d{4}[A-Z]", ignore_case=True), "in_.pan"),
 )
 
 

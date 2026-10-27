@@ -18,8 +18,9 @@ _COMPOSITE_PARTS = ((0, 10), (13, 20), (21, 43))
 _COMPOSITE_CHECK = 43
 
 # Both lines, with at most two characters (a line break or spaces) between them.
+# Lowercase exports and OCR output are matched too, and read as uppercase when checked.
 MRZ_PATTERN = (
-    r"(?<![A-Z0-9<])P[A-Z<][A-Z<]{3}[A-Z<]{39}\s{0,2}"
+    r"(?i)(?<![A-Z0-9<])P[A-Z<][A-Z<]{3}[A-Z<]{39}\s{0,2}"
     r"[A-Z0-9<]{9}\d[A-Z<]{3}\d{6}\d[MF<]\d{6}\d[A-Z0-9<]{14}[\d<]\d(?![A-Z0-9<])"
 )
 
@@ -37,7 +38,7 @@ def is_valid_passport_mrz(value: str) -> bool:
 
 
 def _second_line(value: str) -> str | None:
-    compact = "".join(value.split())
+    compact = "".join(value.split()).upper()
     if len(compact) != 2 * _LINE_LENGTH:
         return None
     return compact[_LINE_LENGTH:]

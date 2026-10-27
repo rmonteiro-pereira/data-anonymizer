@@ -16,6 +16,20 @@
 - **Mondrian no longer publishes extreme values.** A group of numbers or dates is described by
   the cuts that bound it (`under 40`, `40 to under 60`, `60 or more`), and the midpoint style
   publishes the group's median, so one outlier does not show in the release.
+- **`check_synthetic` catches copies of rare records.** A generator that appends a few rare
+  training records verbatim to thousands of fresh rows passed the whole-table tests. The check
+  now also counts exact copies among the 10% most isolated training records, against the same
+  count for the isolated holdout records, and fails on any excess when no real row repeats.
+  `SyntheticPrivacyReport.isolated_records` and a line of `oblitus check-synthetic` show it.
+- **Names and cities in prose are redacted without the `ner` extra.** A first name from the
+  bundled IBGE list followed by capitalized words, and a municipality name, are found in free
+  text. A column of notes that mentions them gets `redact_entities` in the default plan, and the
+  release check reports any that remain. Everyday-noun municipality names and a cell that holds
+  only a name or address are left alone.
+- **Tagged identifiers and lowercase passport zones are detected.** Identifier patterns no
+  longer treat an underscore as part of a word, so `wallet_0x...`, `cpf_5299...` and
+  `0x..._backup` are found in text and redacted. Letters or digits touching an identifier
+  still stop a match. A passport machine-readable zone is matched and checked in any case.
 - **Synthetic-data checks.** `Anonymizer.check_synthetic` and `oblitus check-synthetic SYNTHETIC
   --real TRAIN [--holdout HOLDOUT]` measure the share of exact copies, the distance to the closest
   real record (Gower-like, for mixed columns) and the nearest-neighbour distance ratio. With a
