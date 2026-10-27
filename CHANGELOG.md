@@ -2,6 +2,34 @@
 
 ## Unreleased
 
+- **Secure defaults.**
+  - `anonymization` is the default protection target.
+  - Secret keys must be at least 16 bytes.
+  - `laplace_noise` requires `lower` and `upper`.
+  - `keyed_hash` digests are at least 16 hex characters.
+  - Deterministic Argon2 and bcrypt use a salt that does not depend on the value.
+  - `scramble_characters` keeps distinct values distinct.
+  - Integer IDs stored as floats get the same pseudonym as before.
+  - Under anonymization with statistical fidelity, record IDs are scrambled, not suppressed.
+- **Protection checks run on the released data.**
+  - A direct identifier is flagged when its values survive.
+  - Free text is flagged when it still holds a recognisable identifier.
+  - A unique column released unchanged counts as a fingerprint.
+  - A sensitive column released entirely blank is no longer scored for l-diversity.
+  - Misspelt column names in the plan's lists raise `PlanError`.
+- **Business confidentiality.**
+  - `scramble_categories`: opaque, shuffled codes, with small segments merged.
+  - `normalize`: recentre and rescale while keeping the shape. Shape-changing methods
+    need `allow_shape_change`.
+  - Dominance and p% checks for figures still in their original units.
+  - Proposal rules for companies, segments, floor area, revenue and rent.
+  - `date_shift` with `by`, one offset per entity.
+  - See `docs/business-confidentiality.md`.
+- **Noise explorer.**
+  - Columns over 200,000 values are sampled (`--max-rows`).
+  - The axis ignores extreme outliers and reports the values beyond it.
+  - Zero values are marked on the log axes.
+  - Tooltips stay inside the window.
 - Pseudonymization and anonymization as explicit protection targets. Anonymization plans
   refuse linking techniques and run under a throwaway key. Every result gets a protection
   level (anonymized, at_risk, pseudonymized, identifiable). The level comes from record

@@ -26,10 +26,19 @@ removes, and what still remains.
 
 ## The default plan
 
-`anonymize propose` recognises these columns by name, in Portuguese and English
-(`faturamento`/`revenue`, `aluguel`/`rent`, `segmento`/`segment`, `area_m2`,
-`loja`/`tenant`/`store`). Under the default `anonymization` target it proposes the
-following:
+`anonymize propose` recognises these columns by name, in Portuguese and English:
+
+| Category | Name hints |
+|---|---|
+| Company | `razao_social`, `nome_fantasia`, `company_name`, `empresa`, `tenant`, `lojista`, `store_name`, `nome_loja`, `brand`, `marca`, `merchant` |
+| Revenue | `revenue`, `sales`, `faturamento`, `vendas`, `receita`, `gmv`, `turnover` |
+| Rent | `rent`, `aluguel`, `condominio`, `occupancy_cost`, `custo_ocupacao` |
+| Floor area | `abl`, `gla`, `sqm`, `m2`, `metragem`, `area_m2`, `floor_area` |
+| Segment | `segmento`, `segment`, `ramo`, `setor`, `store_category`, `categoria_loja` |
+
+A name such as `sales_per_sqm` counts as revenue, not floor area. A bare `loja` is too
+ambiguous to count, since it is often a store number; mark it in the plan by hand. Under
+the default `anonymization` target the proposal is:
 
 | Column | Technique | Result |
 |---|---|---|
@@ -58,15 +67,21 @@ agencies use for business data:
 A store with 24 monthly rows counts once, with its full total. The plan's
 `entity_column` (the store column) says which rows belong together.
 
-Raw revenue next to a segment label fails the check:
+In a test mall of 40 stores over 24 months, hiding only the store name leaves the
+release at risk:
 
 ```text
 level: at_risk
-- faturamento keeps its original units, and in segmento = 'Moda' one contributor
-  holds 62% of the total (dominance); normalize it or merge segments
+- 960 rows are unique across their discrete columns (segmento, month, aluguel), so they
+  can be singled out
+- faturamento is released unchanged and 100% of its values are distinct, so it can
+  single out rows
+- faturamento keeps its original units, and in segmento = 'Moda' one contributor holds
+  90% of the total (dominance); normalize it or merge segments
 ```
 
-Once revenue has been normalized it passes.
+The default plan for the same table reaches `anonymized`. Its caveats include the
+rescaling limit described below.
 
 ## What remains, and the stronger options
 
