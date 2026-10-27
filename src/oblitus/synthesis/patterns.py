@@ -11,11 +11,13 @@ import pandas as pd
 
 from oblitus.synthesis.draw_replay import ColumnDraws, normal_from_uniform
 from oblitus.synthesis.expressions import LagSource, evaluate
+from oblitus.synthesis.logistic_calibration import calibrate_probabilities
 from oblitus.synthesis.marginals import (
     evenly_spread,
     match_mean_and_std,
     quantile_function,
 )
+from oblitus.synthesis.missingness import null_shares_from_value
 from oblitus.synthesis.schema import DRAWN_KINDS, ColumnOverride, ColumnSchema
 from oblitus.taxonomy import NUMERIC_KINDS, ColumnKind
 
@@ -54,6 +56,8 @@ def compute_formula(
     lower = -np.inf if column.minimum is None else column.minimum
     upper = np.inf if column.maximum is None else column.maximum
     values = np.clip(values, lower, upper)
+    if column.probability_share is not None:
+        values = calibrate_probabilities(values, column.probability_share)
     if column.exact:
         values = match_mean_and_std(values, column)
     return _as_kind(values, column)
@@ -124,8 +128,12 @@ def apply_gaps(
     frame: pd.DataFrame,
     rng: np.random.Generator,
 ) -> pd.Series:
-    """Blank cells at the column's null fraction, or an override's, row by row."""
-    shares = np.full(len(values), column.null_fraction)
+    """Blank cells at the column's null fraction, or an override's, row by row.
+
+    With a `missingness` setting the chance follows the column's own value or another column's,
+    and still averages the null fraction.
+    """
+    shares = _null_shares(column, values, frame)
     for override in column.conditions:
         if override.null_fraction is not None:
             shares[_selected(override, frame)] = override.null_fraction
@@ -137,6 +145,14 @@ def apply_gaps(
     elif pd.api.types.is_bool_dtype(values):
         values = values.astype("boolean")
     return values.mask(missing)
+
+
+def _null_shares(column: ColumnSchema, values: pd.Series, frame: pd.DataFrame) -> np.ndarray:
+    setting = column.missingness
+    if setting is None:
+        return np.full(len(values), column.null_fraction)
+    driver = values if setting.depends_on is None else frame[setting.depends_on]
+    return null_shares_from_value(driver.reset_index(drop=True), setting, column.null_fraction)
 
 
 def _selected(override: ColumnOverride, frame: pd.DataFrame) -> np.ndarray:

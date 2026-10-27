@@ -23,8 +23,14 @@ from oblitus.synthesis.expressions import (
     referenced_columns,
     uses_randomness,
 )
+from oblitus.synthesis.missingness import Missingness
 from oblitus.synthesis.panel import Level, Panel, check_panel_schema
 from oblitus.taxonomy import ColumnKind, DataCategory
+
+# Kinds a missing-value mechanism can follow, because they have an order.
+_ORDERED_KINDS = frozenset(
+    {ColumnKind.INTEGER, ColumnKind.FLOAT, ColumnKind.BOOLEAN, ColumnKind.DATETIME}
+)
 
 # Kinds whose values come from an inverse distribution function, so they can be
 # correlated with each other and redrawn under conditions.
@@ -114,6 +120,11 @@ class ColumnSchema(BaseModel):
       away from the mean, ignoring the bounds, to plant anomalies.
     - `exact`: match `mean` and `std` (numbers) or `weights` (categories, booleans)
       exactly rather than on average.
+    - `missingness`: make the blank cells follow the column's own value (MNAR) or another
+      column (MAR) instead of being random; `null_fraction` stays the overall share.
+    - `probability_share`: for a float formula column that holds probabilities, shift their
+      log-odds by one constant so that they average this share. A question's `positive_share`
+      sets it on the question's `truth_column`.
 
     In a schema with a `panel`, `level` says how often the value is drawn: per "row" (the
     default), once per "entity" and repeated, or once per "period" and shared by all entities.
@@ -145,6 +156,8 @@ class ColumnSchema(BaseModel):
     outlier_fraction: float = Field(default=0.0, ge=0, le=1)
     outlier_scale: float = Field(default=6.0, gt=0)
     exact: bool = False
+    missingness: Missingness | None = None
+    probability_share: float | None = Field(default=None, gt=0, lt=1)
 
     @field_validator("formula")
     @classmethod
@@ -234,9 +247,37 @@ class ColumnSchema(BaseModel):
         if self.start is not None and self.end is not None and self.start > self.end:
             raise ValueError(f"{self.name}: start is after end")
         self._check_unique_is_possible()
+        self._check_missingness()
+        self._check_probability_share()
         for override in self.conditions:
             self.with_override(override)
         return self
+
+    def _check_missingness(self) -> None:
+        if self.missingness is None:
+            return
+        if self.null_fraction <= 0:
+            raise ValueError(f"{self.name}: missingness needs a null_fraction above zero")
+        if any(override.null_fraction is not None for override in self.conditions):
+            raise ValueError(
+                f"{self.name}: use either missingness or a null_fraction in conditions, not both"
+            )
+        if self.missingness.depends_on is None and self.kind not in _ORDERED_KINDS:
+            raise ValueError(
+                f"{self.name}: a mnar missingness follows the column's own value, so the column "
+                "must be a number, a boolean or a date"
+            )
+
+    def _check_probability_share(self) -> None:
+        if self.probability_share is None:
+            return
+        if self.kind is not ColumnKind.FLOAT or self.formula is None:
+            raise ValueError(f"{self.name}: probability_share needs a float column with a formula")
+        if self.noise_std or self.conditions or self.exact:
+            raise ValueError(
+                f"{self.name}: probability_share cannot be combined with noise_std, conditions "
+                "or exact, which would change the probabilities after they are calibrated"
+            )
 
     def _check_unique_is_possible(self) -> None:
         if not self.unique:
@@ -312,6 +353,31 @@ class ShiftedColumn(ColumnOverride):
         return self.formula is not None or self.noise_std is not None or self.conditions is not None
 
 
+class Difficulty(StrEnum):
+    """How hard a generated challenge is; the settings behind each level are in `difficulty.py`."""
+
+    EASY = "easy"
+    MEDIUM = "medium"
+    HARD = "hard"
+
+
+class Metric(StrEnum):
+    """The score a challenge asks participants to optimise."""
+
+    RMSE = "rmse"
+    MAE = "mae"
+    R2 = "r2"
+    ACCURACY = "accuracy"
+    ROC_AUC = "roc_auc"
+    PR_AUC = "pr_auc"
+    LOG_LOSS = "log_loss"
+
+    def suits(self, task: Task) -> bool:
+        """Return whether the metric scores this kind of prediction."""
+        regression = {Metric.RMSE, Metric.MAE, Metric.R2}
+        return (self in regression) == (task is Task.REGRESSION)
+
+
 class NoiseSplit(StrEnum):
     """Which published labels receive label noise."""
 
@@ -370,6 +436,13 @@ class Question(BaseModel):
     `split` says how rows are divided: "random" (the default) or, for a panel, "time", which
     holds out the last `test_share` of periods. A panel's `test_shift` needs a time split, and
     changes the test periods like a regime change in the future.
+
+    `positive_share` sets the expected share of the positive class of a classification target,
+    for an imbalanced challenge. It needs a `truth_column`: a float formula column of
+    probabilities that the target reads, whose log-odds are shifted until they average the share.
+    `difficulty` ("easy", "medium" or "hard") sets noise, distractor columns, label noise and
+    drift together; settings the question gives itself win over it. `metric` names the score
+    shown to participants, and defaults from the task and the class balance.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -388,6 +461,9 @@ class Question(BaseModel):
     split: Split = Split.RANDOM
     test_shift: list[ShiftedColumn] = Field(default_factory=list)
     label_noise: LabelNoise | None = None
+    positive_share: float | None = Field(default=None, gt=0, lt=1)
+    difficulty: Difficulty | None = None
+    metric: Metric | None = None
 
 
 class DatasetSchema(BaseModel):
@@ -399,6 +475,9 @@ class DatasetSchema(BaseModel):
     A `panel` makes the table `entities × periods` rows, and adds the entity and time columns
     it names. Columns then have a `level`, and formulas can use `lag`, `period` and
     `entity_index`. A panel cannot have constraints.
+
+    `context_columns` names columns that formulas may read but the table does not generate,
+    because the caller supplies them: a related table's parent columns.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -408,6 +487,7 @@ class DatasetSchema(BaseModel):
     constraints: list[str] = Field(default_factory=list)
     panel: Panel | None = None
     question: Question | None = None
+    context_columns: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _unique_names(self) -> "DatasetSchema":
@@ -415,6 +495,9 @@ class DatasetSchema(BaseModel):
         duplicated = {name for name in names if names.count(name) > 1}
         if duplicated:
             raise ValueError(f"duplicated column names: {', '.join(sorted(duplicated))}")
+        shadowed = set(names) & set(self.context_columns)
+        if shadowed:
+            raise ValueError(f"context columns repeat column names: {', '.join(sorted(shadowed))}")
         reserved = [name for name in names if name.startswith(DRAW_PREFIX)]
         if reserved:
             raise ValueError(f"column names cannot start with {DRAW_PREFIX!r}: {reserved}")
@@ -423,7 +506,7 @@ class DatasetSchema(BaseModel):
     @model_validator(mode="after")
     def _patterns_refer_to_known_columns(self) -> "DatasetSchema":
         by_name = {column.name: column for column in self.columns}
-        readable = set(by_name) | (set() if self.panel is None else self.panel.readable_names())
+        readable = self._readable_names()
         for column in self.columns:
             unknown = column.dependencies() - readable
             if unknown:
@@ -434,6 +517,7 @@ class DatasetSchema(BaseModel):
         for correlation in self.correlations:
             for name in correlation.columns:
                 _check_correlatable(by_name.get(name), name)
+        self._check_missingness_drivers(by_name, readable)
         for expression in self._checked_expressions():
             if uses_randomness(expression):
                 raise ValueError(f"{expression!r}: random functions are only allowed in formulas")
@@ -449,6 +533,18 @@ class DatasetSchema(BaseModel):
             _check_question(self.question, by_name, self.panel)
             self.shifted(self.question.test_shift)
         return self
+
+    def _readable_names(self) -> set[str]:
+        names = {column.name for column in self.columns} | set(self.context_columns)
+        if self.panel is not None:
+            names |= self.panel.readable_names()
+        return names
+
+    def _check_missingness_drivers(
+        self, by_name: dict[str, ColumnSchema], readable: set[str]
+    ) -> None:
+        for column in self.columns:
+            _check_missingness_driver(column, by_name, readable)
 
     def row_count(self, requested: int | None) -> int:
         """Return how many rows to generate: the panel's, or the requested number.
@@ -479,6 +575,11 @@ class DatasetSchema(BaseModel):
                 return column
         raise KeyError(name)
 
+    def with_changes(self, **changes: Any) -> "DatasetSchema":
+        """Return a copy with some fields replaced, validated as a whole."""
+        fields = {name: getattr(self, name) for name in type(self).model_fields}
+        return DatasetSchema.model_validate({**fields, **changes})
+
     def shifted(self, shifts: list[ShiftedColumn]) -> "DatasetSchema":
         """Return the schema with test-set shifts merged into the named columns.
 
@@ -503,6 +604,7 @@ class DatasetSchema(BaseModel):
             correlations=self.correlations,
             constraints=self.constraints,
             panel=self.panel,
+            context_columns=self.context_columns,
         )
 
     def generation_order(self) -> list[str]:
@@ -575,6 +677,21 @@ def _check_correlatable(column: ColumnSchema | None, name: str) -> None:
         )
 
 
+def _check_missingness_driver(
+    column: ColumnSchema, by_name: dict[str, ColumnSchema], readable: set[str]
+) -> None:
+    driver = None if column.missingness is None else column.missingness.depends_on
+    if driver is None:
+        return
+    if driver not in readable:
+        raise ValueError(f"{column.name}: missingness depends on unknown column {driver!r}")
+    if driver in by_name and by_name[driver].kind not in _ORDERED_KINDS:
+        raise ValueError(
+            f"{column.name}: missingness depends on {driver!r}, which must be a number, "
+            "a boolean or a date"
+        )
+
+
 def _check_question(
     question: Question, by_name: dict[str, ColumnSchema], panel: Panel | None
 ) -> None:
@@ -591,6 +708,8 @@ def _check_question(
         raise ValueError("the question's target cannot be hidden")
     _check_positive_label(question, by_name[question.target])
     _check_label_noise(question, by_name[question.target])
+    _check_positive_share(question, by_name, panel)
+    _check_metric(question)
     _check_split(question, panel, by_name)
     _check_treatment(question, by_name, panel)
 
@@ -643,6 +762,37 @@ def _check_positive_label(question: Question, target: ColumnSchema) -> None:
     if unknown_label:
         raise ValueError(
             f"positive_label {question.positive_label!r} is not one of the target's choices"
+        )
+
+
+def _check_positive_share(
+    question: Question, by_name: dict[str, ColumnSchema], panel: Panel | None
+) -> None:
+    if question.positive_share is None:
+        return
+    if question.task is not Task.CLASSIFICATION:
+        raise ValueError("positive_share only applies to a classification question")
+    if question.truth_column is None:
+        raise ValueError(
+            "positive_share needs a truth_column: the float formula column of probabilities "
+            "that the target reads, whose log-odds are shifted to meet the share"
+        )
+    if panel is not None or question.treatment is not None:
+        raise ValueError("positive_share is not supported with a panel or a treatment")
+    truth = by_name[question.truth_column]
+    if truth.kind is not ColumnKind.FLOAT or truth.formula is None:
+        raise ValueError(f"the truth_column {truth.name!r} must be a float column with a formula")
+    if question.truth_column not in columns_feeding(by_name, question.target):
+        raise ValueError(
+            f"the target {question.target!r} does not read the truth_column {truth.name!r}, "
+            "so shifting its probabilities would not change the target's share"
+        )
+
+
+def _check_metric(question: Question) -> None:
+    if question.metric is not None and not question.metric.suits(question.task):
+        raise ValueError(
+            f"the metric {question.metric.value!r} does not score a {question.task.value} question"
         )
 
 

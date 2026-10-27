@@ -6,7 +6,7 @@ correlate with those drivers, the pure distractors, and the best score any model
 can reach, measured against the noise-free truth.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
@@ -16,11 +16,14 @@ from scipy import stats
 from oblitus.errors import SchemaError
 from oblitus.surrogates import SurrogateFactory
 from oblitus.synthesis.causal_graph import CausalGraph
+from oblitus.synthesis.class_balance import describe_class_balance, with_positive_share
+from oblitus.synthesis.difficulty import DifficultyApplied, apply_difficulty
 from oblitus.synthesis.draw_replay import ReplayableTable
 from oblitus.synthesis.drift import describe_drift, drift_kind, with_shifted_test_rows
 from oblitus.synthesis.expressions import evaluate, uses_randomness
 from oblitus.synthesis.generator import generate_with_replay
 from oblitus.synthesis.label_noise import corrupt_labels
+from oblitus.synthesis.missingness import describe_missingness
 from oblitus.synthesis.panel import Level
 from oblitus.synthesis.panel_generation import SchemaSwitch
 from oblitus.synthesis.schema import (
@@ -49,13 +52,18 @@ class Challenge:
     test_features: pd.DataFrame
     test_answers: pd.DataFrame
     answer_key: dict[str, Any]
+    related_tables: dict[str, pd.DataFrame] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
-class _SplitTable:
-    """The generated rows, which of them are test rows, and the schema that made those."""
+class SplitTable:
+    """The generated rows, which of them are test rows, and the schema that made those.
 
-    built: ReplayableTable
+    `built` holds the stored random numbers behind the rows. A table made of several related
+    tables has none, because a causal question is refused there.
+    """
+
+    built: ReplayableTable | None
     full: pd.DataFrame
     in_test: np.ndarray
     test_schema: DatasetSchema
@@ -77,7 +85,25 @@ def build_challenge(
         raise SchemaError("the schema has no question to build a challenge from")
 
     rows = schema.row_count(rows)
+    difficulty = None
+    if question.difficulty is not None:
+        difficulty = apply_difficulty(schema, supports_drift=schema.panel is None)
+        schema = difficulty.schema
+        question = difficulty.schema.question or question
+    schema = with_positive_share(schema)
     split = _generate_and_split(schema, question, rows, rng, surrogates)
+    return finish_challenge(schema, split, rng, difficulty)
+
+
+def finish_challenge(
+    schema: DatasetSchema,
+    split: SplitTable,
+    rng: np.random.Generator,
+    difficulty: DifficultyApplied | None = None,
+) -> Challenge:
+    """Withhold the hidden columns, corrupt labels and write the answer key for a split table."""
+    question = schema.question
+    assert question is not None
     built = split.built
     full = split.full
     in_test = split.in_test
@@ -90,6 +116,8 @@ def build_challenge(
     test_rows = published[in_test].reset_index(drop=True)
     clean_test_labels = test_rows[question.target]
     changed_labels: dict[str, int] | None = None
+    if difficulty is not None:
+        question = difficulty.with_label_noise(question, train[question.target])
     if question.label_noise is not None:
         train, test_rows, changed_labels = _with_label_noise(
             schema, question, train, test_rows, rng
@@ -115,7 +143,11 @@ def build_challenge(
     if schema.panel is not None:
         answer_key["time_series"] = describe_time_series(schema, question, in_test)
         answer_key["time_series"]["withheld_test_columns"] = withheld_lags
+    _add_optional_sections(
+        answer_key, schema, question, (train, test_rows), truth, in_test, difficulty
+    )
     if question.treatment is not None:
+        assert built is not None
 
         def outcome_as_numbers(answers: pd.Series) -> np.ndarray:
             return _numeric_answers(question, answers)
@@ -133,26 +165,58 @@ def build_challenge(
     )
 
 
+def _add_optional_sections(
+    answer_key: dict[str, Any],
+    schema: DatasetSchema,
+    question: Question,
+    published: tuple[pd.DataFrame, pd.DataFrame],
+    truth: pd.Series | str,
+    in_test: np.ndarray,
+    difficulty: DifficultyApplied | None,
+) -> None:
+    """Add the answer key sections that only some challenges have.
+
+    These are the metric, the class balance of an imbalanced target, why cells are blank, and
+    what a difficulty level changed. Challenges that use none of them keep their key unchanged.
+    """
+    train, test_rows = published
+    if question.metric is not None:
+        answer_key["metric"] = question.metric.value
+    if question.positive_share is not None:
+        probabilities = None if isinstance(truth, str) else truth[in_test].to_numpy(dtype=float)
+        answer_key["class_balance"] = describe_class_balance(
+            question.positive_share,
+            _numeric_answers(question, train[question.target]),
+            _numeric_answers(question, test_rows[question.target]),
+            probabilities,
+        )
+    blank_cells = describe_missingness(schema.columns, {"train": train, "test": test_rows})
+    if blank_cells:
+        answer_key["missingness"] = blank_cells
+    if difficulty is not None:
+        answer_key["difficulty"] = difficulty.notes
+
+
 def _generate_and_split(
     schema: DatasetSchema,
     question: Question,
     rows: int,
     rng: np.random.Generator,
     surrogates: SurrogateFactory,
-) -> _SplitTable:
+) -> SplitTable:
     """Generate the rows and mark the test rows, drawn apart when the test set is shifted."""
     if question.split is Split.TIME:
         return _generate_time_split(schema, question, rows, rng, surrogates)
     built = generate_with_replay(schema, rows, rng=rng, surrogates=surrogates)
     full = built.table
-    in_test = _split_rows(question, rows, rng)
+    in_test = split_rows(question, rows, rng)
     test_schema = schema
     if question.test_shift:
         test_schema = schema.shifted(question.test_shift)
         full, in_test = with_shifted_test_rows(
             test_schema, full, in_test, rng=rng, surrogates=surrogates
         )
-    return _SplitTable(built, full, in_test, test_schema)
+    return SplitTable(built, full, in_test, test_schema)
 
 
 def _generate_time_split(
@@ -161,7 +225,7 @@ def _generate_time_split(
     rows: int,
     rng: np.random.Generator,
     surrogates: SurrogateFactory,
-) -> _SplitTable:
+) -> SplitTable:
     """Generate a panel whose last periods are the test set.
 
     A shifted test set is a regime change in the future: the shifted schema takes over at the
@@ -177,7 +241,7 @@ def _generate_time_split(
         switch = SchemaSwitch(test_schema, first_test_period)
     built = generate_with_replay(schema, rows, rng=rng, surrogates=surrogates, switch=switch)
     in_test = panel.row_period_index() >= first_test_period
-    return _SplitTable(built, built.table, in_test, test_schema)
+    return SplitTable(built, built.table, in_test, test_schema)
 
 
 def _truth_per_split(
@@ -299,7 +363,7 @@ def _describe_label_noise(
     }
 
 
-def _split_rows(question: Question, rows: int, rng: np.random.Generator) -> np.ndarray:
+def split_rows(question: Question, rows: int, rng: np.random.Generator) -> np.ndarray:
     in_test = rng.random(rows) < question.test_share
     test_rows = int(in_test.sum())
     train_rows = rows - test_rows
