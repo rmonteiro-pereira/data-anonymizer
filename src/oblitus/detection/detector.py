@@ -15,7 +15,11 @@ from oblitus.detection.free_text import classify_free_text
 from oblitus.detection.kinds import as_datetime, can_hold, infer_kind
 from oblitus.detection.missing_values import blank_out_placeholders
 from oblitus.detection.patterns import RECOGNIZERS
-from oblitus.detection.person_names import looks_like_known_names, looks_like_person_names
+from oblitus.detection.person_names import (
+    looks_like_known_names,
+    looks_like_labelled_names,
+    looks_like_person_names,
+)
 from oblitus.detection.value_evidence import (
     Candidate,
     decide_from_values,
@@ -230,6 +234,10 @@ def _from_values_alone(
 
     if kind in (ColumnKind.TEXT, ColumnKind.CATEGORY) and looks_like_known_names(sample):
         evidence = "most values are Brazilian first names followed by surnames"
+        return DataCategory.PERSON_NAME, _KNOWN_NAMES_CONFIDENCE, evidence
+
+    if kind in (ColumnKind.TEXT, ColumnKind.CATEGORY) and looks_like_labelled_names(sample):
+        evidence = "most values are a Brazilian name with at most one other word"
         return DataCategory.PERSON_NAME, _KNOWN_NAMES_CONFIDENCE, evidence
 
     if _looks_like_identifier(kind, present):

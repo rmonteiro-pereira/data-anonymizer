@@ -10,6 +10,7 @@ import re
 import pandas as pd
 
 from oblitus.detection.reference_lists import first_names, normalize_word, surnames
+from oblitus.detection.text_names import is_short_name_label
 
 _MIN_WORDS = 2
 _MAX_WORDS = 5
@@ -69,3 +70,15 @@ def _has_known_name_part(value: str) -> bool:
     starts_with_first_name = normalize_word(words[0]) in first_names()
     ends_with_surname = normalize_word(words[-1]) in surnames()
     return starts_with_first_name or ends_with_surname
+
+
+def looks_like_labelled_names(sample: pd.Series) -> bool:
+    """True when most cells are a listed person's name with at most one other word.
+
+    A label such as "Paciente: Ana Silva" is not name-shaped (the colon) and has too few other
+    words to be prose, yet it names a person in every cell.
+    """
+    if sample.empty:
+        return False
+    labelled = sample.astype(str).map(is_short_name_label)
+    return float(labelled.mean()) >= _KNOWN_NAME_SHARE

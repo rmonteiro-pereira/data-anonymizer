@@ -136,7 +136,9 @@ Findings below 0.6 confidence get "please review" in the proposed plan.
   the name alone.
 - **Person names.** A column with no name hint whose values are two to five words in title case
   and start with a common Brazilian first name or end with a common surname is a person name (0.65 raw confidence), instead
-  of a record ID. The lists are small package data files in `src/oblitus/detection/data/`
+  of a record ID. So is a column where at least 70% of the values hold a listed person name with
+  at most one other word, such as `Paciente: Ana Silva`: with two or more other words the value
+  is prose and the column is free text instead. The lists are small package data files in `src/oblitus/detection/data/`
   (see the README there): first names from the IBGE 2010 Census names ranking, municipalities
   from the IBGE localities API, and surnames from the Faker `pt_BR` provider, because IBGE
   publishes no surname ranking. They are public data. `benchmarks/build_reference_lists.py`

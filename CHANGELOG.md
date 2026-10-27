@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **Short labels with a name are person names.** A column of cells such as `Paciente: Ana Silva`
+  (a listed name and at most one other word) is classed as a person name, so the default
+  proposal replaces it instead of keeping it.
 - **Names in prose match in any capitalization.** `ana Silva` and `Ana silva` are found when
   both the first name and the surname are in the bundled lists, as `ana silva` already was.
 - **`apply_many` checks every connected sub-join.** A third table holding only some of the

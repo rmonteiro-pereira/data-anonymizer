@@ -134,6 +134,19 @@ def has_names_in_prose(text: str) -> bool:
     return bool(spans) and len(outside) >= _MIN_WORDS_AROUND_A_NAME
 
 
+def is_short_name_label(text: str) -> bool:
+    """True when a cell is a person's name with at most one other word, like "Paciente: Ana Silva".
+
+    Together with `has_names_in_prose`, which needs two other words, this covers a cell that
+    holds a name: a column of such cells is a column of names, not prose that mentions one.
+    """
+    words = [_Word(match.start(), match.end(), match.group(0)) for match in _WORD.finditer(text)]
+    spans = find_name_and_city_spans(text)
+    has_person = any(category is DataCategory.PERSON_NAME for _, _, category in spans)
+    outside = [word for word in words if not _overlaps_any(word.start, word.end, spans)]
+    return has_person and len(outside) < _MIN_WORDS_AROUND_A_NAME
+
+
 def _person_spans(text: str, words: list[_Word]) -> list[TextSpan]:
     spans: list[TextSpan] = []
     index = 0

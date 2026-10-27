@@ -288,3 +288,24 @@ def test_notes_with_a_mixed_case_name_are_free_text_with_personal_data():
     finding = scan_column("payload", pd.Series(notes * 10))
 
     assert finding.category is DataCategory.FREE_TEXT_WITH_PII
+
+
+def test_a_column_of_short_labelled_names_is_a_person_name_column():
+    labels = ["Paciente: Ana Silva", "Paciente: Maria Silva"]
+
+    finding = scan_column("payload", pd.Series(labels * 10))
+
+    assert finding.category is DataCategory.PERSON_NAME
+
+
+def test_the_default_anonymization_does_not_release_short_labelled_names():
+    labels = [label for label in ["Paciente: Ana Silva", "Paciente: Maria Silva"] for _ in range(5)]
+    frame = pd.DataFrame({"payload": labels, "diagnosis": ["D", "H"] * 5})
+    anonymizer = Anonymizer(seed=1)
+    plan = anonymizer.propose(frame)
+
+    result = anonymizer.apply(frame, plan)
+
+    assert plan.action_for("payload").technique != "keep"
+    released = " ".join(result.data["payload"].dropna().astype(str))
+    assert "Silva" not in released
