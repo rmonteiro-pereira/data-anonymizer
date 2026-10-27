@@ -59,7 +59,9 @@ def confident_inferences(
     """For each sensitive attribute, its most exposed group, if any group is exposed.
 
     Blank sensitive cells are left out. A numeric attribute with more than `discrete_limit`
-    distinct values is skipped, since no single value of it has a meaningful share. With
+    distinct values is skipped, since no single value of it has a meaningful share. A text
+    attribute is checked however many values it has: a diagnosis column with hundreds of
+    codes can still give away its most common code for one group. With
     `entity_column`, an entity counts once per group and value, however many rows it has.
     """
     names = frame.collect_schema().names()
@@ -79,6 +81,10 @@ def confident_inferences(
     return findings
 
 
+def _has_numeric_dtype(frame: WorkingFrame, attribute: str) -> bool:
+    return frame.collect_schema()[attribute].is_numeric()
+
+
 def _worst_exposure(
     frame: WorkingFrame,
     columns: list[str],
@@ -96,7 +102,9 @@ def _worst_exposure(
     for *group, value, count in counted:
         table_counts[value] = table_counts.get(value, 0) + count
         group_totals[tuple(group)] = group_totals.get(tuple(group), 0) + count
-    if len(table_counts) < 2 or len(table_counts) > discrete_limit:
+    if len(table_counts) < 2:
+        return None
+    if _has_numeric_dtype(present, attribute) and len(table_counts) > discrete_limit:
         return None
     table_rows = sum(table_counts.values())
     exposed = 0

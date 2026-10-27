@@ -264,3 +264,29 @@ def test_the_confidence_and_gain_limits_come_from_the_plan():
     result = Anonymizer(seed=1).apply(_skewed_clinic(), strict)
 
     assert result.protection.level is ProtectionLevel.ANONYMIZED
+
+
+def test_skew_is_flagged_when_the_text_sensitive_attribute_has_many_values():
+    other_diagnoses = [f"condition_{index}" for index in range(49)]
+    frame = pd.DataFrame(
+        {
+            "zone": ["north"] * 10 + ["south"] * 49,
+            "diagnosis": ["D"] * 9 + ["H"] + other_diagnoses,
+        }
+    )
+    plan = AnonymizationPlan(
+        fidelity=Fidelity.STATISTICAL,
+        protection=Protection.ANONYMIZATION,
+        actions=[],
+        quasi_identifiers=["zone"],
+        sensitive_attributes=["diagnosis"],
+        enforce_k_anonymity=True,
+        enforce_l_diversity=True,
+        t_target=0.99,
+        k_target=5,
+    )
+
+    result = Anonymizer(seed=1).apply(frame, plan)
+
+    assert result.protection.level is ProtectionLevel.AT_RISK
+    assert any("'D'" in problem for problem in result.protection.problems)

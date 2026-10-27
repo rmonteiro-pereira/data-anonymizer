@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **The skew check covers text columns of any cardinality.** A diagnosis column with more than
+  50 distinct values no longer switches the check off; only numeric columns above 50 values are
+  skipped.
 - **Anonymization drops free text by default.** No list or pattern finds every name in prose
   (lowercase and foreign names pass them all), so the proposal suppresses free-text columns
   under anonymization. A kept `redact_entities` column stays `at_risk`, and the problem suggests

@@ -311,7 +311,7 @@ It follows the idea of beta-likeness (Cao and Karras, 2012): bound how much a gr
 distribution can raise the attacker's confidence over the base rate. Both limits are plan
 fields. A hit is a problem naming the worst group, its value and the shares, and makes the
 release `at_risk`. Fix it with `t_target`, coarser quasi-identifiers, or larger groups.
-Numeric sensitive columns with more than 50 distinct values and blank cells are skipped.
+Numeric sensitive columns with more than 50 distinct values are skipped, since no single number has a meaningful share. Text columns are checked however many values they hold. Blank cells are left out.
 
 ## Attack-based risk with Anonymeter
 
