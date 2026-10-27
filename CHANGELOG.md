@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Names in prose match in any capitalization.** `ana Silva` and `Ana silva` are found when
+  both the first name and the surname are in the bundled lists, as `ana silva` already was.
 - **`apply_many` checks every connected sub-join.** A third table holding only some of the
   entities no longer hides a pair of tables that singles a person out. Groups of up to 6 tables
   are checked in every connected subset, larger ones in every connected pair and the full join.

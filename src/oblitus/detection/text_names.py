@@ -8,9 +8,10 @@ both the name and the city. These rules read the reference lists instead:
   one-word name after "em" or "para" or after "cidade de" ("em Santos"). One-word names that
   are also everyday nouns ("Saúde", "Esperança") are ignored, so "Plano em Saúde" stays text.
 
-Names written in lowercase are found under stricter rules, because lowercase words are common:
-a first name from the list must be followed by a surname from the surname list ("ana silva"),
-and a municipality of two or more words must follow "em", "para", "na", "no" or "cidade de".
+Names that are not fully capitalized are found under stricter rules, because lowercase words
+are common: a first name from the list must be followed by a surname from the surname list, in
+any mix of capitals ("ana silva", "ana Silva", "Ana silva"), and a municipality of two or more
+words must follow "em", "para", "na", "no" or "cidade de".
 
 A first name alone is not a person, and a capitalized word alone is not a surname, which keeps
 prose such as "Rose Garden" or "Planejamento Estratégico" from matching much.
@@ -151,7 +152,14 @@ def _last_word_of_name_starting_at(text: str, words: list[_Word], index: int) ->
     if first.lowered in _NOT_FIRST_NAMES or normalize_word(first.text) not in first_names():
         return None
     if not first.is_capitalized:
-        return _last_word_of_lowercase_name(text, words, index)
+        return _last_word_of_listed_name(text, words, index)
+    last = _last_word_of_title_case_name(text, words, index)
+    if last is not None:
+        return last
+    return _last_word_of_listed_name(text, words, index)
+
+
+def _last_word_of_title_case_name(text: str, words: list[_Word], index: int) -> int | None:
     last = None
     position = index + 1
     while position < len(words) and position - index <= _MAX_SURNAME_WORDS:
@@ -166,13 +174,16 @@ def _last_word_of_name_starting_at(text: str, words: list[_Word], index: int) ->
     return last
 
 
-def _last_word_of_lowercase_name(text: str, words: list[_Word], index: int) -> int | None:
-    """End of a lowercase name: a listed first name, then listed names, ending on a surname."""
+def _last_word_of_listed_name(text: str, words: list[_Word], index: int) -> int | None:
+    """End of a name not written in title case: listed names, in any capitalization.
+
+    A listed first name, then listed first names, particles and surnames, ending on a surname.
+    """
     last = None
     position = index + 1
     while position < len(words) and position - index <= _MAX_SURNAME_WORDS:
         word = words[position]
-        if not _follows_by_whitespace(text, words[position - 1], word) or word.is_capitalized:
+        if not _follows_by_whitespace(text, words[position - 1], word):
             break
         normalized = normalize_word(word.text)
         if normalized in surnames():

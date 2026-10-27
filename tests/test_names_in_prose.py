@@ -250,3 +250,41 @@ def test_notes_with_unusual_name_formats_lose_their_names_when_redacted(template
     released = " ".join(result.data["payload"].dropna()).lower()
     for _, last in people:
         assert last.lower() not in released
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("atendimento de ana Silva concluido ontem", "ana Silva"),
+        ("atendimento de Ana silva concluido ontem", "Ana silva"),
+        ("atendimento de ANA SILVA concluido ontem", "ANA SILVA"),
+        ("ligar para maria da Silva hoje", "maria da Silva"),
+        ("paciente joao Carlos souza chegou cedo", "joao Carlos souza"),
+    ],
+)
+def test_names_are_found_in_any_mix_of_capitals_when_both_parts_are_listed(text, expected):
+    assert _found(text) == [(expected, DataCategory.PERSON_NAME)]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "atendimento de ana Foobar concluido ontem",
+        "atendimento de Ana foobar concluido ontem",
+        "ana ligou ontem",
+        "o cliente ligou para Ana hoje",
+    ],
+)
+def test_a_listed_first_name_with_an_unlisted_word_of_mixed_case_is_left_alone(text):
+    assert _found(text) == []
+
+
+def test_notes_with_a_mixed_case_name_are_free_text_with_personal_data():
+    notes = [
+        "atendimento de ana Silva concluido ontem",
+        "atendimento de maria Silva concluido ontem",
+    ]
+
+    finding = scan_column("payload", pd.Series(notes * 10))
+
+    assert finding.category is DataCategory.FREE_TEXT_WITH_PII

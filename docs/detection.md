@@ -158,13 +158,17 @@ Findings below 0.6 confidence get "please review" in the proposed plan.
   texts hold one of these among other words is classed as free text with personal data, so the
   default plan redacts it and the release check flags leftovers. A cell that holds only a name
   or only an address is still read as a name or an address column. Any run of spaces or tabs
-  may separate the words of a name. A lowercase name is found only when a listed first name
-  is followed by a listed surname ("ana silva", "maria da silva"), and a lowercase municipality
-  only when it has two or more words and follows "em", "para", "na", "no" or "cidade de"
-  ("mora em rio de janeiro"); both lists are needed to keep ordinary lowercase prose out. In
-  20,000 generated lowercase sentences, 10,000 Portuguese and 10,000 English, that mixed
-  ordinary nouns with many words that are also listed names, 33 Portuguese and no English
-  sentences were flagged, almost all of them genuine two-name pairs such as "lucia santos".
+  may separate the words of a name. A name that is not fully capitalized is found only when a
+  listed first name is followed by a listed surname, in any mix of capitals ("ana silva",
+  "ana Silva", "Ana silva", "maria da Silva"), and a lowercase municipality only when it has
+  two or more words and follows "em", "para", "na", "no" or "cidade de" ("mora em rio de
+  janeiro"); both lists are needed to keep ordinary lowercase prose out. In 20,000 generated
+  sentences (5,000 each of lowercase Portuguese, lowercase English, mixed-case Portuguese and
+  mixed-case English, built from ordinary nouns and a pool where 35% of the words are listed
+  names), 211 lowercase Portuguese and 359 lowercase English sentences were flagged, and 2,050
+  mixed-case Portuguese and 2,066 mixed-case English ones. Almost all hits are pairs of a listed
+  first name and a listed word that is a name or surname, as in "lucia santos", which the rule
+  is meant to find; the rate in real prose is far lower because few words there are names.
   The lists cover Brazilian names and places only. A foreign name ("Saoirse Murphy"), a
   Brazilian name outside the lists, a lowercase name with an unlisted surname and a
   one-word lowercase city are still missed; use the `ner` extra for those.
