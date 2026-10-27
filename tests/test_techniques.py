@@ -96,40 +96,61 @@ def test_surrogate_never_maps_two_people_to_one_fake(run, context):
     assert result.nunique() == 500
 
 
-def test_bin_numeric_with_width_makes_decade_labels(context):
-    result = bin_numeric(pd.Series([23, 37, 40, None]), context, width=10)
+def test_bin_numeric_with_width_makes_decade_labels(run, context):
+    result = run(bin_numeric, pd.Series([23, 37, 40, None]), context, width=10)
 
-    assert result.tolist() == ["[20, 30)", "[30, 40)", "[40, 50)", None]
+    assert result.tolist()[:3] == ["[20, 30)", "[30, 40)", "[40, 50)"]
+    assert result.isna().tolist() == [False, False, False, True]
 
 
-def test_bin_numeric_quantiles_put_every_value_in_a_bin(context):
+def test_bin_numeric_quantiles_put_every_value_in_a_bin(run, context):
     values = pd.Series(np.arange(100, dtype=float))
 
-    result = bin_numeric(values, context, bins=4)
+    result = run(bin_numeric, values, context, bins=4)
 
     assert result.notna().all()
     assert result.nunique() == 4
 
 
-def test_truncate_date_and_string(context):
+def test_truncate_date_and_string(run, context):
     dates = pd.Series(pd.to_datetime(["1990-07-15", "1985-02-01"]))
 
-    assert truncate_date(dates, context).dt.month.tolist() == [1, 1]
-    assert truncate_string(pd.Series(["22041-001"]), context, keep=5).iloc[0] == "22041"
+    assert run(truncate_date, dates, context).dt.month.tolist() == [1, 1]
+    assert run(truncate_string, pd.Series(["22041-001"]), context, keep=5).iloc[0] == "22041"
 
 
-def test_top_bottom_code_clips_outliers(context):
+def test_truncate_date_weeks_start_on_monday_and_text_dates_are_parsed(run, context):
+    sunday = pd.Series(pd.to_datetime(["2024-01-07 15:30", "2024-01-08 00:00"]))
+    texts = pd.Series(["15/07/1990", "1985-02-01", "not a date"])
+
+    weeks = run(truncate_date, sunday, context, unit="week")
+    months = run(truncate_date, texts, context, unit="month")
+
+    assert weeks.tolist() == [pd.Timestamp("2024-01-01"), pd.Timestamp("2024-01-08")]
+    assert months.tolist()[:2] == [pd.Timestamp("1990-07-01"), pd.Timestamp("1985-02-01")]
+    assert pd.isna(months.iloc[2])
+
+
+def test_bin_numeric_handles_thousands_of_fixed_width_bins(run, context):
+    values = pd.Series(np.arange(0, 5000, 0.5))
+
+    result = run(bin_numeric, values, context, width=1)
+
+    assert result.nunique() == 5000
+
+
+def test_top_bottom_code_clips_outliers(run, context):
     values = pd.Series([1, 2, 3, 4, 1000])
 
-    result = top_bottom_code(values, context, lower=2, upper=10)
+    result = run(top_bottom_code, values, context, lower=2, upper=10)
 
     assert result.tolist() == [2, 2, 3, 4, 10]
 
 
-def test_suppress_rare_replaces_small_categories(context):
+def test_suppress_rare_replaces_small_categories(run, context):
     values = pd.Series(["a"] * 5 + ["b"])
 
-    result = suppress_rare(values, context, min_count=5, replacement="OTHER")
+    result = run(suppress_rare, values, context, min_count=5, replacement="OTHER")
 
     assert result.tolist() == ["a"] * 5 + ["OTHER"]
 
@@ -152,38 +173,38 @@ def test_noise_keeps_integer_columns_integer(context):
         assert pd.api.types.is_integer_dtype(noisy)
 
 
-def test_laplace_noise_scale_follows_epsilon(context):
+def test_laplace_noise_scale_follows_epsilon(run, context):
     values = pd.Series(np.zeros(5000))
 
-    loose = laplace_noise(values, context, epsilon=10, lower=0, upper=1)
-    strict = laplace_noise(values, context, epsilon=0.5, lower=0, upper=1)
+    loose = run(laplace_noise, values, context, epsilon=10, lower=0, upper=1)
+    strict = run(laplace_noise, values, context, epsilon=0.5, lower=0, upper=1)
 
     assert loose.std() < strict.std()
 
 
-def test_date_shift_stays_within_the_window(context):
+def test_date_shift_stays_within_the_window(run, context):
     dates = pd.Series(pd.to_datetime(["2020-01-01"] * 200))
 
-    shifted = date_shift(dates, context, max_days=7)
+    shifted = run(date_shift, dates, context, max_days=7)
 
     offsets = (shifted - dates).dt.days
     assert offsets.between(-7, 7).all()
     assert offsets.nunique() > 1
 
 
-def test_shuffle_and_rank_swap_keep_the_exact_distribution(context):
+def test_shuffle_and_rank_swap_keep_the_exact_distribution(run, context):
     values = pd.Series(np.random.default_rng(2).normal(0, 1, 500))
 
     for technique in (shuffle, rank_swap):
-        result = technique(values, context)
+        result = run(technique, values, context)
         assert sorted(result) == sorted(values)
         assert not result.equals(values)
 
 
-def test_rank_swap_keeps_values_near_their_rank(context):
+def test_rank_swap_keeps_values_near_their_rank(run, context):
     values = pd.Series(np.arange(1000, dtype=float))
 
-    result = rank_swap(values, context, max_distance_percent=1)
+    result = run(rank_swap, values, context, max_distance_percent=1)
 
     assert (result - values).abs().max() <= 10
 
@@ -197,10 +218,10 @@ def test_microaggregate_keeps_the_mean_and_groups_of_k(run, context):
     assert result.value_counts().min() >= 5
 
 
-def test_randomized_response_keeps_most_values(context):
+def test_randomized_response_keeps_most_values(run, context):
     values = pd.Series(["yes", "no"] * 2000)
 
-    result = randomized_response(values, context, keep_probability=0.8)
+    result = run(randomized_response, values, context, keep_probability=0.8)
 
     changed = (result != values).mean()
     # Of the 20% re-drawn, half land on the original value again.
