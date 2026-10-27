@@ -3,9 +3,9 @@ import pandas as pd
 import pytest
 from faker import Faker
 
-from data_anonymizer.surrogates import SurrogateFactory
-from data_anonymizer.table import Table
-from data_anonymizer.techniques import TechniqueContext
+from oblitus.surrogates import SurrogateFactory
+from oblitus.table import Table
+from oblitus.techniques import TechniqueContext
 
 ROWS = 400
 

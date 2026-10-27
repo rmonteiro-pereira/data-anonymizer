@@ -5,7 +5,7 @@ import pandas as pd
 import pytest
 from argon2.low_level import Type, hash_secret
 
-from data_anonymizer import (
+from oblitus import (
     AnonymizationPlan,
     Anonymizer,
     ColumnAction,
@@ -14,9 +14,9 @@ from data_anonymizer import (
     Protection,
     ProtectionLevel,
 )
-from data_anonymizer.cli import main
-from data_anonymizer.techniques.noise import laplace_noise
-from data_anonymizer.techniques.pseudonymization import (
+from oblitus.cli import main
+from oblitus.techniques.noise import laplace_noise
+from oblitus.techniques.pseudonymization import (
     argon2_hash,
     keyed_hash,
     scramble_characters,
@@ -102,7 +102,7 @@ def test_anonymization_is_the_default_protection(people):
 def test_short_secret_keys_are_refused(tmp_path, monkeypatch, capsys):
     with pytest.raises(ValueError, match="at least 16 bytes"):
         Anonymizer(secret_key="short")
-    monkeypatch.setenv("ANONYMIZER_SECRET_KEY", "short")
+    monkeypatch.setenv("OBLITUS_SECRET_KEY", "short")
 
     assert main(["techniques"]) == 2
     assert "at least 16 bytes" in capsys.readouterr().err

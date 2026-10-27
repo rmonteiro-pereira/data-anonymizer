@@ -1,10 +1,10 @@
 # Synthetic data
 
-`Anonymizer.synthesize()` and `anonymize synthesize` generate tables two ways:
+`Anonymizer.synthesize()` and `oblitus synthesize` generate tables two ways:
 - **from a schema** you write, with the patterns and statistics you choose;
 - **from a reference table**, learning its distributions and correlations.
 
-`Anonymizer.challenge()` and `anonymize challenge` turn a schema with a question into a
+`Anonymizer.challenge()` and `oblitus challenge` turn a schema with a question into a
 data-science exercise with a known answer.
 
 ## Columns
@@ -12,7 +12,7 @@ data-science exercise with a known answer.
 ```python
 from pathlib import Path
 
-from data_anonymizer import Anonymizer, DatasetSchema
+from oblitus import Anonymizer, DatasetSchema
 
 schema = DatasetSchema.load(Path("examples/customers_schema.json"))
 synthetic = Anonymizer(seed=1, locale="pt_BR").synthesize(10_000, schema=schema)
@@ -174,7 +174,7 @@ synthetic = anonymizer.synthesize(5_000, reference=customers, stratify_by=["segm
   come from the levels, not from the copula.
 
 Patterns in a schema you pass along, such as formulas, conditions and constraints, apply
-in both modes. `anonymize infer-schema` writes the inferred schema so you can edit it and
+in both modes. `oblitus infer-schema` writes the inferred schema so you can edit it and
 add patterns.
 
 ## Data-science challenges
@@ -193,7 +193,7 @@ Add a `question` to a schema:
 ```
 
 ```bash
-uv run anonymize --seed 7 challenge --schema examples/churn_challenge.json --rows 20000 -o churn
+uv run oblitus --seed 7 challenge --schema examples/churn_challenge.json --rows 20000 -o churn
 ```
 
 The command writes:

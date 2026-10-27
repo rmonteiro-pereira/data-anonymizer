@@ -2,7 +2,7 @@ import narwhals as nw
 import pandas as pd
 import pytest
 
-from data_anonymizer import (
+from oblitus import (
     AnonymizationPlan,
     Anonymizer,
     ColumnAction,
@@ -14,7 +14,7 @@ from data_anonymizer import (
     Technique,
     TechniqueFamily,
 )
-from data_anonymizer.taxonomy import ColumnKind
+from oblitus.taxonomy import ColumnKind
 
 
 def test_statistical_plan_pseudonymizes_identifiers_and_keeps_statistics(people):

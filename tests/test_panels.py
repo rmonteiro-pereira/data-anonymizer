@@ -9,9 +9,9 @@ import pandas as pd
 import pytest
 from pydantic import ValidationError
 
-from data_anonymizer import Anonymizer, DatasetSchema
-from data_anonymizer.errors import SchemaError
-from data_anonymizer.synthesis.expressions import ExpressionError, evaluate, parse
+from oblitus import Anonymizer, DatasetSchema
+from oblitus.errors import SchemaError
+from oblitus.synthesis.expressions import ExpressionError, evaluate, parse
 
 EXAMPLE = Path(__file__).parent.parent / "examples" / "store_sales_panel.json"
 STORES = 40

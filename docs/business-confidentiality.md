@@ -26,7 +26,7 @@ removes, and what still remains.
 
 ## The default plan
 
-`anonymize propose` recognises these columns by name, in Portuguese and English:
+`oblitus propose` recognises these columns by name, in Portuguese and English:
 
 | Category | Name hints |
 |---|---|
@@ -133,7 +133,7 @@ the release is then `at_risk`.
 
 ## Checklist before sending the file
 
-1. Run `anonymize apply` and read the protection level and problems.
+1. Run `oblitus apply` and read the protection level and problems.
 2. Confirm no segment, area band or category has fewer than three stores. The minimum protects against one store that knows its own figures,
    not against members who pool theirs (see "Small `OTHER` segments and collusion").
 3. Read the problems and caveats. A rescaled column that the report flags as a problem

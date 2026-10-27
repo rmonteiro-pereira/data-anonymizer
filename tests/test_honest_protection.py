@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 
-from data_anonymizer import (
+from oblitus import (
     AnonymizationPlan,
     Anonymizer,
     ColumnAction,
@@ -9,9 +9,9 @@ from data_anonymizer import (
     Protection,
     ProtectionLevel,
 )
-from data_anonymizer.detection.patterns import TEXT_RECOGNIZERS
-from data_anonymizer.detection.text_entities import find_entities
-from data_anonymizer.techniques.masking import _redact_text
+from oblitus.detection.patterns import TEXT_RECOGNIZERS
+from oblitus.detection.text_entities import find_entities
+from oblitus.techniques.masking import _redact_text
 
 
 def _plan(actions, **fields) -> AnonymizationPlan:

@@ -4,10 +4,10 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from data_anonymizer import AnonymizationPlan, Anonymizer, ColumnAction, Fidelity, Protection
-from data_anonymizer.cli import main
-from data_anonymizer.evaluation.disclosure import deflection_metrics, linkage_rate
-from data_anonymizer.noise_explorer import explore_noise, render_page
+from oblitus import AnonymizationPlan, Anonymizer, ColumnAction, Fidelity, Protection
+from oblitus.cli import main
+from oblitus.evaluation.disclosure import deflection_metrics, linkage_rate
+from oblitus.noise_explorer import explore_noise, render_page
 
 
 def test_linkage_rate_is_one_for_a_copy_and_near_chance_for_a_shuffle():

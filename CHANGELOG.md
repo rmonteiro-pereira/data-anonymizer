@@ -1,6 +1,14 @@
 # Changelog
 
-## Unreleased
+## 0.3.0
+
+- **Renamed to oblitus.** The package is `oblitus` on PyPI (`pip install oblitus`), the import
+  is `import oblitus`, the command is `oblitus`, and the secret-key variable is
+  `OBLITUS_SECRET_KEY`. The repository moved to github.com/rmonteiro-pereira/oblitus; the old
+  address redirects. Code written for 0.2.0 changes `data_anonymizer` to `oblitus` in its
+  imports, `anonymize` to `oblitus` in its commands, and `ANONYMIZER_SECRET_KEY` to
+  `OBLITUS_SECRET_KEY`.
+- Releases are published to PyPI by a GitHub Actions workflow with trusted publishing.
 
 - Documentation: a guide to writing and opening the noise explorer page (and a warning that it
   holds real values), C4-style system views in `ARCHITECTURE.md`, the project's standards in

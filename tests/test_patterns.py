@@ -2,10 +2,10 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from data_anonymizer import Anonymizer, ColumnSchema, DatasetSchema
-from data_anonymizer.synthesis.expressions import ExpressionError, evaluate, referenced_columns
-from data_anonymizer.synthesis.schema import ColumnOverride, Correlation, Distribution
-from data_anonymizer.taxonomy import ColumnKind
+from oblitus import Anonymizer, ColumnSchema, DatasetSchema
+from oblitus.synthesis.expressions import ExpressionError, evaluate, referenced_columns
+from oblitus.synthesis.schema import ColumnOverride, Correlation, Distribution
+from oblitus.taxonomy import ColumnKind
 
 ROWS = 4000
 

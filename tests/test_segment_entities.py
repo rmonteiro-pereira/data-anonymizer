@@ -1,9 +1,9 @@
 import pandas as pd
 import pytest
 
-from data_anonymizer import AnonymizationPlan, Anonymizer, ColumnAction, Fidelity, PlanError
-from data_anonymizer.evaluation.dominance import dominant_segments
-from data_anonymizer.proposal import propose_plan
+from oblitus import AnonymizationPlan, Anonymizer, ColumnAction, Fidelity, PlanError
+from oblitus.evaluation.dominance import dominant_segments
+from oblitus.proposal import propose_plan
 
 
 def _scramble(frame, **params):

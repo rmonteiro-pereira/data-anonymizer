@@ -1,6 +1,6 @@
 # Techniques
 
-`anonymize techniques` prints this list from the code.
+`oblitus techniques` prints this list from the code.
 
 | Technique | Family | Reversible | Keeps a link | Effect on statistics | Column kinds | Parameters | What it does |
 |---|---|---|---|---|---|---|---|
@@ -76,7 +76,7 @@ column's minimum and maximum would leak those two numbers.
 1. Write a function `(table, column, context, **params)` that returns a Narwhals
    expression for the column's new values, such as
    `nw.col(column).str.to_uppercase()`. Build it from expressions, and it runs on pandas,
-   Polars and DuckDB alike. `Table` (in `data_anonymizer.table`) provides:
+   Polars and DuckDB alike. `Table` (in `oblitus.table`) provides:
    - statistics;
    - keyed random numbers per row (`table.uniforms(context.stream_key(column, "mine"))`);
    - lookups of values computed in Python (`value_mapping.lookup_distinct`).

@@ -5,17 +5,17 @@ import pandas as pd
 import pytest
 from faker import Faker
 
-from data_anonymizer.detection import checksums, scan, scan_column
-from data_anonymizer.detection.column_names import category_from_name, name_tokens
-from data_anonymizer.detection.patterns import (
+from oblitus.detection import checksums, scan, scan_column
+from oblitus.detection.column_names import category_from_name, name_tokens
+from oblitus.detection.patterns import (
     RECOGNIZERS,
     is_valid_cnpj,
     is_valid_cpf,
     is_valid_iban,
     passes_luhn,
 )
-from data_anonymizer.errors import TableFormatError
-from data_anonymizer.taxonomy import ColumnKind, DataCategory, Sensitivity
+from oblitus.errors import TableFormatError
+from oblitus.taxonomy import ColumnKind, DataCategory, Sensitivity
 
 
 @pytest.mark.parametrize(

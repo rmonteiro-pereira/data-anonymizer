@@ -8,16 +8,16 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from data_anonymizer import Anonymizer, DatasetSchema
-from data_anonymizer.surrogates import SurrogateFactory
-from data_anonymizer.synthesis.draw_replay import (
+from oblitus import Anonymizer, DatasetSchema
+from oblitus.surrogates import SurrogateFactory
+from oblitus.synthesis.draw_replay import (
     DrawLedger,
     normal_from_uniform,
     poisson_from_uniform,
 )
-from data_anonymizer.synthesis.expressions import evaluate
-from data_anonymizer.synthesis.generator import generate_with_replay
-from data_anonymizer.synthesis.interventions import intervene
+from oblitus.synthesis.expressions import evaluate
+from oblitus.synthesis.generator import generate_with_replay
+from oblitus.synthesis.interventions import intervene
 
 CHURN_EXAMPLE = Path(__file__).parent.parent / "examples" / "churn_challenge.json"
 

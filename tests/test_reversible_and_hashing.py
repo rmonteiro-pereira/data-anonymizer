@@ -3,7 +3,7 @@ import pandas as pd
 import pytest
 from argon2 import PasswordHasher
 
-from data_anonymizer import (
+from oblitus import (
     AnonymizationPlan,
     Anonymizer,
     ColumnAction,
@@ -11,16 +11,16 @@ from data_anonymizer import (
     PlanError,
     Protection,
 )
-from data_anonymizer.cli import main
-from data_anonymizer.techniques import TechniqueContext
-from data_anonymizer.techniques.encryption import (
+from oblitus.cli import main
+from oblitus.techniques import TechniqueContext
+from oblitus.techniques.encryption import (
     decrypt,
     encrypt,
     format_preserving_decrypt,
     format_preserving_encrypt,
 )
-from data_anonymizer.techniques.ff1 import FF1
-from data_anonymizer.techniques.pseudonymization import argon2_hash, bcrypt_hash, keyed_hash
+from oblitus.techniques.ff1 import FF1
+from oblitus.techniques.pseudonymization import argon2_hash, bcrypt_hash, keyed_hash
 
 _BASE36 = "0123456789abcdefghijklmnopqrstuvwxyz"
 _NIST_KEY_128 = "2B7E151628AED2A6ABF7158809CF4F3C"
@@ -172,11 +172,11 @@ def test_cli_reveal_needs_the_secret_key(people, tmp_path, monkeypatch, capsys):
     anonymized = tmp_path / "anon.csv"
     revealed = tmp_path / "revealed.csv"
 
-    monkeypatch.setenv("ANONYMIZER_SECRET_KEY", "vault-for-tests-0123456789")
+    monkeypatch.setenv("OBLITUS_SECRET_KEY", "vault-for-tests-0123456789")
     assert main(["apply", str(source), "--plan", str(plan_path), "-o", str(anonymized)]) == 0
     assert main(["reveal", str(anonymized), "--plan", str(plan_path), "-o", str(revealed)]) == 0
     assert pd.read_csv(revealed)["email"].equals(people["email"])
 
-    monkeypatch.delenv("ANONYMIZER_SECRET_KEY")
+    monkeypatch.delenv("OBLITUS_SECRET_KEY")
     assert main(["reveal", str(anonymized), "--plan", str(plan_path), "-o", str(revealed)]) == 2
-    assert "needs ANONYMIZER_SECRET_KEY" in capsys.readouterr().err
+    assert "needs OBLITUS_SECRET_KEY" in capsys.readouterr().err

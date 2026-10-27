@@ -30,14 +30,14 @@ with no service, database or network call of their own.
 
 ### Level 1: system context
 
-Who uses data-anonymizer, and what it touches.
+Who uses oblitus, and what it touches.
 
 ```mermaid
 flowchart LR
   owner["Data owner or analyst<br/>(person)"]
   recipient["Data recipient<br/>(person: provider, team, challenge participant)"]
   keyholder["Key holder<br/>(person who may re-link or decrypt)"]
-  system["data-anonymizer<br/>(Python library and CLI)"]
+  system["oblitus<br/>(Python library and CLI)"]
   files[("Files<br/>CSV and Parquet")]
   frames[("In-memory and DuckDB tables<br/>pandas, Polars, DuckDB")]
   browser["Web browser<br/>(opens the explorer page)"]
@@ -65,11 +65,11 @@ The runnable parts and the data they produce.
 
 ```mermaid
 flowchart TB
-  subgraph system["data-anonymizer"]
+  subgraph system["oblitus"]
     cli["anonymize CLI<br/>cli.py, argparse"]
     library["Python library<br/>Anonymizer facade and modules"]
   end
-  env[("ANONYMIZER_SECRET_KEY<br/>environment variable")]
+  env[("OBLITUS_SECRET_KEY<br/>environment variable")]
   plan[("Plan JSON<br/>editable")]
   outputs[("Table files, report JSON,<br/>challenge folder")]
   page[("Explorer page<br/>self-contained HTML")]
@@ -137,7 +137,7 @@ The code map below names every module and what must not live in it.
 | `synthesis/` | `schema.py` (`DatasetSchema`, columns, overrides, correlations, constraints, `Question`), `expressions.py` (the safe expression language), `marginals.py` (inverse distribution functions), `patterns.py` (conditions, formulas, outliers, exact statistics, gaps), `generator.py` (the four-step build and constraint filtering), `column_values.py` (the values of one column: uniforms, draw or formula, conditions, outliers), `panel.py` (a panel's settings, row layout, column levels and lags of a finished table), `panel_generation.py` (builds a panel period by period), `time_series.py` (the `time_series` section of an answer key), `draw_replay.py` (the uniform numbers behind every row, stored with it so a build can be replayed), `causal_graph.py` (the graph a schema declares, column roles and back-door adjustment sets), `interventions.py` (`do(treatment = value)` by replaying the stored numbers), `treatment_effects.py` (the `causal` section of an answer key), `unique_values.py` (unique integer keys and templates), `copula.py` (Gaussian copula learned from a reference, optionally per level), `latent_correlation.py` (correlation of the hidden normal variables behind categories and numbers), `inference.py` (schema from a table), `rare_values.py` (merges rare categories and pulls in extreme numbers so one record cannot reappear), `challenge.py` (train/test split, answer key and leakage flags), `drift.py` (shifted test rows and drift kind), `label_noise.py` (flipped or perturbed labels) | Detection rules; it calls `detection.scan` |
 | `anonymizer.py` | `Anonymizer`, the facade that wires the above together (`scan`, `propose`, `apply`, `reveal`, `synthesize`, `challenge`), and `AnonymizationResult` | Rules; it only orchestrates |
 | `table_files.py` | Read and write CSV or Parquet by extension, with Polars | Anything else |
-| `cli.py` | The `anonymize` command; reads `ANONYMIZER_SECRET_KEY` | Logic beyond parsing arguments and printing |
+| `cli.py` | The `oblitus` command; reads `OBLITUS_SECRET_KEY` | Logic beyond parsing arguments and printing |
 
 ## Data flow
 

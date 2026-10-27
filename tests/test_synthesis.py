@@ -4,11 +4,11 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from data_anonymizer import Anonymizer, ColumnSchema, DatasetSchema, Fidelity, SchemaError
-from data_anonymizer.detection.patterns import is_valid_cpf
-from data_anonymizer.synthesis import infer_schema
-from data_anonymizer.synthesis.schema import Distribution
-from data_anonymizer.taxonomy import ColumnKind, DataCategory
+from oblitus import Anonymizer, ColumnSchema, DatasetSchema, Fidelity, SchemaError
+from oblitus.detection.patterns import is_valid_cpf
+from oblitus.synthesis import infer_schema
+from oblitus.synthesis.schema import Distribution
+from oblitus.taxonomy import ColumnKind, DataCategory
 
 
 def test_schema_only_generation_follows_each_column_description():

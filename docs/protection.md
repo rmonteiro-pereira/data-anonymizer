@@ -177,7 +177,7 @@ three things:
   checks compare them. The key holds the original values even when the plan replaces
   the column.
 
-`anonymize apply` and `anonymize reveal` take `--row-key COLUMN`, which overrides the
+`oblitus apply` and `oblitus reveal` take `--row-key COLUMN`, which overrides the
 plan's `row_key`.
 
 ## What keyed noise cannot hide

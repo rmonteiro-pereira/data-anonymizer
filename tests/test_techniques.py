@@ -2,29 +2,29 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from data_anonymizer.detection.patterns import is_valid_cpf
-from data_anonymizer.techniques import BUILTIN_TECHNIQUES
-from data_anonymizer.techniques.catalogue import apply_to_series
-from data_anonymizer.techniques.generalization import (
+from oblitus.detection.patterns import is_valid_cpf
+from oblitus.techniques import BUILTIN_TECHNIQUES
+from oblitus.techniques.catalogue import apply_to_series
+from oblitus.techniques.generalization import (
     bin_numeric,
     suppress_rare,
     top_bottom_code,
     truncate_date,
     truncate_string,
 )
-from data_anonymizer.techniques.masking import partial_mask, redact, redact_entities
-from data_anonymizer.techniques.noise import (
+from oblitus.techniques.masking import partial_mask, redact, redact_entities
+from oblitus.techniques.noise import (
     date_shift,
     gaussian_noise,
     laplace_noise,
 )
-from data_anonymizer.techniques.perturbation import (
+from oblitus.techniques.perturbation import (
     microaggregate,
     randomized_response,
     rank_swap,
     shuffle,
 )
-from data_anonymizer.techniques.pseudonymization import (
+from oblitus.techniques.pseudonymization import (
     keyed_hash,
     scramble_characters,
     surrogate,

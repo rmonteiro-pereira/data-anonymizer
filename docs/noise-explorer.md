@@ -9,14 +9,14 @@ and strengths by how far records move against how many can still be re-linked.
 From the command line, with a table that has a numeric column:
 
 ```bash
-uv run anonymize explore-noise customers.csv --column monthly_spend -o monthly_spend_noise.html
+uv run oblitus explore-noise customers.csv --column monthly_spend -o monthly_spend_noise.html
 ```
 
 It prints `wrote monthly_spend_noise.html; open it in a browser`. To try it without your own
 data, first write a sample table from the example schema:
 
 ```bash
-uv run anonymize synthesize --schema examples/customers_schema.json --rows 2000 -o customers.csv
+uv run oblitus synthesize --schema examples/customers_schema.json --rows 2000 -o customers.csv
 ```
 
 From Python:
@@ -26,7 +26,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from data_anonymizer.noise_explorer import explore_noise, save_page
+from oblitus.noise_explorer import explore_noise, save_page
 
 customers = pd.read_csv("customers.csv")
 exploration = explore_noise(customers, "monthly_spend", seed=1)

@@ -1,6 +1,7 @@
-# data-anonymizer
+# oblitus
 
-A Python library and command-line tool for tables that contain personal data. It:
+*Oblitus* is Latin for "erased, forgotten". It is a Python library and command-line tool for
+tables that contain personal data. It:
 
 1. **detects** which columns hold personal or sensitive data. It reads column names and
    values, and checks the check digits of about 30 document formats, Brazilian and
@@ -18,7 +19,7 @@ A Python library and command-line tool for tables that contain personal data. It
    statistics. It can also generate **data-science challenges with a known answer key**.
 
 ![The noise explorer for one column: metric tiles, the original against released distribution,
-and how far each record moved](docs/images/noise-explorer-light.png)
+and how far each record moved](https://raw.githubusercontent.com/rmonteiro-pereira/oblitus/main/docs/images/noise-explorer-light.png)
 
 ## Features and algorithms
 
@@ -32,14 +33,14 @@ and how far each record moved](docs/images/noise-explorer-light.png)
 | Generalization | Fixed-width, equal-width and quantile binning. Rounding. Date and string truncation. Top and bottom coding. Rare-category suppression |
 | Noise | Gaussian noise rescaled to keep mean and variance. **Laplace mechanism** (ε-local differential privacy with fixed bounds). Multiplicative noise. Date shifting, with one offset per person or company |
 | Perturbation | Shuffling, rank swapping, univariate microaggregation, **randomized response** (local differential privacy) |
-| Business confidentiality | Opaque category codes in random order, with small segments merged. **Per-store indexing** by default, so no known value plus a public total gives the money back; recentring and rescaling (robust, z-score, min-max) when sizes must stay comparable; rank, log-ratio and growth too. Dominance and p% checks, so a segment's biggest contributor cannot be read from the release. See [docs/business-confidentiality.md](docs/business-confidentiality.md) |
+| Business confidentiality | Opaque category codes in random order, with small segments merged. **Per-store indexing** by default, so no known value plus a public total gives the money back; recentring and rescaling (robust, z-score, min-max) when sizes must stay comparable; rank, log-ratio and growth too. Dominance and p% checks, so a segment's biggest contributor cannot be read from the release. See [docs/business-confidentiality.md](https://github.com/rmonteiro-pereira/oblitus/blob/main/docs/business-confidentiality.md) |
 | Protection modes | **Anonymization** (the default) or **pseudonymization**, each with `statistical` or `privacy` fidelity. Anonymization refuses linking techniques and runs under a throwaway key. Identifiers are checked on the data, not only by technique name, and unique columns released unchanged are flagged. Each result is labelled `anonymized`, `at_risk`, `pseudonymized` or `identifiable`, by checks named after the EDPB 2026 criteria: no record isolation, no linkage, no inference |
 | Privacy and risk | k-anonymity, l-diversity, k-anonymity enforcement by local suppression, whole-record uniqueness, distance-based record linkage, interval disclosure |
 | Utility | Change in mean and standard deviation, Kolmogorov–Smirnov, Wasserstein / IQR, total variation distance, correlation change, per-record shift in standard deviations |
 | Noise explorer | A self-contained interactive HTML page per column. For every technique and strength it shows before/after distributions, original against released per record with an exposure band, and a risk-utility map. It works offline and follows light and dark themes |
 | Synthesis | Distributions (normal, lognormal, gamma, exponential, Poisson, uniform, quantile curves) truncated to bounds. Spearman correlations imposed through a Gaussian copula. Conditional overrides that keep correlations. Formula columns using a safe expression language with date and random functions. Outlier planting, exact statistics, row constraints, unique keys, null shares and templates. Learned Gaussian copula from a reference table |
 | Challenges | A schema `question` produces train and test files and a private answer key. The key lists the true drivers, the correlated-but-not-causal columns and the distractors, plus the best score any model can reach (RMSE/R², or accuracy/AUC/log loss). Columns that leak the target are flagged. With a `treatment`, the key also holds the true average, treated-only and per-group effects, the bias of the naive comparison, the confounders, mediators, colliders and instruments, and a valid adjustment set. Optional test-set drift (covariate or concept) and label noise on the train or test labels, both reported in the key. Panels of entities over periods (entity-level and period-level columns, `lag`, AR series, seasonality, regimes) with a time split that holds out the last periods |
-| Interfaces | Python API (`Anonymizer`), editable JSON plans and schemas, the `anonymize` CLI, CSV and Parquet, custom techniques |
+| Interfaces | Python API (`Anonymizer`), editable JSON plans and schemas, the `oblitus` CLI, CSV and Parquet, custom techniques |
 
 ### Roadmap
 
@@ -69,22 +70,23 @@ Planned, not yet implemented:
   (MST, AIM) with an ε budget across columns.
 - **Synthetic-data checks**: distance to the closest real record and membership inference.
 - **Scale**: Spark tables through the same engine layer (see
-  [docs/adr/0001-dataframe-backends.md](docs/adr/0001-dataframe-backends.md)), and chunked
+  [docs/adr/0001-dataframe-backends.md](https://github.com/rmonteiro-pereira/oblitus/blob/main/docs/adr/0001-dataframe-backends.md)), and chunked
   processing for files larger than memory.
 
 ## Install
 
-Releases are published on GitHub, not on PyPI (the PyPI name `data-anonymizer` belongs to an
-unrelated project). Install a tagged release with pip or uv; Python 3.12 or later:
+Python 3.12 or later:
 
 ```bash
-pip install "data-anonymizer @ git+https://github.com/rmonteiro-pereira/data-anonymizer.git@v0.2.0"
+pip install oblitus
 # with DuckDB support:
-pip install "data-anonymizer[duckdb] @ git+https://github.com/rmonteiro-pereira/data-anonymizer.git@v0.2.0"
+pip install "oblitus[duckdb]"
 ```
 
-The wheel is also attached to each [GitHub release](https://github.com/rmonteiro-pereira/data-anonymizer/releases).
-The package imports as `data_anonymizer` and installs the `anonymize` command.
+`uv add oblitus` works too. The package imports as `oblitus` and installs the `oblitus`
+command. Each [GitHub release](https://github.com/rmonteiro-pereira/oblitus/releases) also
+carries the wheel and the source archive. Versions up to 0.2.0 were called `data-anonymizer`
+and were published on GitHub only.
 
 ## Quick start
 
@@ -92,28 +94,28 @@ From a clone of the repository, this writes a sample customer table from the bun
 schema, then scans, plans, anonymizes it and writes a noise explorer page:
 
 ```bash
-git clone https://github.com/rmonteiro-pereira/data-anonymizer.git
-cd data-anonymizer
+git clone https://github.com/rmonteiro-pereira/oblitus.git
+cd oblitus
 uv sync
-export ANONYMIZER_SECRET_KEY="$(openssl rand -hex 32)"
+export OBLITUS_SECRET_KEY="$(openssl rand -hex 32)"
 
-uv run anonymize synthesize --schema examples/customers_schema.json --rows 2000 -o customers.csv
-uv run anonymize scan customers.csv
-uv run anonymize propose customers.csv --protection anonymization -o plan.json
+uv run oblitus synthesize --schema examples/customers_schema.json --rows 2000 -o customers.csv
+uv run oblitus scan customers.csv
+uv run oblitus propose customers.csv --protection anonymization -o plan.json
 # review and edit plan.json, then:
-uv run anonymize apply customers.csv --plan plan.json -o customers_anon.csv --report report.json
-uv run anonymize explore-noise customers.csv --column monthly_spend -o monthly_spend_noise.html
+uv run oblitus apply customers.csv --plan plan.json -o customers_anon.csv --report report.json
+uv run oblitus explore-noise customers.csv --column monthly_spend -o monthly_spend_noise.html
 ```
 
 `apply` ends with a line such as
 `wrote 2000 rows to customers_anon.csv; k-anonymity 1 -> 5; result is anonymized`. Open the
-explorer page in a browser; [docs/noise-explorer.md](docs/noise-explorer.md#open-the-page)
+explorer page in a browser; [docs/noise-explorer.md](https://github.com/rmonteiro-pereira/oblitus/blob/main/docs/noise-explorer.md#open-the-page)
 gives the command for each system, and warns that the page holds real values from the column.
 
 ## How it works, on one row
 
 ![The scan and apply commands with their real output: each column's category and evidence,
-then "result is anonymized"](docs/images/quick-start-terminal.png)
+then "result is anonymized"](https://raw.githubusercontent.com/rmonteiro-pereira/oblitus/main/docs/images/quick-start-terminal.png)
 
 `scan` classifies every column. On the sample table it finds five direct identifiers
 (`customer_id`, `full_name`, `email`, `cpf`, and `voucher`, whose few filled values are almost
@@ -140,11 +142,11 @@ or `identifiable`, with the reason for anything short of the target.
 
 The same flow in Python. `scan`, `propose`, `validate`, `apply` and `reveal` take pandas,
 Polars and DuckDB tables and return the same kind. A DuckDB table needs the plan's
-`row_key` (see [docs/protection.md](docs/protection.md)).
+`row_key` (see [docs/protection.md](https://github.com/rmonteiro-pereira/oblitus/blob/main/docs/protection.md)).
 
 ```python
 import pandas as pd
-from data_anonymizer import Anonymizer, Fidelity, Protection
+from oblitus import Anonymizer, Fidelity, Protection
 
 # Parse dates, so the plan treats signup_date as a timestamp rather than text.
 customers = pd.read_csv("customers.csv", parse_dates=["signup_date"])
@@ -167,7 +169,7 @@ result.utility.max_correlation_change
 
 | Variable | Required | Default | What it does |
 |---|---|---|---|
-| `ANONYMIZER_SECRET_KEY` | for `reveal` | random per run | At least 16 bytes; a shorter key is refused. Keys every pseudonym and keyed salt, and is the master secret for the encryption keys. With the same key, the same value always gets the same pseudonym, so tables pseudonymized separately still join. `reveal` refuses to run without it. `apply` warns and uses a random key, so pseudonyms change on every run and encrypted columns can never be revealed. Anonymization plans use a throwaway key instead for everything that could link a release back or to another release: pseudonyms, encryption, category codes and random fakes. The key still drives their noise, which is reproducible for the key holder, so keep it secret even then. |
+| `OBLITUS_SECRET_KEY` | for `reveal` | random per run | At least 16 bytes; a shorter key is refused. Keys every pseudonym and keyed salt, and is the master secret for the encryption keys. With the same key, the same value always gets the same pseudonym, so tables pseudonymized separately still join. `reveal` refuses to run without it. `apply` warns and uses a random key, so pseudonyms change on every run and encrypted columns can never be revealed. Anonymization plans use a throwaway key instead for everything that could link a release back or to another release: pseudonyms, encryption, category codes and random fakes. The key still drives their noise, which is reproducible for the key holder, so keep it secret even then. |
 
 In Python, pass `secret_key=` to `Anonymizer`; the library never reads the environment.
 Treat the key like a password. Anyone who holds it can decrypt the reversible columns,
@@ -183,15 +185,15 @@ locale for fake values, such as `pt_BR`; default `en_US`). Tables can be `.csv` 
 
 | Command | What it does |
 |---|---|
-| `anonymize scan INPUT [--sample-size N]` | Prints each column's category, sensitivity, confidence and evidence |
-| `anonymize propose INPUT [--protection P] [--fidelity F] [-o PLAN]` | Writes a plan as JSON (stdout without `-o`) |
-| `anonymize apply INPUT -o OUTPUT [--plan PLAN] [--protection P] [--fidelity F] [--report REPORT] [--row-key COLUMN]` | Applies a plan, or proposes one first. Prints the protection level reached. `--report` writes privacy, utility and protection results as JSON. `--row-key` overrides the plan's `row_key` |
-| `anonymize reveal INPUT --plan PLAN -o OUTPUT [--row-key COLUMN]` | Decrypts the columns the plan encrypted and leaves one-way columns as they are |
-| `anonymize explore-noise INPUT --column NAME -o PAGE.html [--band SD] [--max-rows N]` | Writes the interactive noise explorer for one numeric column. Columns longer than `N` values (default 200,000) are explored on a random sample |
-| `anonymize infer-schema INPUT [--fidelity F] [-o SCHEMA]` | Learns a generation schema from a table |
-| `anonymize synthesize -o OUTPUT [--rows N] [--schema SCHEMA] [--reference INPUT] [--fidelity F]` | Generates a synthetic table |
-| `anonymize challenge --schema SCHEMA [--rows N] -o FOLDER` | Generates a data-science challenge: `train.csv`, `test.csv`, `QUESTION.md`, and `answers/` with the answer key |
-| `anonymize techniques` | Lists every technique, its parameters and whether it is reversible |
+| `oblitus scan INPUT [--sample-size N]` | Prints each column's category, sensitivity, confidence and evidence |
+| `oblitus propose INPUT [--protection P] [--fidelity F] [-o PLAN]` | Writes a plan as JSON (stdout without `-o`) |
+| `oblitus apply INPUT -o OUTPUT [--plan PLAN] [--protection P] [--fidelity F] [--report REPORT] [--row-key COLUMN]` | Applies a plan, or proposes one first. Prints the protection level reached. `--report` writes privacy, utility and protection results as JSON. `--row-key` overrides the plan's `row_key` |
+| `oblitus reveal INPUT --plan PLAN -o OUTPUT [--row-key COLUMN]` | Decrypts the columns the plan encrypted and leaves one-way columns as they are |
+| `oblitus explore-noise INPUT --column NAME -o PAGE.html [--band SD] [--max-rows N]` | Writes the interactive noise explorer for one numeric column. Columns longer than `N` values (default 200,000) are explored on a random sample |
+| `oblitus infer-schema INPUT [--fidelity F] [-o SCHEMA]` | Learns a generation schema from a table |
+| `oblitus synthesize -o OUTPUT [--rows N] [--schema SCHEMA] [--reference INPUT] [--fidelity F]` | Generates a synthetic table |
+| `oblitus challenge --schema SCHEMA [--rows N] -o FOLDER` | Generates a data-science challenge: `train.csv`, `test.csv`, `QUESTION.md`, and `answers/` with the answer key |
+| `oblitus techniques` | Lists every technique, its parameters and whether it is reversible |
 
 `P` is `anonymization` (the default) or `pseudonymization`. `F` is `statistical` (the
 default) or `privacy`. `-o` is short for `--output`.
@@ -203,22 +205,22 @@ Exit codes:
 
 ## Documentation
 
-- [docs/detection.md](docs/detection.md): categories, recognized identifiers, and how a
+- [docs/detection.md](https://github.com/rmonteiro-pereira/oblitus/blob/main/docs/detection.md): categories, recognized identifiers, and how a
   column is classified
-- [docs/protection.md](docs/protection.md): pseudonymization against anonymization, the
+- [docs/protection.md](https://github.com/rmonteiro-pereira/oblitus/blob/main/docs/protection.md): pseudonymization against anonymization, the
   default proposals, plan files and the protection checks
-- [docs/techniques.md](docs/techniques.md): every technique, its parameters and its effect
-- [docs/business-confidentiality.md](docs/business-confidentiality.md): sharing company data,
+- [docs/techniques.md](https://github.com/rmonteiro-pereira/oblitus/blob/main/docs/techniques.md): every technique, its parameters and its effect
+- [docs/business-confidentiality.md](https://github.com/rmonteiro-pereira/oblitus/blob/main/docs/business-confidentiality.md): sharing company data,
   such as tenant revenue and rent, without revealing any one company's figures
-- [docs/noise-explorer.md](docs/noise-explorer.md): writing and opening the noise explorer
+- [docs/noise-explorer.md](https://github.com/rmonteiro-pereira/oblitus/blob/main/docs/noise-explorer.md): writing and opening the noise explorer
   page, and reading its metrics
-- [docs/synthesis.md](docs/synthesis.md): schemas, planted patterns, synthesis from a
+- [docs/synthesis.md](https://github.com/rmonteiro-pereira/oblitus/blob/main/docs/synthesis.md): schemas, planted patterns, synthesis from a
   sample, and data-science challenges
-- [ARCHITECTURE.md](ARCHITECTURE.md): C4-style system views, how the code is organised and
+- [ARCHITECTURE.md](https://github.com/rmonteiro-pereira/oblitus/blob/main/ARCHITECTURE.md): C4-style system views, how the code is organised and
   where to change things
-- [CONTRIBUTING.md](CONTRIBUTING.md): the project's standards for code, design, tests, docs,
+- [CONTRIBUTING.md](https://github.com/rmonteiro-pereira/oblitus/blob/main/CONTRIBUTING.md): the project's standards for code, design, tests, docs,
   privacy review, commits and releases
-- [CHANGELOG.md](CHANGELOG.md): released changes
+- [CHANGELOG.md](https://github.com/rmonteiro-pereira/oblitus/blob/main/CHANGELOG.md): released changes
 
 ## Development
 
@@ -234,4 +236,4 @@ GitHub Actions runs the same checks on Python 3.12 and 3.13 for every push to `m
 pull request (`.github/workflows/ci.yml`); there, formatting is checked with
 `ruff format --check` instead of rewritten.
 
-The standards every change follows are in [CONTRIBUTING.md](CONTRIBUTING.md).
+The standards every change follows are in [CONTRIBUTING.md](https://github.com/rmonteiro-pereira/oblitus/blob/main/CONTRIBUTING.md).

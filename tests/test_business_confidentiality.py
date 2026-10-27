@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from data_anonymizer import (
+from oblitus import (
     AnonymizationPlan,
     Anonymizer,
     ColumnAction,
@@ -10,8 +10,8 @@ from data_anonymizer import (
     Protection,
     ProtectionLevel,
 )
-from data_anonymizer.techniques.pseudonymization import scramble_categories
-from data_anonymizer.techniques.rescaling import normalize
+from oblitus.techniques.pseudonymization import scramble_categories
+from oblitus.techniques.rescaling import normalize
 
 SEGMENTS = ["Moda", "Alimentação", "Casa", "Lazer"]
 

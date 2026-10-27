@@ -1,6 +1,6 @@
 # Detection
 
-`anonymize scan` and `Anonymizer.scan()` classify every column. Each finding has:
+`oblitus scan` and `Anonymizer.scan()` classify every column. Each finding has:
 - a storage kind;
 - a `DataCategory`;
 - a `Sensitivity`;
@@ -57,7 +57,7 @@ RG and passport numbers, age, gender, coordinates, income, health, special categ
 nationality, marital status and the business figures (segment, revenue, rent, floor
 area). Organizations are found by name only. Person names are found by name, and a
 column named after a person (`customer`, `titular`, `owner`) also needs values shaped
-like names. The checks are in `src/data_anonymizer/detection/checksums.py`.
+like names. The checks are in `src/oblitus/detection/checksums.py`.
 
 ## How a column is classified
 

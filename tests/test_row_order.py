@@ -2,7 +2,7 @@ import duckdb
 import pandas as pd
 import polars as pl
 
-from data_anonymizer import AnonymizationPlan, Anonymizer, ColumnAction, Fidelity, Protection
+from oblitus import AnonymizationPlan, Anonymizer, ColumnAction, Fidelity, Protection
 
 
 def _plan(protection=Protection.ANONYMIZATION, **fields) -> AnonymizationPlan:

@@ -1,6 +1,6 @@
 # Contributing and project standards
 
-This page lists the standards every change to data-anonymizer follows: code, design, tests,
+This page lists the standards every change to oblitus follows: code, design, tests,
 documentation, privacy review, commits and releases. Read [ARCHITECTURE.md](ARCHITECTURE.md)
 first: it says where each concept lives.
 
@@ -9,8 +9,8 @@ first: it says where each concept lives.
 You need Python 3.12 or later and [uv](https://docs.astral.sh/uv/).
 
 ```bash
-git clone https://github.com/rmonteiro-pereira/data-anonymizer.git
-cd data-anonymizer
+git clone https://github.com/rmonteiro-pereira/oblitus.git
+cd oblitus
 uv sync --all-extras
 ```
 
@@ -154,16 +154,19 @@ complete and before a release that changes protection.
 
 ## Releases
 
-Releases are published on GitHub only; the PyPI name `data-anonymizer` belongs to another
-project.
+Releases go to PyPI as `oblitus` and to GitHub. Publishing to PyPI is automatic: creating a
+GitHub release runs `.github/workflows/publish.yml`, which builds the package and uploads it
+through PyPI trusted publishing, so no token is stored anywhere.
 
 1. Set `version` in `pyproject.toml`, and rename `## Unreleased` in `CHANGELOG.md` to the
    version.
 2. Build with `uv build`, then install the wheel into a fresh virtual environment outside the
-   repository. Run the quick start's commands with that environment's `anonymize`, passing
+   repository. Run the quick start's commands with that environment's `oblitus`, passing
    `--schema` the repository's `examples/customers_schema.json`, and check that `apply` prints
    `result is anonymized`.
 3. Push, and wait for CI to pass on the release commit.
 4. Tag `vX.Y.Z` on that commit and create the GitHub release, with the wheel and the source
-   archive attached. The notes cover install, highlights and known limits.
-5. Install once more from the tag with the README's `pip install` line, as a user would.
+   archive attached. The notes cover install, highlights and known limits. Publishing the
+   release starts the PyPI upload.
+5. Once the upload finishes, install with `pip install oblitus==X.Y.Z` in a fresh
+   environment, as a user would.

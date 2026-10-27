@@ -4,17 +4,17 @@ import pandas as pd
 import polars as pl
 import pytest
 
-from data_anonymizer.anonymizer import Anonymizer
-from data_anonymizer.engines import Engine
-from data_anonymizer.errors import PlanError
-from data_anonymizer.evaluation import assess_privacy
-from data_anonymizer.evaluation.aligned_sample import align_sample
-from data_anonymizer.local_suppression import enforce_k_anonymity
-from data_anonymizer.noise_explorer import explore_noise
-from data_anonymizer.plan import AnonymizationPlan, ColumnAction, Fidelity, Protection
-from data_anonymizer.table import Table
-from data_anonymizer.techniques import BUILTIN_TECHNIQUES
-from data_anonymizer.techniques.perturbation import microaggregate, rank_swap
+from oblitus.anonymizer import Anonymizer
+from oblitus.engines import Engine
+from oblitus.errors import PlanError
+from oblitus.evaluation import assess_privacy
+from oblitus.evaluation.aligned_sample import align_sample
+from oblitus.local_suppression import enforce_k_anonymity
+from oblitus.noise_explorer import explore_noise
+from oblitus.plan import AnonymizationPlan, ColumnAction, Fidelity, Protection
+from oblitus.table import Table
+from oblitus.techniques import BUILTIN_TECHNIQUES
+from oblitus.techniques.perturbation import microaggregate, rank_swap
 
 # Techniques that map each value on its own: masking, pseudonymization, encryption.
 MAPPING_TECHNIQUES = [

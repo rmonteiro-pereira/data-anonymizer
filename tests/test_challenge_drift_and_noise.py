@@ -10,7 +10,7 @@ import pytest
 from pydantic import ValidationError
 from scipy import optimize, special
 
-from data_anonymizer import Anonymizer, DatasetSchema
+from oblitus import Anonymizer, DatasetSchema
 
 EXAMPLES = Path(__file__).parent.parent / "examples"
 ROWS = 30000

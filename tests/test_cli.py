@@ -3,11 +3,11 @@ from pathlib import Path
 
 import pandas as pd
 
-from data_anonymizer.cli import main
+from oblitus.cli import main
 
 
 def test_propose_then_apply_with_a_reviewed_plan(people, tmp_path, capsys, monkeypatch):
-    monkeypatch.setenv("ANONYMIZER_SECRET_KEY", "cli-key-for-tests-0123456789")
+    monkeypatch.setenv("OBLITUS_SECRET_KEY", "cli-key-for-tests-0123456789")
     source = tmp_path / "people.csv"
     people.to_csv(source, index=False)
     plan_path = tmp_path / "plan.json"
@@ -85,7 +85,7 @@ def test_challenge_command_writes_public_and_private_files(tmp_path):
 
 
 def test_apply_and_reveal_take_a_row_key_that_overrides_the_plan(people, tmp_path, monkeypatch):
-    monkeypatch.setenv("ANONYMIZER_SECRET_KEY", "cli-key-for-tests-0123456789")
+    monkeypatch.setenv("OBLITUS_SECRET_KEY", "cli-key-for-tests-0123456789")
     source = tmp_path / "people.parquet"
     people.to_parquet(source, index=False)
     plan_path = tmp_path / "plan.json"

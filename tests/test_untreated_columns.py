@@ -2,8 +2,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from data_anonymizer import Anonymizer, Fidelity, Protection, ProtectionLevel
-from data_anonymizer.cli import main
+from oblitus import Anonymizer, Fidelity, Protection, ProtectionLevel
+from oblitus.cli import main
 
 ROWS = 2000
 
@@ -62,7 +62,7 @@ def test_pseudonymization_proposals_leave_fingerprint_columns_alone():
 
 
 def test_the_command_line_reads_iso_dates_in_a_csv_as_dates(tmp_path, monkeypatch):
-    monkeypatch.setenv("ANONYMIZER_SECRET_KEY", "cli-key-for-tests-0123456789")
+    monkeypatch.setenv("OBLITUS_SECRET_KEY", "cli-key-for-tests-0123456789")
     source = tmp_path / "customers.csv"
     _customers().to_csv(source, index=False)
     plan_path = tmp_path / "plan.json"

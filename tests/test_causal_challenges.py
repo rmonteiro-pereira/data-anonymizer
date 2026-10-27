@@ -9,8 +9,8 @@ import pandas as pd
 import pytest
 from pydantic import ValidationError
 
-from data_anonymizer import Anonymizer, DatasetSchema
-from data_anonymizer.synthesis.causal_graph import CausalGraph
+from oblitus import Anonymizer, DatasetSchema
+from oblitus.synthesis.causal_graph import CausalGraph
 
 EXAMPLE = Path(__file__).parent.parent / "examples" / "promo_uplift.json"
 ROWS = 40_000
@@ -457,7 +457,7 @@ def test_planted_leaks_are_flagged_from_a_formula_that_reads_the_target():
 
 
 def test_the_question_page_names_the_treatment(promo_challenge):
-    from data_anonymizer.cli import _question_page
+    from oblitus.cli import _question_page
 
     page = _question_page(promo_challenge)
 

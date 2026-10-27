@@ -1,7 +1,7 @@
 import pandas as pd
 
-from data_anonymizer.evaluation import assess_privacy, compare_tables
-from data_anonymizer.local_suppression import enforce_k_anonymity
+from oblitus.evaluation import assess_privacy, compare_tables
+from oblitus.local_suppression import enforce_k_anonymity
 
 
 def test_k_anonymity_and_l_diversity_of_a_small_table():
