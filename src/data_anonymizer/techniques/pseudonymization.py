@@ -230,7 +230,8 @@ def surrogate(
     gets an unrelated random fake and nothing links back to the person; the fakes
     are drawn from a pool of at most 100,000, as large as the column has present
     rows. With `unique` and `consistent`, two different real values never share a
-    fake value, which keeps distinct counts exact.
+    fake value, which keeps distinct counts exact. A fake never equals a real value of
+    the column, so no real value is published by chance.
     """
     data_category = DataCategory(category)
     if consistent:
@@ -248,11 +249,14 @@ def _consistent_surrogate(
     # Values are visited in text order so a collision resolves the same way on every engine.
     by_text = {canonical_value(value): value for value in table.distinct_values(column)}
     mapping: dict[Any, str] = {}
-    used: set[str] = set()
+    # A fake that equals a real value of the column would publish that value.
+    avoid = set(by_text)
     for original in sorted(by_text):
-        fake = _surrogate_for(context, category, original, used if unique else None)
+        seed = context.keyed_seed(original)
+        fake = _fake_avoiding(context, category, seed, original, avoid)
         mapping[by_text[original]] = fake
-        used.add(fake)
+        if unique:
+            avoid.add(fake)
     return table.lookup(column, mapping, nw.String)
 
 
@@ -270,8 +274,9 @@ def _random_surrogate(
     style_example = "0" if counts["digits_only"] else None
     generator = context.generator(column, "surrogate")
     seeds = generator.integers(0, 2**63 - 1, size=pool_size)
+    real_values = {canonical_value(value) for value in table.distinct_values(column)}
     pool = {
-        index: context.surrogates.value_for(category, int(seed), like=style_example)
+        index: _fake_avoiding(context, category, int(seed), style_example, real_values)
         for index, seed in enumerate(seeds)
     }
     (uniform,) = table.uniforms(context.choice_key(column, "surrogate"))
@@ -280,19 +285,17 @@ def _random_surrogate(
     return nw.when(~value.is_null()).then(fakes)
 
 
-def _surrogate_for(
+def _fake_avoiding(
     context: TechniqueContext,
     category: DataCategory,
-    original: str,
-    used: set[str] | None,
+    seed: int,
+    like: str | None,
+    avoid: set[str],
 ) -> str:
-    seed = context.keyed_seed(original)
-    fake = context.surrogates.value_for(category, seed, like=original)
-    if used is None:
-        return fake
+    fake = context.surrogates.value_for(category, seed, like=like)
     attempt = 1
-    while fake in used and attempt < _COLLISION_ATTEMPTS:
-        fake = context.surrogates.value_for(category, seed + attempt, like=original)
+    while fake in avoid and attempt < _COLLISION_ATTEMPTS:
+        fake = context.surrogates.value_for(category, seed + attempt, like=like)
         attempt += 1
     return fake
 

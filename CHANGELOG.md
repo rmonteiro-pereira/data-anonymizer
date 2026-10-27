@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- `surrogate` never draws a fake equal to a real value of the column; random fakes could
+  occasionally repeat a real email from the input.
 - **`OTHER` segments are large enough too.** `scramble_categories` with `min_count` or
   `min_entities` keeps merging the smallest segments into `OTHER` until it holds the minimum
   rows and entities. If all segments together fall short, the column is blanked.

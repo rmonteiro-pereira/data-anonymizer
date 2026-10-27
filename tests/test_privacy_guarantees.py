@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -18,6 +20,7 @@ from data_anonymizer.techniques.pseudonymization import (
     argon2_hash,
     keyed_hash,
     scramble_characters,
+    surrogate,
 )
 
 KEY = "a-secret-key-for-tests-0123456789"
@@ -221,3 +224,20 @@ def test_pseudonymized_codes_are_reproducible_for_the_key_holder(people):
     second = Anonymizer(secret_key=KEY, seed=1).apply(people, plan).data
 
     assert first["city"].equals(second["city"])
+
+
+class _ThreeEmails:
+    """A fake generator with only three outputs, so collisions with real values are certain."""
+
+    def value_for(self, category, seed, *, like=None):
+        return f"user{seed % 3}@example.com"
+
+
+@pytest.mark.parametrize("consistent", [True, False])
+def test_a_fake_never_repeats_a_real_value_of_the_column(context, run, consistent):
+    real_emails = pd.Series(["user0@example.com", "user1@example.com"] * 50, name="email")
+    narrow_context = replace(context, surrogates=_ThreeEmails())
+
+    fakes = run(surrogate, real_emails, narrow_context, category="email", consistent=consistent)
+
+    assert set(fakes) == {"user2@example.com"}
