@@ -171,7 +171,80 @@ def test_a_fractional_float_repeated_by_chance_is_not_an_account_key():
     assert not any("price was not treated" in p for p in _problems(frame, _plan([])))
 
 
-def test_a_code_with_many_rows_per_value_is_not_an_account_key_even_when_small():
-    frame = _repeated_key_frame(60, 100, as_float=False).rename(columns={"account": "category"})
+def test_a_column_with_many_rows_per_value_is_an_account_key():
+    frame = _repeated_key_frame(60, 100, as_float=False)
 
-    assert not any("category was not treated" in p for p in _problems(frame, _plan([])))
+    problems = _problems(frame, _plan([]))
+
+    assert any("account was not treated" in p and "knows their own value" in p for p in problems)
+
+
+def test_a_merchant_card_with_twenty_rows_per_value_is_an_account_key():
+    problems = _problems(_repeated_key_frame(2000, 20, as_float=False), _plan([]))
+
+    assert any(problem.startswith("account was not treated") for problem in problems)
+
+
+def test_few_accounts_and_one_fractional_cell_are_still_account_keys():
+    few = _repeated_key_frame(49, 10, as_float=False)
+    mostly_whole = _repeated_key_frame(60, 10, as_float=True)
+    mostly_whole.loc[0, "account"] += 0.25
+
+    assert any("account was not treated" in p for p in _problems(few, _plan([])))
+    assert any("account was not treated" in p for p in _problems(mostly_whole, _plan([])))
+
+
+def test_fewer_than_twenty_distinct_values_are_not_an_account_key():
+    frame = _repeated_key_frame(19, 50, as_float=False)
+
+    assert not any("account was not treated" in p for p in _problems(frame, _plan([])))
+
+
+def test_two_columns_that_are_a_key_only_together_are_flagged_as_a_pair():
+    first = np.repeat(np.arange(60), 60 * 2)
+    second = np.tile(np.repeat(np.arange(60), 2), 60)
+    frame = pd.DataFrame({"left": first, "right": second})
+
+    problems = _problems(frame, _plan([]))
+
+    assert any(p.startswith("left and right were not treated") for p in problems)
+
+
+def test_a_listed_column_is_not_flagged_as_a_key():
+    frame = _repeated_key_frame(60, 10, as_float=False)
+    plan = _plan([], quasi_identifiers=["account"])
+
+    assert not any("account was not treated" in p for p in _problems(frame, plan))
+
+
+def test_the_proposal_replaces_an_untreated_key_with_fresh_codes():
+    engine = Anonymizer(seed=1)
+    frame = _repeated_key_frame(49, 11, as_float=False)
+
+    plan = engine.propose(frame)
+    result = engine.apply(frame, plan)
+
+    assert plan.action_for("account").technique == "scramble_categories"
+    assert not result.data["account"].isin(frame["account"]).any()
+    assert result.data["account"].nunique() == 49
+    assert result.protection.level is ProtectionLevel.ANONYMIZED
+
+
+def test_the_proposal_replaces_both_columns_of_a_composite_key():
+    first = np.repeat(np.arange(60), 60 * 2)
+    second = np.tile(np.repeat(np.arange(60), 2), 60)
+    frame = pd.DataFrame({"left": first, "right": second})
+
+    plan = Anonymizer(seed=1).propose(frame)
+
+    assert {action.column for action in plan.actions} == {"left", "right"}
+
+
+def test_the_proposal_keeps_measurements_and_pseudonymization_plans_unchanged():
+    engine = Anonymizer(seed=1)
+    rng = np.random.default_rng(0)
+    decimals = pd.DataFrame({"price": rng.choice(np.arange(100) + 0.5, 3000)})
+    keys = _repeated_key_frame(60, 10, as_float=False)
+
+    assert engine.propose(decimals).actions == []
+    assert engine.propose(keys, protection=Protection.PSEUDONYMIZATION).actions == []

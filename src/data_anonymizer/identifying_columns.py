@@ -5,12 +5,14 @@ Two kinds, both counted on the whole released table:
   value elsewhere finds the row. A text column that a technique only partly changed (a
   masked ID, a JSON or note column with its patterns redacted) is a fingerprint too, since
   the rest of its text still differs from row to row;
-- an entity key: a text or whole-number column that was never treated and repeats across rows
-  like an account number, a card or a device. Each value ties together all the rows of one
-  entity, so whoever knows one row of the entity can follow it through the whole table.
+- an entity key: a text or whole-number column, or a pair of them, that was never treated and
+  repeats across rows like an account number, a card or a device. Each value ties together all
+  the rows of one entity, so whoever knows one row of the entity can follow it through the
+  whole table.
 """
 
 from collections.abc import Mapping
+from itertools import combinations
 from typing import Any
 
 import narwhals as nw
@@ -24,11 +26,21 @@ from data_anonymizer.techniques import Technique
 FINGERPRINT_SHARE = 0.9
 FINGERPRINT_MIN_ROWS = 20
 
-# An entity key ties a few rows to each of many values: at least 50 distinct values, and no more
-# than 10 rows on the typical (median) value. Product, city and category codes put dozens or
-# hundreds of rows on each value, and a value on one row is the fingerprint case above.
-ENTITY_KEY_MIN_DISTINCT = 50
-ENTITY_KEY_MAX_MEDIAN_ROWS = 10
+# A discrete column with this many distinct values, each on several rows, can act as an entity
+# key: whoever knows their own value finds their rows. Statistics cannot tell an account number
+# from a product code, so every such column that the plan leaves alone counts.
+DISCRETE_MIN_DISTINCT = 20
+
+# A decimal column counts as discrete when this share of its present cells are whole numbers, so
+# one stray fractional cell does not hide an account column.
+WHOLE_NUMBER_SHARE = 0.99
+
+# Two columns can be a key only together. Pairs are tried among the untreated discrete columns
+# with the most distinct values, to keep the cost bounded. A pair is key-like when it holds at
+# least this many distinct pairs and the typical pair covers at most this many rows.
+PAIR_MAX_COLUMNS = 10
+PAIR_MIN_JOINT_VALUES = 100
+PAIR_MAX_MEDIAN_ROWS = 10
 
 
 def fingerprint_columns(
@@ -55,28 +67,61 @@ def fingerprint_columns(
 
 
 def entity_key_columns(plan: AnonymizationPlan, released: WorkingFrame) -> list[str]:
-    """Describe every untreated column that repeats across rows like an account key."""
-    schema = released.collect_schema()
+    """Describe every untreated discrete column, or pair of them, that can act as an entity key."""
+    columns = untreated_discrete_columns(plan, released)
+    if not columns:
+        return []
+    present, distinct = _present_and_distinct(released, columns)
+    problems = [
+        f"{column} was not treated and holds {distinct[column]:,} distinct values on "
+        f"{present[column] / distinct[column]:.1f} rows each; it can link rows to anyone who "
+        "knows their own value, so replace it or list it in the plan"
+        for column in columns
+    ]
+    return problems + _key_pairs(released, columns, distinct)
+
+
+def untreated_discrete_columns(plan: AnonymizationPlan, frame: WorkingFrame) -> list[str]:
+    """Name the untreated columns whose repeated values group rows like an account number.
+
+    A column is discrete when it is text, a category, an integer, or a decimal column that holds
+    whole numbers in nearly every present cell. It needs at least 20 distinct values, and not
+    nearly one per row, which is the fingerprint case. Fractional decimals and timestamps are
+    measurements, which many rows share only by chance.
+    """
+    schema = frame.collect_schema()
     candidates = [
         column for column, dtype in schema.items() if _can_be_entity_key(plan, column, dtype)
     ]
     if not candidates:
         return []
-    present, distinct = _present_and_distinct(released, candidates)
-    problems = []
+    present, distinct = _present_and_distinct(frame, candidates)
+    columns = []
     for column in candidates:
-        if present[column] < FINGERPRINT_MIN_ROWS or distinct[column] < ENTITY_KEY_MIN_DISTINCT:
+        if present[column] < FINGERPRINT_MIN_ROWS or distinct[column] < DISCRETE_MIN_DISTINCT:
             continue
         if distinct[column] / present[column] >= FINGERPRINT_SHARE:
             continue
-        if not _links_rows_like_a_key(released, column):
+        if schema[column].is_float() and _whole_number_share(frame, column) < WHOLE_NUMBER_SHARE:
             continue
-        rows_per_value = present[column] / distinct[column]
-        problems.append(
-            f"{column} was not treated and holds {distinct[column]:,} distinct values on "
-            f"{rows_per_value:.1f} rows each, like an account or entity key; it links every "
-            "row of an entity, so replace it or list it in the plan"
-        )
+        columns.append(column)
+    return columns
+
+
+def _key_pairs(
+    released: WorkingFrame, columns: list[str], distinct: Mapping[str, Any]
+) -> list[str]:
+    """Describe pairs of untreated columns whose values are unique only together."""
+    widest = sorted(columns, key=lambda column: distinct[column], reverse=True)
+    problems = []
+    for first, second in combinations(widest[:PAIR_MAX_COLUMNS], 2):
+        joint_values, median_rows = _joint_value_counts(released, first, second)
+        if joint_values >= PAIR_MIN_JOINT_VALUES and median_rows <= PAIR_MAX_MEDIAN_ROWS:
+            problems.append(
+                f"{first} and {second} were not treated and together hold {joint_values:,} "
+                f"distinct value pairs on {median_rows:.0f} rows each; the pair can link rows to "
+                "anyone who knows their own values, so replace them or list them in the plan"
+            )
     return problems
 
 
@@ -105,33 +150,25 @@ def _can_be_entity_key(plan: AnonymizationPlan, column: str, dtype: Any) -> bool
     listed = {*plan.direct_identifiers, *plan.quasi_identifiers, *plan.sensitive_attributes}
     if column in listed:
         return False
-    # Fractional decimals and timestamps are measurements, which many rows share only by chance.
-    # A decimal column that holds only whole numbers is an integer column stored as floats.
+    # Decimals are checked for whole numbers later; timestamps are measurements.
     return dtype == nw.String or dtype == nw.Categorical or dtype.is_integer() or dtype.is_float()
 
 
-def _links_rows_like_a_key(released: WorkingFrame, column: str) -> bool:
-    if released.collect_schema()[column].is_float() and not _holds_only_whole_numbers(
-        released, column
-    ):
-        return False
-    return _median_rows_per_value(released, column) <= ENTITY_KEY_MAX_MEDIAN_ROWS
-
-
-def _holds_only_whole_numbers(released: WorkingFrame, column: str) -> bool:
+def _whole_number_share(frame: WorkingFrame, column: str) -> float:
     reading = nw.col(column)
-    whole = first_row(released.select((reading.round(0) == reading).all().alias(column)))
-    return bool(whole[column])
+    whole = (reading.round(0) == reading).cast(nw.Float64).mean().alias(column)
+    return float(first_row(frame.select(whole))[column])
 
 
-def _median_rows_per_value(released: WorkingFrame, column: str) -> float:
-    rows_per_value = (
-        released.filter(~nw.col(column).is_null())
-        .group_by(column)
-        .agg(nw.len().alias("rows"))
-        .select(nw.col("rows").median())
+def _joint_value_counts(frame: WorkingFrame, first: str, second: str) -> tuple[int, float]:
+    """Return how many distinct value pairs two columns hold, and the typical rows per pair."""
+    both_present = ~nw.col(first).is_null() & ~nw.col(second).is_null()
+    rows_per_pair = frame.filter(both_present).group_by(first, second).agg(nw.len().alias("rows"))
+    summary = rows_per_pair.select(
+        nw.col("rows").len().alias("pairs"), nw.col("rows").median().alias("median_rows")
     )
-    return float(first_row(rows_per_value)["rows"])
+    counts = first_row(summary)
+    return int(counts["pairs"]), float(counts["median_rows"] or 0.0)
 
 
 def _present_and_distinct(

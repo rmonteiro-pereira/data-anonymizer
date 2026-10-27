@@ -42,6 +42,14 @@ The default target is `anonymization`. Free text with personal data always gets
 pseudonymization they are keyed (`keyed: true`), so the same label gets the same code in
 every release.
 
+Under anonymization, the proposal also gives every untreated discrete column (text, integer, or
+decimal that is nearly all whole numbers, with at least 20 distinct values that group rows) a
+`scramble_categories` action with prefix `KEY`. The codes are fresh for every release and keep
+the grouping, so a model can still use the column while nobody can look up their own value. It
+costs numeric meaning for integer measurements such as counts or hours; list such a column in
+the plan or give it another technique to keep it. Decimals with real fractions and timestamps
+are left alone. Pseudonymization proposals are unchanged.
+
 The proposal picks an entity column: the company column if there is one, otherwise the
 record ID. `date_shift` then moves every date of one entity by the same offset, so the
 intervals between that entity's events survive.
@@ -87,7 +95,7 @@ The checks follow the three criteria of the EDPB Guidelines 02/2026 on anonymisa
 
 | Criterion | Check |
 |---|---|
-| No record isolation | Every quasi-identifier combination is shared by at least `k_target` rows (default 5). No row is unique across its discrete released columns, meaning those with at most 50 distinct values, excluding sensitive attributes. No column with at least 20 rows and 90% distinct values is released unchanged, since such a column is a fingerprint. A text column that a technique does not replace (such as `partial_mask`, or `redact_entities` on JSON) counts the same way. An untreated text, integer or whole-number float column outside the plan's lists, with at least 50 distinct values and a median of at most 10 rows per value (an account or card key), is reported too; a product or category code with more rows per value is not |
+| No record isolation | Every quasi-identifier combination is shared by at least `k_target` rows (default 5). No row is unique across its discrete released columns, meaning those with at most 50 distinct values, excluding sensitive attributes. No column with at least 20 rows and 90% distinct values is released unchanged, since such a column is a fingerprint. A text column that a technique does not replace (such as `partial_mask`, or `redact_entities` on JSON) counts the same way. An untreated text, integer or whole-number float column (at least 99% of present values whole) outside the plan's lists, with at least 20 distinct values that group rows, is reported too, however many rows each value has: statistics cannot tell an account or card key from a product code, and anyone who knows their own value finds their rows. Pairs of such columns (the 10 with the most distinct values) are checked too: a pair with at least 100 distinct joint values and at most 10 rows on the typical pair is reported as a key that works only together. Replace the column (`scramble_categories` gives fresh codes that keep the grouping) or list it in the plan |
 | No linkage | No action uses a linking technique. For noise and perturbation columns, nearest-value matching re-links at most 1 record in `k_target`: no better odds than k-anonymity already accepts. The same limit applies to all perturbed numeric columns taken together, matching each released vector to its nearest original vector on standardized columns. `randomized_response` on a plan with an `entity_column` needs `by`, so a person's rows share one draw |
 | No inference | Within each quasi-identifier group, every sensitive attribute takes at least `l_target` distinct values (default 2). A sensitive column released entirely blank is skipped. A numeric sensitive column still in its original units must not let a segment's dominant contributor be read off (dominance and p% rules, see [business-confidentiality.md](business-confidentiality.md)) |
 

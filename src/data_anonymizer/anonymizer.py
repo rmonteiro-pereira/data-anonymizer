@@ -28,7 +28,7 @@ from data_anonymizer.evaluation import (
 from data_anonymizer.evaluation.aligned_sample import align_sample
 from data_anonymizer.local_suppression import enforce_k_anonymity
 from data_anonymizer.plan import AnonymizationPlan, ColumnAction, Fidelity, Protection
-from data_anonymizer.proposal import propose_plan
+from data_anonymizer.proposal import propose_plan, replace_untreated_keys
 from data_anonymizer.protection import (
     ProtectionAssessment,
     assess_protection,
@@ -135,12 +135,12 @@ class Anonymizer:
         plan = propose_plan(
             findings, fidelity=fidelity, protection=protection, techniques=self._techniques
         )
+        working, _engine = to_working_frame(frame)
+        plan = replace_untreated_keys(plan, working)
         # A record-ID column can still repeat or have gaps. Only a column that tells every
         # row apart may key the noise.
-        if plan.row_key is not None:
-            working, _engine = to_working_frame(frame)
-            if row_key_problem(working, plan.row_key) is not None:
-                plan = plan.model_copy(update={"row_key": None})
+        if plan.row_key is not None and row_key_problem(working, plan.row_key) is not None:
+            plan = plan.model_copy(update={"row_key": None})
         return plan
 
     def apply(self, frame: Any, plan: AnonymizationPlan) -> AnonymizationResult:
