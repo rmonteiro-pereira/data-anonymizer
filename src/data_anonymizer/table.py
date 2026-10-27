@@ -118,13 +118,22 @@ class Table:
             {key_name: list(mapping), value_name: list(mapping.values())},
             {key_name: self.dtype(column), value_name: dtype},
         )
-        joined = self._frame.join(lookup, how="left", left_on=column, right_on=key_name)
+        joined: WorkingFrame
+        if isinstance(self._frame, nw.LazyFrame):
+            lazy_lookup = lookup if isinstance(lookup, nw.LazyFrame) else lookup.lazy()
+            joined = self._frame.join(lazy_lookup, how="left", left_on=column, right_on=key_name)
+        else:
+            joined = self._frame.join(_eager(lookup), how="left", left_on=column, right_on=key_name)
         self._frame = joined.drop(key_name, strict=False)
         return nw.col(value_name)
 
-    def original(self, column: str) -> nw.Expr:
-        """The column as it was before any action replaced it, for grouping by it."""
-        return nw.col(self._original_name(column))
+    def original_column(self, column: str) -> str:
+        """The name under which the column's values before any replacement are kept.
+
+        Grouping by another column reads its original values, so an earlier action
+        that replaced that column does not change the groups.
+        """
+        return self._original_name(column)
 
     def attach(self, values: nw.Series[Any]) -> nw.Expr:
         """Add a column computed in Python, one value per row in row order.
@@ -149,17 +158,20 @@ class Table:
         )
         return selected.to_pandas()
 
-    def add(self, expression: nw.Expr) -> nw.Expr:
-        """Store an intermediate expression as a helper column and return a reference."""
+    def add(self, expression: nw.Expr) -> str:
+        """Store an intermediate result as a helper column and return its name.
+
+        Windows such as `over` need a column name to partition by.
+        """
         name = self._helper_name()
         self._frame = self._frame.with_columns(expression.alias(name))
-        return nw.col(name)
+        return name
 
     def replace(self, column: str, expression: nw.Expr) -> None:
         """Replace a column with the result of an expression.
 
         The first replacement keeps a copy of the original values, which later
-        actions read through `original`. Polars shares the data and DuckDB only adds
+        actions read through `original_column`. Polars shares the data and DuckDB only adds
         a projection, so the copy costs nothing.
         """
         snapshot = _ORIGINAL_PREFIX + column

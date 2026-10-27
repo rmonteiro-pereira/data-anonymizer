@@ -392,6 +392,7 @@ parquet = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "duckdb" },
     { name = "mypy" },
     { name = "pandas-stubs" },
     { name = "pytest" },
@@ -419,6 +420,7 @@ provides-extras = ["parquet", "duckdb"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "duckdb", specifier = ">=1.3,<2" },
     { name = "mypy", specifier = ">=1.15.0" },
     { name = "pandas-stubs", specifier = ">=2.1" },
     { name = "pytest", specifier = ">=8.3.5" },

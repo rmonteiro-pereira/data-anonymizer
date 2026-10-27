@@ -31,6 +31,7 @@ anonymize = "data_anonymizer.cli:main"
 
 [dependency-groups]
 dev = [
+    "duckdb>=1.3,<2",
     "mypy>=1.15.0",
     "pandas-stubs>=2.1",
     "pytest>=8.3.5",

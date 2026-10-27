@@ -133,17 +133,17 @@ def test_scramble_characters_keeps_distinct_ids_distinct(context):
     assert scrambled.str.fullmatch(r"\d{6}").all()
 
 
-def test_keyed_hash_refuses_short_digests(context):
+def test_keyed_hash_refuses_short_digests(run, context):
     with pytest.raises(ValueError, match="between 16 and 128"):
-        keyed_hash(pd.Series(["a"]), context, length=8)
+        run(keyed_hash, pd.Series(["a"]), context, length=8)
 
 
-def test_pseudonyms_ignore_the_float_storage_of_integer_ids(context):
+def test_pseudonyms_ignore_the_float_storage_of_integer_ids(run, context):
     clean = pd.Series([101, 102, 103])
     with_gap = pd.Series([101.0, None, 103.0])
 
-    first = keyed_hash(clean, context)
-    second = keyed_hash(with_gap, context)
+    first = run(keyed_hash, clean, context)
+    second = run(keyed_hash, with_gap, context)
 
     assert first.iloc[0] == second.iloc[0]
     assert first.iloc[2] == second.iloc[2]

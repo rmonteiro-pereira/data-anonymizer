@@ -1,41 +1,49 @@
 """Techniques that add random noise to numbers and dates."""
 
+import narwhals as nw
 import numpy as np
 import pandas as pd
 
 from data_anonymizer.detection.kinds import as_datetime
+from data_anonymizer.table import Table
 from data_anonymizer.techniques.context import TechniqueContext
+from data_anonymizer.techniques.numeric_expressions import (
+    as_number,
+    in_original_type,
+    standard_normal,
+)
 
 
 def gaussian_noise(
-    values: pd.Series,
+    table: Table,
+    column: str,
     context: TechniqueContext,
     *,
     relative_scale: float = 0.1,
     scale: float | None = None,
     preserve_variance: bool = True,
-) -> pd.Series:
+) -> nw.Expr:
     """Add normal noise with deviation `scale`, or `relative_scale` times the column's.
 
     With `preserve_variance`, the noisy column is rescaled so its mean and standard
     deviation equal the original's. Correlations with other columns weaken by about
     a factor of 1 / sqrt(1 + relative_scale squared).
     """
-    numbers = pd.to_numeric(values, errors="coerce").astype(float)
-    present = numbers.notna()
-    original = numbers[present].to_numpy()
-    if len(original) < 2:
-        return values.copy()
+    values = as_number(column)
+    original = table.statistics(mean=values.mean(), std=values.std(ddof=0), present=values.count())
+    if original["present"] < 2:
+        return nw.col(column)
 
-    original_std = float(original.std())
-    noise_scale = relative_scale * original_std if scale is None else scale
-    noisy = original + context.rng.normal(0.0, noise_scale, size=len(original))
+    noise_scale = relative_scale * original["std"] if scale is None else scale
+    first, second = table.uniforms(context.stream_key(column, "gaussian_noise"), 2)
+    noisy = nw.col(table.add(values + standard_normal(first, second) * noise_scale))
 
-    noisy_std = float(noisy.std())
-    if preserve_variance and noisy_std > 0:
-        noisy = original.mean() + (noisy - noisy.mean()) * (original_std / noisy_std)
-
-    return _write_back(values, numbers, present, noisy)
+    if preserve_variance:
+        noisy_std = table.statistics(std=noisy.std(ddof=0))["std"]
+        if noisy_std > 0:
+            scale_back = original["std"] / noisy_std
+            noisy = (noisy - noisy.mean()) * scale_back + original["mean"]
+    return in_original_type(noisy, table.dtype(column))
 
 
 def laplace_noise(

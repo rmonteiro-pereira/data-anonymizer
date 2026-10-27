@@ -209,7 +209,7 @@ _BUILTINS = (
         _PSEUDO,
         _RELATIONSHIPS,
         _ALL_KINDS,
-        pandas_column(pseudo.keyed_hash),
+        pseudo.keyed_hash,
         "Replace with a keyed HMAC digest (SHA-2, SHA-3 or BLAKE2); consistent per key.",
         linkable=True,
         replaces_identifiers=True,
@@ -291,7 +291,7 @@ _BUILTINS = (
         _RESCALE,
         _SHAPE,
         _NUMERIC,
-        pandas_column(rescaling.normalize),
+        rescaling.normalize,
         "Recentre and rescale to hide level and units; shape kept unless allowed.",
     ),
     Technique(
@@ -347,7 +347,7 @@ _BUILTINS = (
         _NOISE,
         _DISTRIBUTION,
         _NUMERIC,
-        pandas_column(noise.gaussian_noise),
+        noise.gaussian_noise,
         "Add normal noise, rescaled to keep the mean and standard deviation.",
     ),
     Technique(
@@ -395,7 +395,7 @@ _BUILTINS = (
         _PERTURB,
         _DISTRIBUTION,
         _NUMERIC,
-        pandas_column(perturbation.microaggregate),
+        perturbation.microaggregate,
         "Replace values with the mean of groups of at least k; exact mean.",
     ),
     Technique(

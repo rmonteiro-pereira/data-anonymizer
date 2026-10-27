@@ -117,17 +117,17 @@ def test_bcrypt_hash_verifies_and_handles_long_values(context):
     assert hashes.iloc[2].startswith("$2b$04$")
 
 
-def test_keyed_hash_offers_several_algorithms(context):
+def test_keyed_hash_offers_several_algorithms(run, context):
     values = pd.Series(["alice"])
 
     digests = {
-        algorithm: keyed_hash(values, context, algorithm=algorithm, length=32).iloc[0]
+        algorithm: run(keyed_hash, values, context, algorithm=algorithm, length=32).iloc[0]
         for algorithm in ("sha256", "sha3_256", "blake2b")
     }
 
     assert len(set(digests.values())) == 3
     with pytest.raises(ValueError, match="algorithm"):
-        keyed_hash(values, context, algorithm="md5")
+        run(keyed_hash, values, context, algorithm="md5")
 
 
 def _reversible_plan() -> AnonymizationPlan:

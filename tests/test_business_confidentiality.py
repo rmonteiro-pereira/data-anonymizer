@@ -79,10 +79,10 @@ def test_the_default_plan_hides_revenue_and_rent_but_keeps_the_pattern(mall):
     assert original_monthly.corr(released_monthly, method="spearman") > 0.95
 
 
-def test_robust_normalization_keeps_the_distribution_shape(context):
+def test_robust_normalization_keeps_the_distribution_shape(run, context):
     values = pd.Series(np.random.default_rng(0).lognormal(10, 1, 2000))
 
-    rescaled = normalize(values, context)
+    rescaled = run(normalize, values, context)
 
     assert rescaled.skew() == pytest.approx(values.skew(), rel=1e-9)
     assert (rescaled.rank() == values.rank()).all()
@@ -93,9 +93,9 @@ def test_robust_normalization_keeps_the_distribution_shape(context):
     "params",
     [{"method": "index"}, {"method": "rank"}, {"method": "zscore", "by": "store"}],
 )
-def test_shape_changing_normalization_needs_the_flag(context, params):
+def test_shape_changing_normalization_needs_the_flag(run, context, params):
     with pytest.raises(ValueError, match="allow_shape_change"):
-        normalize(pd.Series([1.0, 2.0, 3.0]), context, **params)
+        run(normalize, pd.Series([1.0, 2.0, 3.0]), context, **params)
 
 
 def test_index_by_store_removes_every_store_size(mall):

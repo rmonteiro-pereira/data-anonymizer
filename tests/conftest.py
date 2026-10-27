@@ -4,6 +4,7 @@ import pytest
 from faker import Faker
 
 from data_anonymizer.surrogates import SurrogateFactory
+from data_anonymizer.table import Table
 from data_anonymizer.techniques import TechniqueContext
 
 ROWS = 400
@@ -47,4 +48,19 @@ def context() -> TechniqueContext:
         rng=np.random.default_rng(0),
         secret_key=b"test-key",
         surrogates=SurrogateFactory("en_US"),
+        randomness_key=b"test-randomness-key",
     )
+
+
+def run_on_series(function, values: pd.Series, context: TechniqueContext, **params) -> pd.Series:
+    """Run a technique function on one pandas column and return the new column."""
+    name = "value" if values.name is None else str(values.name)
+    table = Table.from_native(values.rename(name).to_frame())
+    table.replace(name, function(table, name, context, **params))
+    return table.to_native()[name].rename(values.name)
+
+
+@pytest.fixture
+def run():
+    """`run(technique_function, values, context, **params)` returns the new column."""
+    return run_on_series

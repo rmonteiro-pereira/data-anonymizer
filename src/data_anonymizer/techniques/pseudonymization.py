@@ -11,13 +11,20 @@ import os
 from collections.abc import Callable
 
 import bcrypt
+import narwhals as nw
 import pandas as pd
 from argon2.low_level import Type, hash_secret
 
+from data_anonymizer.table import Table
 from data_anonymizer.taxonomy import DataCategory
 from data_anonymizer.techniques.context import TechniqueContext
 from data_anonymizer.techniques.ff1 import FF1
-from data_anonymizer.techniques.value_mapping import canonical_text, map_distinct, map_present
+from data_anonymizer.techniques.value_mapping import (
+    canonical_text,
+    lookup_distinct,
+    map_distinct,
+    map_present,
+)
 
 _DIGITS = "0123456789"
 _LOWERCASE = "abcdefghijklmnopqrstuvwxyz"
@@ -34,13 +41,14 @@ _COLLISION_ATTEMPTS = 20
 
 
 def keyed_hash(
-    values: pd.Series,
+    table: Table,
+    column: str,
     context: TechniqueContext,
     *,
     length: int = 16,
     prefix: str = "",
     algorithm: str = "sha256",
-) -> pd.Series:
+) -> nw.Expr:
     """Replace each value with a truncated HMAC hex digest, optionally prefixed.
 
     `algorithm` is one of sha256, sha512, sha3_256, sha3_512, blake2b or blake2s. The
@@ -55,7 +63,7 @@ def keyed_hash(
     def digest(text: str) -> str:
         return prefix + context.keyed_digest(text, algorithm).hex()[:length]
 
-    return map_distinct(values, digest)
+    return lookup_distinct(table, column, digest)
 
 
 def argon2_hash(

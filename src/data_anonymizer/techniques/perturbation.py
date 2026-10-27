@@ -1,9 +1,12 @@
 """Techniques that move real values between records or merge them into groups."""
 
+import narwhals as nw
 import numpy as np
 import pandas as pd
 
+from data_anonymizer.table import Table
 from data_anonymizer.techniques.context import TechniqueContext
+from data_anonymizer.techniques.numeric_expressions import as_number, in_original_type
 
 
 def shuffle(values: pd.Series, context: TechniqueContext) -> pd.Series:
@@ -53,8 +56,8 @@ def rank_swap(
 
 
 def microaggregate(
-    values: pd.Series, context: TechniqueContext, *, group_size: int = 5
-) -> pd.Series:
+    table: Table, column: str, context: TechniqueContext, *, group_size: int = 5
+) -> nw.Expr:
     """Replace each value by the mean of a group of at least `group_size` neighbouring values.
 
     Every released value is shared by at least `group_size` records, and the column
@@ -62,35 +65,18 @@ def microaggregate(
     """
     if group_size < 2:
         raise ValueError("group_size must be at least 2")
-    numbers = pd.to_numeric(values, errors="coerce").astype(float)
-    present = numbers.notna()
-    original = numbers[present].to_numpy()
-    count = len(original)
-    if count < group_size:
-        averaged = np.full(count, original.mean() if count else 0.0)
-    else:
-        averaged = _group_means(original, group_size)
+    values = as_number(column)
+    present = table.statistics(present=values.count())["present"]
+    if present < group_size:
+        return in_original_type(values.mean(), table.dtype(column))
 
-    result = numbers.copy()
-    result[present] = averaged
-    if pd.api.types.is_integer_dtype(values):
-        return result.round().astype(values.dtype)
-    return result
-
-
-def _group_means(original: np.ndarray, group_size: int) -> np.ndarray:
-    order = np.argsort(original, kind="stable")
-    sorted_values = original[order]
-    count = len(sorted_values)
-    group_count = count // group_size
-    # The remainder joins the last group so no group is smaller than group_size.
-    group_of_rank = np.minimum(np.arange(count) // group_size, group_count - 1)
-    sums = np.bincount(group_of_rank, weights=sorted_values)
-    sizes = np.bincount(group_of_rank)
-    means_by_rank = (sums / sizes)[group_of_rank]
-    averaged = np.empty(count)
-    averaged[order] = means_by_rank
-    return averaged
+    # Groups of consecutive ranks; the remainder joins the last group, so no group
+    # is smaller than group_size. Ties are broken by row order in memory.
+    last_group = present // group_size - 1
+    rank_group = ((values.rank("ordinal") - 1) // group_size).clip(upper_bound=last_group)
+    group = table.add(rank_group)
+    averaged = nw.when(~values.is_null()).then(values.mean().over(group))
+    return in_original_type(averaged, table.dtype(column))
 
 
 def randomized_response(

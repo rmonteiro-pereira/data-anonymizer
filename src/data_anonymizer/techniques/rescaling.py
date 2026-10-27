@@ -11,24 +11,26 @@ for the shift and scale and convert every value back. Each column gets its own
 shift and scale, so knowing one column does not unlock another.
 """
 
-import numpy as np
-import pandas as pd
+import narwhals as nw
 
+from data_anonymizer.table import Table
 from data_anonymizer.techniques.context import TechniqueContext
+from data_anonymizer.techniques.numeric_expressions import as_number, per_group
 
 _SHAPE_KEEPING_METHODS = ("robust", "zscore", "minmax")
 _SHAPE_CHANGING_METHODS = ("index", "rank", "log_ratio", "growth")
 
 
 def normalize(
-    values: pd.Series,
+    table: Table,
+    column: str,
     context: TechniqueContext,
     *,
     method: str = "robust",
     by: str | None = None,
     order_by: str | None = None,
     allow_shape_change: bool = False,
-) -> pd.Series:
+) -> nw.Expr:
     """Recentre and rescale a numeric column so it keeps its pattern but loses its units.
 
     - `robust`: (value − median) / interquartile range. The default, because a single
@@ -46,16 +48,12 @@ def normalize(
     `allow_shape_change`.
     """
     _check_method(method, by, allow_shape_change)
-    numbers = pd.to_numeric(values, errors="coerce").astype(float)
-    if by is None:
-        groups = pd.Series(0, index=values.index)
-    else:
-        groups = context.group_keys(by).reindex(values.index)
-
+    group = None if by is None else table.original_column(by)
+    values = as_number(column)
     if method == "growth":
-        return _growth(numbers, groups, context, order_by)
-    grouped = numbers.groupby(groups, dropna=False, sort=False)
-    return grouped.transform(lambda group: _rescale(group, method))
+        return _growth(table, values, group, order_by)
+    _check_values(table, values, method, group)
+    return _rescale(values, method, group)
 
 
 def _check_method(method: str, by: str | None, allow_shape_change: bool) -> None:
@@ -71,45 +69,50 @@ def _check_method(method: str, by: str | None, allow_shape_change: bool) -> None
         )
 
 
-def _rescale(group: pd.Series, method: str) -> pd.Series:
-    present = group.dropna()
-    if present.empty:
-        return group
-    if method == "robust":
-        spread = float(present.quantile(0.75) - present.quantile(0.25))
-        return (group - present.median()) / (spread or _fallback_spread(present))
-    if method == "zscore":
-        return (group - present.mean()) / _fallback_spread(present)
-    if method == "minmax":
-        span = float(present.max() - present.min()) or 1.0
-        return (group - present.min()) / span
-    if method == "index":
-        mean = float(present.mean())
-        if mean == 0:
-            raise ValueError("index needs a non-zero mean in every group")
-        return group / mean * 100
-    if method == "rank":
-        return group.rank(pct=True)
-    if (present <= 0).any():
+def _check_values(table: Table, values: nw.Expr, method: str, group: str | None) -> None:
+    if method == "log_ratio" and table.statistics(lowest=values.min())["lowest"] <= 0:
         raise ValueError("log_ratio needs positive values")
-    return np.log(group) - float(np.log(present).mean())
+    if method == "index":
+        # SQL engines refuse a window inside an aggregate, so the flag is stored first.
+        zero_mean = (per_group(values.mean(), group) == 0) & ~values.is_null()
+        flag = nw.col(table.add(zero_mean.cast(nw.Int64)))
+        if table.statistics(zero=flag.sum())["zero"]:
+            raise ValueError("index needs a non-zero mean in every group")
 
 
-def _fallback_spread(present: pd.Series) -> float:
-    # A constant group has no spread; dividing by 1 keeps it at zero instead of failing.
-    return float(present.std(ddof=0)) or 1.0
+def _rescale(values: nw.Expr, method: str, group: str | None) -> nw.Expr:
+    def within(aggregate: nw.Expr) -> nw.Expr:
+        return per_group(aggregate, group)
+
+    if method == "robust":
+        spread = within(values.quantile(0.75, "linear") - values.quantile(0.25, "linear"))
+        median = within(values.quantile(0.5, "linear"))
+        return (values - median) / _nonzero(spread, within(values.std(ddof=0)))
+    if method == "zscore":
+        return (values - within(values.mean())) / _nonzero(within(values.std(ddof=0)))
+    if method == "minmax":
+        lowest = within(values.min())
+        return (values - lowest) / _nonzero(within(values.max()) - lowest)
+    if method == "index":
+        return values / within(values.mean()) * 100
+    if method == "rank":
+        return within(values.rank("average")) / within(values.count())
+    return values.log() - within(values.log().mean())
 
 
-def _growth(
-    numbers: pd.Series,
-    groups: pd.Series,
-    context: TechniqueContext,
-    order_by: str | None,
-) -> pd.Series:
+def _nonzero(spread: nw.Expr, fallback: nw.Expr | None = None) -> nw.Expr:
+    # A constant group has no spread. Dividing by the fallback spread, or by 1, keeps
+    # it at zero instead of failing.
+    one = nw.lit(1.0)
+    if fallback is not None:
+        one = nw.when(fallback == 0).then(one).otherwise(fallback)
+    return nw.when(spread == 0).then(one).otherwise(spread)
+
+
+def _growth(table: Table, values: nw.Expr, group: str | None, order_by: str | None) -> nw.Expr:
     if order_by is None:
         raise ValueError("growth needs order_by, the column that orders the periods")
-    order = context.group_keys(order_by).reindex(numbers.index)
-    frame = pd.DataFrame({"value": numbers, "group": groups, "order": order})
-    ordered = frame.sort_values(["group", "order"], kind="stable")
-    change = ordered.groupby("group", dropna=False, sort=False)["value"].pct_change()
-    return change.reindex(numbers.index)
+    order = table.original_column(order_by)
+    partition = [] if group is None else [group]
+    previous = values.shift(1).over(*partition, order_by=order)
+    return values / previous - 1

@@ -4,6 +4,7 @@ import pytest
 
 from data_anonymizer.detection.patterns import is_valid_cpf
 from data_anonymizer.techniques import BUILTIN_TECHNIQUES
+from data_anonymizer.techniques.catalogue import apply_to_series
 from data_anonymizer.techniques.generalization import (
     bin_numeric,
     suppress_rare,
@@ -16,7 +17,6 @@ from data_anonymizer.techniques.noise import (
     date_shift,
     gaussian_noise,
     laplace_noise,
-    multiplicative_noise,
 )
 from data_anonymizer.techniques.perturbation import (
     microaggregate,
@@ -56,11 +56,13 @@ def test_redact_entities_labels_personal_data_inside_text(context):
     assert result == "Mail <EMAIL> or call <PHONE>, CPF <CPF>."
 
 
-def test_keyed_hash_is_consistent_and_depends_on_the_key(context):
+def test_keyed_hash_is_consistent_and_depends_on_the_key(run, context):
     values = pd.Series(["alice", "bob", "alice"])
 
-    first = keyed_hash(values, context)
-    other_key = keyed_hash(values, context.__class__(context.rng, b"other", context.surrogates))
+    first = run(keyed_hash, values, context)
+    other_key = run(
+        keyed_hash, values, context.__class__(context.rng, b"other", context.surrogates)
+    )
 
     assert first.iloc[0] == first.iloc[2]
     assert first.iloc[0] != first.iloc[1]
@@ -132,10 +134,10 @@ def test_suppress_rare_replaces_small_categories(context):
     assert result.tolist() == ["a"] * 5 + ["OTHER"]
 
 
-def test_gaussian_noise_changes_values_but_keeps_mean_and_std(context):
+def test_gaussian_noise_changes_values_but_keeps_mean_and_std(run, context):
     values = pd.Series(np.random.default_rng(1).normal(50, 10, 1000))
 
-    result = gaussian_noise(values, context, relative_scale=0.3)
+    result = run(gaussian_noise, values, context, relative_scale=0.3)
 
     assert not np.allclose(result, values)
     assert result.mean() == pytest.approx(values.mean())
@@ -145,8 +147,9 @@ def test_gaussian_noise_changes_values_but_keeps_mean_and_std(context):
 def test_noise_keeps_integer_columns_integer(context):
     values = pd.Series([10, 20, 30, 40, 50])
 
-    for technique in (gaussian_noise, multiplicative_noise):
-        assert pd.api.types.is_integer_dtype(technique(values, context))
+    for name in ("gaussian_noise", "multiplicative_noise"):
+        noisy = apply_to_series(BUILTIN_TECHNIQUES[name], values, context, {})
+        assert pd.api.types.is_integer_dtype(noisy)
 
 
 def test_laplace_noise_scale_follows_epsilon(context):
@@ -185,10 +188,10 @@ def test_rank_swap_keeps_values_near_their_rank(context):
     assert (result - values).abs().max() <= 10
 
 
-def test_microaggregate_keeps_the_mean_and_groups_of_k(context):
+def test_microaggregate_keeps_the_mean_and_groups_of_k(run, context):
     values = pd.Series(np.random.default_rng(3).normal(100, 15, 103))
 
-    result = microaggregate(values, context, group_size=5)
+    result = run(microaggregate, values, context, group_size=5)
 
     assert result.mean() == pytest.approx(values.mean())
     assert result.value_counts().min() >= 5
