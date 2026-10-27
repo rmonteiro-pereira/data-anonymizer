@@ -90,6 +90,44 @@ def nearest_distances(queries: EncodedColumns, reference: EncodedColumns) -> Nea
     return NearestDistances(nearest=nearest, second_nearest=second_nearest)
 
 
+def matched_column_counts(
+    queries: EncodedColumns, reference: EncodedColumns, tolerance: np.ndarray
+) -> np.ndarray:
+    """For each query row, the most columns on which one reference row is within its tolerance.
+
+    A column is matched when its per-column distance (0 to 1, as in the Gower-like distance) is
+    at most the query row's own `tolerance`. Equal categories always match.
+    """
+    reference_rows = reference.numbers.shape[0] or reference.categories.shape[0]
+    query_rows = queries.numbers.shape[0] or queries.categories.shape[0]
+    chunk_rows = max(1, _CHUNK_CELLS // max(reference_rows, 1))
+    most_matched = np.zeros(query_rows, dtype=np.int64)
+    for start in range(0, query_rows, chunk_rows):
+        stop = min(start + chunk_rows, query_rows)
+        counts = _matched_columns_block(queries, reference, tolerance[start:stop], start, stop)
+        most_matched[start:stop] = counts.max(axis=1)
+    return most_matched
+
+
+def _matched_columns_block(
+    queries: EncodedColumns,
+    reference: EncodedColumns,
+    tolerance: np.ndarray,
+    start: int,
+    stop: int,
+) -> np.ndarray:
+    counts = np.zeros((stop - start, reference.numbers.shape[0]), dtype=np.int16)
+    for column in range(queries.numbers.shape[1]):
+        gap = np.abs(queries.numbers[start:stop, column, None] - reference.numbers[None, :, column])
+        gap = np.minimum(gap / (FULL_MISMATCH_GAP * queries.number_scales[column]), 1.0)
+        counts += gap <= tolerance[:, None]
+    for column in range(queries.categories.shape[1]):
+        counts += (
+            queries.categories[start:stop, column, None] == reference.categories[None, :, column]
+        )
+    return counts
+
+
 def _distance_block(
     queries: EncodedColumns, reference: EncodedColumns, start: int, stop: int
 ) -> np.ndarray:

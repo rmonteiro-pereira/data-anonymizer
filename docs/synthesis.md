@@ -236,7 +236,7 @@ grows with the product of the row counts, which is why there is a cap.
 | Distance to closest record (DCR) | Median over synthetic rows of the distance to the nearest training row (and holdout row) |
 | NNDR | Nearest over second-nearest distance; near 0 means a row sits on top of one training record |
 | DCR share | Share of synthetic rows closer to the training table than to the holdout; 50% means no memorization, ties count half |
-| Isolated-record copies | Among the 10% of records with the largest distance to the nearest other record of their own table (and not 0), how many have a synthetic row exactly equal to them; counted for training and for holdout records |
+| Isolated-record copies | Among the 10% of records with the largest distance to the nearest other record of their own table (and not 0), how many have a synthetic row within 1% of that distance, column by column, on every column (copy) or on more than half of them (partial copy); counted for training and for holdout records |
 | Membership attack | The attacker holds the training rows and the holdout rows, guesses "member" for those closest to the synthetic data. AUC is 0.5 when it learns nothing; advantage is 2 * AUC - 1 |
 
 The verdict fails on any of these findings, and passes when there are none:
@@ -250,19 +250,31 @@ The verdict fails on any of these findings, and passes when there are none:
   advantage of 0.05 at most, so the floor keeps them from failing.
 
 - **Isolated-record copies**: the whole-table tests average over every record, so a generator
-  that appends five rare training records verbatim to a thousand fresh rows passes them (0.5%
-  exact copies, membership AUC near 0.51) while anyone who knows one of those people can tell
-  they were in the data. Fresh draws do not reproduce a rare record exactly, so copies of the
-  isolated training records are compared with copies of equally isolated holdout records,
-  whose isolation is measured inside the holdout the same way. If no row repeats in either real
-  table, chance does not reproduce a row and any excess is a finding, with no tolerance. If some
-  rows repeat (categories, rounded or clipped numbers), natural matches happen, and the excess
-  must also pass a one-sided sign test at the 1% level, which needs about seven copies against
-  none. Without a holdout, any copy counts. Only exact copies count: near copies of rounded
-  or discrete data occur by chance too often for a zero-tolerance rule. In 40 trials of each
-  case with 1,500 training rows, fresh draws, the copula synthesizer and MST at ε = 1 on
-  continuous, mixed and discrete data raised no finding from this test (0 of 320 runs). With 300
-  rows it fired in 3 of 360 runs, all on the mixed table.
+  that appends five rare training records to a thousand fresh rows passes them (0.5% exact
+  copies, membership AUC near 0.51) while anyone who knows one of those people can tell they
+  were in the data. A record is isolated when its distance to the nearest other record of its
+  own table is among the largest 10% and not 0, so a record with a twin is never isolated and
+  repeated rows elsewhere change nothing. A synthetic row copies an isolated record when it
+  lies within 1% of the record's own isolation distance on every column (an exact or jittered
+  copy), or on more than half of the columns (a partial copy, such as the measurements without
+  one value). Fresh draws almost never come that close to a record that is far from all its
+  neighbours. The same count is made for equally isolated holdout records, whose isolation is
+  measured inside the holdout. Without a holdout, any copy is a finding. With one, any excess
+  of training over holdout copies is a finding unless real holdout rows also match training
+  records by this rule (categories, rounded or clipped numbers); chance matches then exist,
+  and the excess must pass a one-sided sign test at the 1% level, which needs about seven
+  copies against none.
+  In 40 trials of each case, fresh draws, the copula synthesizer and MST at ε = 1 raised a
+  finding from this test in 0 of 360 runs with 1,500 training rows and 5 of 360 with 300 rows
+  (fresh draws, discrete table: 1; copula, mixed table: 2, discrete table: 2; MST: 0).
+  Appending five rare records to 1,000 fresh rows was caught in 40 of 40 trials when copied
+  verbatim, when jittered by 0.0001, 0.001 or 0.01 robust standard deviations, when the
+  records were copied on three of four columns, and when ordinary rows repeat in the real
+  tables. Remaining limits: a jitter of about 0.03 standard deviations is caught in about
+  three trials of four and 0.1 in almost none, because the tolerance is 1% of the isolation
+  distance; copying fewer than half of the columns is not caught; a copied record that is not
+  among the most isolated 10% is not looked at; and at about 300 rows a single copy cannot be
+  told from chance on discrete or mixed data.
 
 Change the limits with `SyntheticPrivacyThresholds`. The command prints the measurements, writes
 them as JSON with `--report`, and exits 3 when there is a finding. This is a screening, not a guarantee: the bootstrap covers the sampling of the candidate

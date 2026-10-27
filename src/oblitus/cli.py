@@ -580,12 +580,12 @@ def _synthetic_privacy_lines(report: SyntheticPrivacyReport) -> list[str]:
 
 def _isolated_records_line(isolated: IsolatedRecordCopies) -> str:
     line = (
-        f"isolated training records copied exactly: {isolated.train_copies} "
-        f"of {isolated.cohort_size}"
+        f"isolated training records copied: {isolated.train_copies} of {isolated.cohort_size} "
+        f"({isolated.every_column.train} on every column)"
     )
     if isolated.holdout_copies is None:
         return line
-    return f"{line} (isolated holdout records: {isolated.holdout_copies})"
+    return f"{line}; isolated holdout records: {isolated.holdout_copies}"
 
 
 def _dp_aggregate(anonymizer: Anonymizer, arguments: argparse.Namespace) -> None:

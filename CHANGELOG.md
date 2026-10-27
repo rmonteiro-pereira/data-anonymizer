@@ -18,8 +18,11 @@
   publishes the group's median, so one outlier does not show in the release.
 - **`check_synthetic` catches copies of rare records.** A generator that appends a few rare
   training records verbatim to thousands of fresh rows passed the whole-table tests. The check
-  now also counts exact copies among the 10% most isolated training records, against the same
-  count for the isolated holdout records, and fails on any excess when no real row repeats.
+  now also counts copies among the 10% most isolated training records, against the same
+  count for the isolated holdout records. A copy is a synthetic row within 1% of the record's
+  isolation distance on every column (exact or jittered) or on more than half of them (partial
+  copy). Repeated ordinary rows no longer relax the rule; chance is measured from real holdout
+  rows instead.
   `SyntheticPrivacyReport.isolated_records` and a line of `oblitus check-synthetic` show it.
 - **Names and cities in prose are redacted without the `ner` extra.** A first name from the
   bundled IBGE list followed by capitalized words, and a municipality name, are found in free

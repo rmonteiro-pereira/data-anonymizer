@@ -258,4 +258,58 @@ def test_the_command_reports_the_isolated_records_and_exits_3(tmp_path, capsys):
 
     output = capsys.readouterr().out
     assert exit_code == 3
-    assert "isolated training records copied exactly: 5 of 100" in output
+    assert "isolated training records copied: 5 of 100 (5 on every column)" in output
+
+
+def _check_with_rare_copies(copied: pd.DataFrame, seed: int, train=None, holdout=None):
+    fresh, own_train, own_holdout = _rare_records_appended(seed)
+    train = own_train if train is None else train
+    holdout = own_holdout if holdout is None else holdout
+    synthetic = pd.concat([fresh, copied], ignore_index=True)
+    return Anonymizer(seed=seed).check_synthetic(synthetic, train, holdout)
+
+
+def test_rare_training_records_with_a_tiny_jitter_still_fail():
+    _, train, _ = _rare_records_appended(seed=141)
+    jitter = np.random.default_rng(1).uniform(-0.0001, 0.0001, (5, 4))
+    copied = train.iloc[:5] + jitter
+
+    report = _check_with_rare_copies(copied, seed=141)
+
+    assert report.exact_copy_share == 0
+    assert not report.passed
+    assert any("most isolated training records" in finding for finding in report.findings)
+
+
+def test_rare_training_records_copied_on_some_columns_only_fail():
+    _, train, _ = _rare_records_appended(seed=141)
+    copied = train.iloc[:5].copy()
+    copied["lab"] = np.random.default_rng(2).normal(100, 1, len(copied))
+
+    report = _check_with_rare_copies(copied, seed=141)
+
+    assert report.isolated_records is not None
+    assert report.isolated_records.every_column.train == 0
+    assert report.isolated_records.most_columns.train == 5
+    assert not report.passed
+
+
+def test_repeated_ordinary_rows_do_not_excuse_copies_of_rare_records():
+    _, train, holdout = _rare_records_appended(seed=141)
+    train.iloc[-1] = train.iloc[-2]
+    holdout.iloc[-1] = holdout.iloc[-2]
+
+    report = _check_with_rare_copies(train.iloc[:5], 141, train, holdout)
+
+    assert not report.passed
+    assert any("most isolated training records" in finding for finding in report.findings)
+
+
+def test_a_large_jitter_is_a_known_limit_of_the_isolated_record_test():
+    _, train, _ = _rare_records_appended(seed=141)
+    copied = train.iloc[:5] + np.random.default_rng(1).uniform(-0.3, 0.3, (5, 4))
+
+    report = _check_with_rare_copies(copied, seed=141)
+
+    assert report.isolated_records is not None
+    assert not report.isolated_records.is_excessive

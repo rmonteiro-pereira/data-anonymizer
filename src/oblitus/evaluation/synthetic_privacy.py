@@ -26,12 +26,18 @@ import pandas as pd
 from scipy import stats
 
 from oblitus.errors import SchemaError
-from oblitus.evaluation.isolated_records import IsolatedRecordCopies, count_isolated_copies
+from oblitus.evaluation.isolated_records import (
+    IsolatedRecordCopies,
+    RecordMatches,
+    copy_tolerance,
+    count_isolated_copies,
+)
 from oblitus.evaluation.record_distance import (
     MAX_COMPARED_ROWS,
     EncodedColumns,
     NearestDistances,
     encode_tables,
+    matched_column_counts,
     nearest_distances,
 )
 
@@ -144,21 +150,24 @@ def assess_synthetic_privacy(
 def _isolated_record_copies(
     encoded: list[EncodedColumns], holdout_rows: pd.DataFrame | None
 ) -> IsolatedRecordCopies | None:
-    """Count near copies of the isolated training records, and of isolated holdout records."""
+    """Count copies of the isolated training records, and of isolated holdout records."""
     train_encoded, synthetic_encoded = encoded[0], encoded[1]
     train_rows = len(train_encoded.numbers) or len(train_encoded.categories)
     if train_rows < 2:
         return None
-    train_isolation = nearest_distances(train_encoded, train_encoded).second_nearest
-    train_to_synthetic = nearest_distances(train_encoded, synthetic_encoded).nearest
+    train = _record_matches(train_encoded, synthetic_encoded)
     if holdout_rows is None:
-        return count_isolated_copies(train_isolation, train_to_synthetic)
+        return count_isolated_copies(train)
     holdout_encoded = encoded[2]
-    holdout_isolation = nearest_distances(holdout_encoded, holdout_encoded).second_nearest
-    holdout_to_synthetic = nearest_distances(holdout_encoded, synthetic_encoded).nearest
-    return count_isolated_copies(
-        train_isolation, train_to_synthetic, holdout_isolation, holdout_to_synthetic
-    )
+    holdout = _record_matches(holdout_encoded, synthetic_encoded)
+    chance = _record_matches(train_encoded, holdout_encoded)
+    return count_isolated_copies(train, holdout, chance)
+
+
+def _record_matches(real: EncodedColumns, rows: EncodedColumns) -> RecordMatches:
+    isolation = nearest_distances(real, real).second_nearest
+    matched_columns = matched_column_counts(real, rows, copy_tolerance(isolation))
+    return RecordMatches(isolation, matched_columns, real.n_columns)
 
 
 def _shared_columns(
@@ -327,5 +336,6 @@ def _isolated_record_findings(report: SyntheticPrivacyReport) -> list[str]:
         against = f", against {isolated.holdout_copies} of the equally isolated holdout records"
     return [
         f"{isolated.train_copies} of the {isolated.cohort_size} most isolated training records "
-        f"are copied exactly in the synthetic table{against}"
+        f"have a synthetic row matching them on most columns, {isolated.every_column.train} "
+        f"on every column{against}"
     ]
