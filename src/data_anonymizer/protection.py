@@ -25,12 +25,14 @@ import narwhals as nw
 import pandas as pd
 
 from data_anonymizer.detection.patterns import TEXT_RECOGNIZERS
+from data_anonymizer.detection.text_entities import holds_entities
 from data_anonymizer.engines import WorkingFrame, first_row
 from data_anonymizer.evaluation import PrivacyReport
 from data_anonymizer.evaluation.aligned_sample import AlignedSample
-from data_anonymizer.evaluation.disclosure import linkage_rate
+from data_anonymizer.evaluation.disclosure import joint_linkage_rate, linkage_rate
 from data_anonymizer.evaluation.dominance import dominant_segments, keeps_original_units
-from data_anonymizer.evaluation.privacy import GROUP_SIZE, distinct_present, group_sizes
+from data_anonymizer.evaluation.privacy import GROUP_SIZE, group_sizes
+from data_anonymizer.identifying_columns import entity_key_columns, fingerprint_columns
 from data_anonymizer.plan import AnonymizationPlan, ColumnAction, Protection
 from data_anonymizer.techniques import Technique, TechniqueFamily
 
@@ -47,10 +49,6 @@ _PERTURBING_FAMILIES = {TechniqueFamily.NOISE, TechniqueFamily.PERTURBATION}
 # Share of a direct identifier's cells that may coincide with the original by chance,
 # such as a random fake email that happens to exist.
 _SURVIVING_LIMIT = 0.01
-
-# An untreated column with at least this share of distinct values singles out rows.
-_FINGERPRINT_SHARE = 0.9
-_FINGERPRINT_MIN_ROWS = 20
 
 _CAVEATS = (
     "Columns the detector did not flag were not treated; review the scan.",
@@ -117,8 +115,12 @@ def assess_protection(
     exposures = (
         _exposures(plan, privacy)
         + _isolated_records(plan, released_table)
-        + _fingerprint_columns(plan, released_table)
+        + fingerprint_columns(plan, techniques, released_table)
+        + entity_key_columns(plan, released_table)
+        + _free_text_leftovers(plan)
+        + _independent_draws(plan)
         + _relinkable_columns(plan, techniques, original, released)
+        + _jointly_relinkable_columns(plan, techniques, original, released)
         + _magnitude_disclosures(plan, original, released)
     )
 
@@ -175,9 +177,7 @@ def _share_still_holding_entities(texts: pd.Series) -> float:
     present = texts.dropna().astype(str)
     if present.empty:
         return 0.0
-    holding = present.map(
-        lambda text: any(recognizer.find_spans(text) for recognizer in TEXT_RECOGNIZERS)
-    )
+    holding = present.map(lambda text: holds_entities(text, TEXT_RECOGNIZERS))
     return float(holding.mean())
 
 
@@ -209,30 +209,6 @@ def _exposures(plan: AnonymizationPlan, privacy: PrivacyReport) -> list[str]:
             problems.append(
                 f"some groups hold only {diversity} distinct value(s) of {attribute}, "
                 f"below the l-diversity target of {plan.l_target}"
-            )
-    return problems
-
-
-def _fingerprint_columns(plan: AnonymizationPlan, released: WorkingFrame) -> list[str]:
-    # A column released as it was, with a different value in nearly every row, is a
-    # fingerprint: anyone holding that value elsewhere finds the row.
-    treated = {action.column for action in plan.actions if action.technique != "keep"}
-    removed = set(plan.direct_identifiers)
-    names = released.collect_schema().names()
-    candidates = [column for column in names if column not in treated and column not in removed]
-    if not candidates:
-        return []
-    present = first_row(released.select(*[nw.col(c).count().alias(c) for c in candidates]))
-    distinct = first_row(released.select(*[distinct_present(c).alias(c) for c in candidates]))
-    problems = []
-    for column in candidates:
-        if present[column] < _FINGERPRINT_MIN_ROWS:
-            continue
-        unique_share = distinct[column] / present[column]
-        if unique_share >= _FINGERPRINT_SHARE:
-            problems.append(
-                f"{column} is released unchanged and {unique_share:.0%} of its values are "
-                "distinct, so it can single out rows"
             )
     return problems
 
@@ -293,7 +269,7 @@ def _isolated_records(plan: AnonymizationPlan, released: WorkingFrame) -> list[s
     removed = set(plan.direct_identifiers) | set(plan.sensitive_attributes)
     candidates = [column for column in names if column not in removed]
     row_count = first_row(released.select(nw.len().alias("rows")))["rows"]
-    if not names or row_count == 0:
+    if not candidates or row_count == 0:
         return []
     distinct = first_row(released.select(*[nw.col(c).n_unique().alias(c) for c in candidates]))
     discrete = [column for column in candidates if distinct[column] <= _DISCRETE_LIMIT]
@@ -335,3 +311,63 @@ def _relinkable_columns(
                 f"nearest value, more than 1 in {plan.k_target}; add noise or generalize"
             )
     return problems
+
+
+def _jointly_relinkable_columns(
+    plan: AnonymizationPlan,
+    techniques: Mapping[str, Technique],
+    original: pd.DataFrame,
+    released: pd.DataFrame,
+) -> list[str]:
+    """Check the perturbed numeric columns together, as one vector per record.
+
+    Each column can pass the check on its own while the three or four of them, taken as a
+    point in space, still lead to a single record. An attacker holding the originals matches
+    each released vector to its nearest original vector.
+    """
+    columns = [
+        action.column
+        for action in plan.actions
+        if techniques[action.technique].family in _PERTURBING_FAMILIES
+        and pd.api.types.is_numeric_dtype(original[action.column])
+        and pd.api.types.is_numeric_dtype(released[action.column])
+    ]
+    if len(columns) < 2:
+        return []
+    before = original[columns].apply(pd.to_numeric, errors="coerce")
+    after = released[columns].apply(pd.to_numeric, errors="coerce")
+    both = before.notna().all(axis=1) & after.notna().all(axis=1)
+    if both.sum() < 2:
+        return []
+    rate = joint_linkage_rate(before[both].to_numpy(), after[both].to_numpy())
+    if rate <= 1 / plan.k_target + _LINKAGE_TOLERANCE:
+        return []
+    return [
+        f"{', '.join(columns)}: {rate:.0%} of records lead back to their original by nearest "
+        f"standardized vector over these columns together, more than 1 in {plan.k_target}; "
+        "add noise, generalize, or perturb fewer of them"
+    ]
+
+
+def _free_text_leftovers(plan: AnonymizationPlan) -> list[str]:
+    # No pattern finds a name written into a sentence or a JSON field, so a cleaned text
+    # column is never proven free of personal data.
+    return [
+        f"{action.column}: redact_entities labels emails, document numbers and phones, but "
+        "names and other free-text details may remain"
+        for action in plan.actions
+        if action.technique == "redact_entities"
+    ]
+
+
+def _independent_draws(plan: AnonymizationPlan) -> list[str]:
+    # One person's rows each get their own draw, and a majority vote over them recovers
+    # the true value.
+    if plan.entity_column is None:
+        return []
+    return [
+        f"{action.column}: randomized_response draws again for every row of an entity, so "
+        f"averaging a person's rows recovers the true value; set by={plan.entity_column!r}"
+        for action in plan.actions
+        if action.technique == "randomized_response" and "by" not in action.params
+    ]

@@ -78,7 +78,12 @@ def microaggregate(
 
 
 def randomized_response(
-    table: Table, column: str, context: TechniqueContext, *, keep_probability: float = 0.75
+    table: Table,
+    column: str,
+    context: TechniqueContext,
+    *,
+    keep_probability: float = 0.75,
+    by: str | None = None,
 ) -> nw.Expr:
     """Keep each category with `keep_probability`, otherwise replace it with a random category.
 
@@ -86,6 +91,11 @@ def randomized_response(
     released value is deniable. With k categories, epsilon equals
     ln((p + (1 - p) / k) / ((1 - p) / k)) for keep probability p. Category shares
     across many rows can still be estimated by inverting the mixing.
+
+    A person with many rows gets an independent draw in each, so a majority vote over their
+    rows recovers the true value. With `by`, every row of the same entity (a person, a
+    patient) shares one draw: the entity keeps its value or is moved to the same random
+    category in all its rows, and repeating the question reveals nothing more.
     """
     if not 0 < keep_probability < 1:
         raise ValueError("keep_probability must be between 0 and 1, exclusive")
@@ -95,7 +105,7 @@ def randomized_response(
         return values
 
     keep_or_replace, which_category = table.uniforms(
-        context.stream_key(column, "randomized_response"), 2
+        context.stream_key(column, "randomized_response"), 2, by=by
     )
     category_number = table.add((which_category * len(categories)).floor().cast(nw.Int64))
     random_choice = table.lookup(category_number, dict(enumerate(categories)), table.dtype(column))

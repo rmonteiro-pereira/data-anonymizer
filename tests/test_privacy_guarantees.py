@@ -167,6 +167,7 @@ def test_date_shift_by_entity_moves_every_row_of_a_person_alike(people):
                 params={"max_days": 30, "by": "customer_id"},
             )
         ],
+        shuffle_rows=False,
     )
 
     shifted = Anonymizer(seed=3).apply(repeated, plan).data

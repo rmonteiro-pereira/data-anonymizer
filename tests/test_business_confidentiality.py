@@ -108,6 +108,7 @@ def test_index_by_store_removes_every_store_size(mall):
                 params={"method": "index", "by": "store_name", "allow_shape_change": True},
             )
         ],
+        shuffle_rows=False,
     )
 
     released = Anonymizer().apply(mall, plan).data
@@ -131,6 +132,7 @@ def test_growth_follows_each_store_over_time(mall):
                 },
             )
         ],
+        shuffle_rows=False,
     )
 
     released = Anonymizer().apply(mall, plan).data

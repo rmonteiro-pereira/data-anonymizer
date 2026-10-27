@@ -8,7 +8,7 @@ values computed in Python, and one-row statistics.
 Helper columns get the `__da_` prefix and are dropped when the table is handed back.
 """
 
-from collections.abc import Collection, Mapping
+from collections.abc import Collection, Mapping, Sequence
 from itertools import count
 from typing import Any
 
@@ -215,16 +215,24 @@ class Table:
         """Hand the table back in the user's form, without helper columns."""
         return self.as_user_frame(self.released_frame(keep_row_key=False))
 
-    def as_user_frame(self, frame: WorkingFrame, *, also_changed: Collection[str] = ()) -> Any:
+    def as_user_frame(
+        self,
+        frame: WorkingFrame,
+        *,
+        also_changed: Collection[str] = (),
+        row_order: Sequence[int] | None = None,
+    ) -> Any:
         """Return a released frame in the user's form.
 
         For pandas, columns that no action replaced, and that are not in `also_changed`,
-        come back as the user's own columns.
+        come back as the user's own columns. When `frame` holds the rows in a new order,
+        `row_order` gives the original position of each of its rows, so those columns follow
+        and the index is a fresh one.
         """
         if self._pandas_original is None:
             return to_native(frame, self._engine)
         changed = set(self.replaced_columns()) | set(also_changed)
-        return to_pandas_like(frame, self._pandas_original, changed)
+        return to_pandas_like(frame, self._pandas_original, changed, row_order=row_order)
 
     def replaced_columns(self) -> list[str]:
         """The user's columns that an action has replaced."""

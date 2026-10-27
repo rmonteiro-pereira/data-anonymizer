@@ -15,6 +15,17 @@
   - A numeric effect modifier with 10 or fewer distinct values reports one entry per value.
   - `exact` on a row-level panel column is rejected, because it held in every period.
 
+- **Honest protection reports.**
+  - Anonymized releases come back in a fresh random row order with a fresh pandas index; the
+    plan field `shuffle_rows` overrides this.
+  - New protection problems: untreated account or entity keys, perturbed numeric columns that
+    link jointly, partly treated text columns that stay distinct, `redact_entities` columns
+    (never `anonymized`, since names may remain) and `randomized_response` without `by`.
+  - `redact_entities` normalizes text before reading it, so obfuscated emails, CPFs and phones
+    are removed, and the report checks residue the same way.
+  - `randomized_response` gains `by`; `scramble_categories` gains `min_entities` and `by`, and
+    the proposal sets them for business segments.
+
 - **Time series and panels.**
   - A schema can declare a `panel` of entities over periods. Columns take a `level` (`row`,
     `entity` or `period`), and formulas can read `lag(column, k)`, `period` and `entity_index`,

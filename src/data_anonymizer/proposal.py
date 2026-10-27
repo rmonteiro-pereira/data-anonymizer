@@ -19,6 +19,9 @@ from data_anonymizer.techniques import BUILTIN_TECHNIQUES, Technique
 # Findings below this confidence are still proposed, but the reason asks for review.
 _REVIEW_CONFIDENCE = 0.6
 
+# Techniques whose random draw is taken once per person when the plan names an entity column.
+_PER_ENTITY_DRAW = ("date_shift", "randomized_response")
+
 _STATISTICAL = Fidelity.STATISTICAL
 _PRIVACY = Fidelity.PRIVACY
 
@@ -96,13 +99,13 @@ _ATTRIBUTE_RULES: dict[DataCategory, dict[Fidelity, Rule]] = {
     DataCategory.BUSINESS_SEGMENT: {
         _STATISTICAL: Rule(
             "scramble_categories",
-            {"prefix": "SEG", "min_count": 3},
-            "opaque codes; segments with fewer than 3 rows merged",
+            {"prefix": "SEG", "min_count": 3, "min_entities": 3},
+            "opaque codes; segments with fewer than 3 rows or 3 entities merged",
         ),
         _PRIVACY: Rule(
             "scramble_categories",
-            {"prefix": "SEG", "min_count": 5},
-            "opaque codes; segments with fewer than 5 rows merged",
+            {"prefix": "SEG", "min_count": 5, "min_entities": 5},
+            "opaque codes; segments with fewer than 5 rows or 5 entities merged",
         ),
     },
     DataCategory.FLOOR_AREA: {
@@ -239,9 +242,11 @@ def _action_for(
     params = dict(rule.params)
     if rule.technique == "scramble_categories" and protection is Protection.PSEUDONYMIZATION:
         params["keyed"] = True
-    if rule.technique == "date_shift" and entity_column is not None:
-        # One offset per person; separate offsets per row average out across a person's rows.
+    if rule.technique in _PER_ENTITY_DRAW and entity_column is not None:
+        # One draw per person; separate draws per row average out across a person's rows.
         params["by"] = entity_column
+    if rule.technique == "scramble_categories" and "min_entities" in params:
+        _count_entities_or_drop(params, entity_column)
 
     reason = f"{finding.category.value} ({finding.sensitivity.value})"
     if rule.note:
@@ -254,6 +259,14 @@ def _action_for(
         params=params,
         reason=reason,
     )
+
+
+def _count_entities_or_drop(params: dict[str, Any], entity_column: str | None) -> None:
+    # Counting entities needs a column that says whose row it is; rows are the entities otherwise.
+    if entity_column is None:
+        del params["min_entities"]
+    else:
+        params["by"] = entity_column
 
 
 def _fallback(finding: ColumnFinding, protection: Protection, fidelity: Fidelity) -> Rule:
