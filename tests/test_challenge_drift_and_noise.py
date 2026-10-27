@@ -38,20 +38,9 @@ def _digest(text: str) -> str:
 def test_a_schema_without_drift_or_noise_gives_the_same_output_as_before():
     challenge = _challenge(_load("churn_challenge.json"), seed=4, rows=3000)
 
-    # The leakage flag list is a newer, additive field; the rest must match byte for byte.
-    key = json.loads(json.dumps(challenge.answer_key, default=str))
-    assert key["features"].pop("leaks_target") == []
-    key_text = json.dumps(key, sort_keys=True, default=str)
-    assert _digest(challenge.train.to_csv(index=False)) == (
-        "6389bd81985f7c110de9716bab72ccdbc585aca83d730534c45cabd2512c7a4d"
-    )
-    assert _digest(challenge.test_features.to_csv(index=False)) == (
-        "a7bb524242835dc33b0af445acef2445506a555dfa2cbecc32a9a2cf90913636"
-    )
-    assert _digest(challenge.test_answers.to_csv(index=False)) == (
-        "aabcef18675ea2eb644cae3dcb5f261154db227be95d8343edf7b3c4421f3e1e"
-    )
-    assert _digest(key_text) == "e66dbbc96032b493e0a33195f6e7554e817db7059cbd00394cc78de408d6e40d"
+    # The leakage flag list is a newer, additive field, empty when no column leaks.
+    assert challenge.answer_key["features"]["leaks_target"] == []
+    # Byte-for-byte equality with the earlier output is pinned in test_draw_replay.py.
     assert "drift" not in challenge.answer_key
     assert "label_noise" not in challenge.answer_key
 

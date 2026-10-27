@@ -21,13 +21,20 @@ from data_anonymizer.synthesis.interventions import intervene
 
 CHURN_EXAMPLE = Path(__file__).parent.parent / "examples" / "churn_challenge.json"
 
-# SHA-256 prefixes of the churn challenge for seed 4 and 3000 rows, taken before random numbers
-# were stored per row: train, test features, test answers and the answer key.
-CHURN_DIGESTS = ["6389bd81985f7c11", "a7bb524242835dc3", "aabcef18675ea2eb", "e66dbbc96032b493"]
+# SHA-256 prefixes of the churn challenge for seed 4 and 3000 rows, with floats rounded to 9
+# decimals, from output identical to the version before random numbers were stored per row:
+# train, test features, test answers and the answer key.
+CHURN_DIGESTS = ["b9ad78b476dfea94", "9771f6ab6634e2ed", "aabcef18675ea2eb", "e66dbbc96032b493"]
 
 
 def digest(text: str) -> str:
     return hashlib.sha256(text.encode()).hexdigest()[:16]
+
+
+def table_digest(frame: pd.DataFrame) -> str:
+    # Floats are rounded first: numpy's exp and log can differ in the last bit between CPUs,
+    # and the pin is about the values, not the bits.
+    return digest(frame.round(9).to_csv(index=False))
 
 
 def test_a_schema_without_new_fields_gives_the_same_challenge_as_before():
@@ -38,9 +45,9 @@ def test_a_schema_without_new_fields_gives_the_same_challenge_as_before():
     assert challenge.answer_key["features"].pop("leaks_target") == []
 
     produced = [
-        digest(challenge.train.to_csv(index=False)),
-        digest(challenge.test_features.to_csv(index=False)),
-        digest(challenge.test_answers.to_csv(index=False)),
+        table_digest(challenge.train),
+        table_digest(challenge.test_features),
+        table_digest(challenge.test_answers),
         digest(json.dumps(challenge.answer_key, sort_keys=True, default=str)),
     ]
     assert produced == CHURN_DIGESTS
