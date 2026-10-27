@@ -95,7 +95,8 @@ recorded in an ADR, not a quiet edit.
   `EXPRESSION_TECHNIQUES` in `tests/test_engines.py`.
 - Pin values, not bits. A pinned output is hashed after rounding floats, because numpy's
   `exp` and `log` can differ in the last bit between machines.
-- Tests run offline and fast: the full suite takes under a minute.
+- Tests run offline: the full suite takes about two minutes, most of it in the Spark engine
+  tests.
 
 ## Documentation
 
