@@ -4,6 +4,7 @@ import pytest
 from data_anonymizer.detection import checksums, scan, scan_column
 from data_anonymizer.detection.column_names import category_from_name, name_tokens
 from data_anonymizer.detection.patterns import (
+    RECOGNIZERS,
     is_valid_cnpj,
     is_valid_cpf,
     is_valid_iban,
@@ -218,3 +219,71 @@ def test_birth_dates_are_recognized_from_their_values():
 
     assert finding.category is DataCategory.DATE_OF_BIRTH
     assert finding.confidence < 0.6
+
+
+def _recognizer(category: DataCategory, label: str):
+    return next(
+        recognizer
+        for recognizer in RECOGNIZERS
+        if recognizer.category is category and recognizer.label == label
+    )
+
+
+@pytest.mark.parametrize(
+    "number",
+    [
+        "555-123-4567",
+        "(555) 123-4567",
+        "555.123.4567",
+        "(555)123-4567",
+        "+1 555 123 4567",
+        "+1 (555) 123-4567",
+        "+1-555-123-4567",
+        "1-800-555-0199",
+        "+14155552671",
+        "+5511987654321",
+        "55 11 98765 4321",
+        "(11) 98765-4321",
+        "(11) 3333-4444",
+        "+44 7911 123456",
+        "07911 123456",
+        "+33 1 23 45 67 89",
+        "01 23 45 67 89",
+        "+34 612 345 678",
+        "+351 912 345 678",
+        "+39 333 123 4567",
+        "+91 98765 43210",
+        "0412 345 678",
+        "+54 9 11 1234-5678",
+    ],
+)
+def test_phone_numbers_in_real_world_layouts_are_recognized(number):
+    assert _recognizer(DataCategory.PHONE, "phone number").matches(number)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "529.982.247-25",
+        "11.222.333/0001-81",
+        "192.168.100.200",
+        "10.20.30.40",
+        "4.2.17.203",
+        "2024-01-05",
+        "05/01/2024",
+        "2024-01-05 10:30",
+        "12:30:45",
+        "1234567",
+        "5551234567",
+    ],
+)
+def test_documents_addresses_versions_and_dates_are_not_phones(value):
+    assert not _recognizer(DataCategory.PHONE, "phone number").matches(value)
+
+
+def test_unnamed_us_phone_columns_are_phones_and_prose_with_a_phone_is_free_text():
+    numbers = pd.Series([f"({200 + index % 700}) 555-{1000 + index:04d}" for index in range(300)])
+    prose = pd.Series([f"Call me back on 555-123-{1000 + index} please" for index in range(100)])
+
+    assert scan_column("col_a", numbers).category is DataCategory.PHONE
+    assert scan_column("notes", prose).category is DataCategory.FREE_TEXT_WITH_PII

@@ -34,7 +34,7 @@ person under the LGPD.
 | Vehicle plate | Old and Mercosul formats; needs a name hint (`placa`, `plate`) |
 | PIX random key | UUID v4; needs a name hint (`pix`, `chave_pix`), otherwise a unique UUID column is a record ID |
 | CEP | `00000-000` |
-| Phone | Formatted numbers with 10–13 digits. Bare digit strings only when they look like a Brazilian mobile (area code then 9), because bare 10–12 digit numbers are usually timestamps or order numbers |
+| Phone | Layouts with fixed digit groups: North American 3-3-4 with any separators or brackets, `+<country>` numbers in any grouping (including compact E.164), Brazilian, Portuguese, British, Australian and French groupings. Formatted numbers need 10–13 digits. Bare digit strings only when they look like a Brazilian mobile (area code then 9), because bare 10–12 digit numbers are usually timestamps or order numbers. CPF, CNPJ, IPv4 addresses, version strings and dates never match |
 | Payment card | Luhn, a known network prefix, and that network's length. 15-digit numbers must start 34 or 37, which keeps IMEIs out |
 | IMEI | 15 digits with a Luhn check digit |
 | IBAN | ISO 13616 mod-97, with or without spaces |

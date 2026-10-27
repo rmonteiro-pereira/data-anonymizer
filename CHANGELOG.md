@@ -18,6 +18,8 @@
     birth dates recognized from their values.
   - Fixes: bare 10–12 digit numbers (timestamps, order numbers) were classed as phones,
     and IMEIs as payment cards.
+  - Phone numbers are recognized in North American 3-3-4, compact E.164 and European
+    layouts; CPF, CNPJ, IPv4 addresses, versions and dates no longer match.
 - Noise explorer: an interactive page per column, from `explore-noise`. Disclosure
   metrics: record linkage, interval disclosure, per-record shift, and Wasserstein / IQR.
 - Synthesis patterns:

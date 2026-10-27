@@ -84,6 +84,26 @@ def _recognizer(
 
 _C = DataCategory
 
+# Phone layouts, as alternatives. Each alternative fixes the size of its digit groups, so
+# CPF (3-3-3-2), IPv4, version strings and dates never fit. The digit count is left to
+# `is_phone_number`.
+_PHONE_LAYOUTS = (
+    # An international prefix makes any grouping safe: +44 7911 123456, +14155552671.
+    r"\+\d{1,3}(?:[\s.-]?\(?\d{1,5}\)?){2,5}",
+    # North America: 3-3-4, with or without a leading 1 and brackets around the area code.
+    r"(?:1[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}",
+    # Brazil, Portugal, the UK and Australia: area code, 4-5 digits, 4 digits.
+    r"(?:\+?\d{1,3}[\s.-])?\(?\d{2,4}\)?[\s.-]?\d{4,5}[\s.-]?\d{4}",
+    # 4-3-3 and 4-3-4: 0800 123 4567, 0412 345 678.
+    r"\d{4}[\s.-]\d{3}[\s.-]\d{3,4}",
+    # France: five pairs.
+    r"\d{2}(?:[\s.-]\d{2}){4}",
+    # UK mobiles and India: 4-5 digits, then 5-6.
+    r"\d{4,5}[\s.-]\d{5,6}",
+)
+# The number must not continue into a longer run of digits on either side.
+_PHONE_PATTERN = r"(?<![\w.+-])(?<!\d[\s.-])(?:" + "|".join(_PHONE_LAYOUTS) + r")(?![\w]|[\s.-]\d)"
+
 # Order breaks exact ties between recognizers: earlier and more specific wins.
 RECOGNIZERS: tuple[ValueRecognizer, ...] = (
     _recognizer(_C.EMAIL, "email", r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"),
@@ -186,12 +206,7 @@ RECOGNIZERS: tuple[ValueRecognizer, ...] = (
     ),
     _recognizer(_C.URL, "URL", r"https?://[^\s/$.?#][^\s]*"),
     _recognizer(_C.POSTAL_CODE, "CEP", r"\b\d{5}-\d{3}\b"),
-    _recognizer(
-        _C.PHONE,
-        "phone number",
-        r"(?:\+\d{1,3}[\s.-]?)?\(?\b\d{2,3}\)?[\s.-]?\d{4,5}[\s.-]?\d{4}\b",
-        checksums.is_phone_number,
-    ),
+    _recognizer(_C.PHONE, "phone number", _PHONE_PATTERN, checksums.is_phone_number),
     _recognizer(
         _C.NATIONAL_ID,
         "Aadhaar",
