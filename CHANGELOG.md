@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **Collusion in a small `OTHER` bucket is documented.** `min_entities` protects against one
+  member; two of three members can pool their records, so use privacy fidelity (5) when members
+  might collude.
 - **An affine rescale is a problem under anonymization.** `normalize` with `robust`, `zscore` or
   `minmax` and no `allow_shape_change` now makes the release `at_risk`, naming the inversion
   (two known values, or one known value plus a true total) and the fix (`normalize` by entity

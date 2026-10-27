@@ -84,6 +84,14 @@ The default plan for the same table is `at_risk` under anonymization: it rescale
 rent with `robust`, and the report flags a plain shift and scale as a problem, described below.
 Under pseudonymization it stays a caveat.
 
+## Small `OTHER` segments and collusion
+
+`min_entities` is the standard threshold rule. With the default fidelity it is 3, so a segment
+or an `OTHER` bucket holds at least three stores, and one member cannot read another member's
+figures from it. The rule assumes no collusion: with exactly three stores in a bucket, two of
+them can pool their own records and identify the third. Privacy fidelity sets the minimum to 5.
+Use it, or raise `min_entities` in the plan, when the members of a segment might collude.
+
 ## What remains, and the stronger options
 
 `robust`, `zscore` and `minmax` are shifts and scales. They keep the distribution's
@@ -123,7 +131,8 @@ default `robust` when the provider also needs to compare stores of different siz
 ## Checklist before sending the file
 
 1. Run `anonymize apply` and read the protection level and problems.
-2. Confirm no segment, area band or category has fewer than three stores.
+2. Confirm no segment, area band or category has fewer than three stores. The minimum protects against one store that knows its own figures,
+   not against members who pool theirs (see "Small `OTHER` segments and collusion").
 3. Read the problems and caveats. A rescaled column that the report flags as a problem
    needs `index` by store (with `allow_shape_change`), or `rank`, to reach `anonymized`.
 4. Remove columns the provider does not need, such as contract numbers and
