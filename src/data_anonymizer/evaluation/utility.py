@@ -85,7 +85,9 @@ def _compare_numeric(column: str, before: pd.Series, after: pd.Series) -> Column
         comparison="numeric",
         mean_change=relative_change(float(before.mean()), float(after.mean())),
         std_change=relative_change(float(before.std()), float(after.std())),
-        ks_statistic=float(stats.ks_2samp(before, after).statistic),
+        # Only the statistic is reported, so the exact p-value, which warns on large ties,
+        # is not needed.
+        ks_statistic=float(stats.ks_2samp(before, after, method="asymp").statistic),
     )
 
 

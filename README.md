@@ -85,7 +85,8 @@ The package imports as `data_anonymizer` and installs the `anonymize` command.
 
 ## Quick start
 
-From a clone of the repository:
+From a clone of the repository, this writes a sample customer table from the bundled example
+schema, then scans, plans, anonymizes it and writes a noise explorer page:
 
 ```bash
 git clone https://github.com/rmonteiro-pereira/data-anonymizer.git
@@ -93,12 +94,41 @@ cd data-anonymizer
 uv sync
 export ANONYMIZER_SECRET_KEY="$(openssl rand -hex 32)"
 
+uv run anonymize synthesize --schema examples/customers_schema.json --rows 2000 -o customers.csv
 uv run anonymize scan customers.csv
 uv run anonymize propose customers.csv --protection anonymization -o plan.json
 # review and edit plan.json, then:
 uv run anonymize apply customers.csv --plan plan.json -o customers_anon.csv --report report.json
-uv run anonymize explore-noise customers.csv --column salary -o salary_noise.html
+uv run anonymize explore-noise customers.csv --column monthly_spend -o monthly_spend_noise.html
 ```
+
+`apply` ends with a line such as
+`wrote 2000 rows to customers_anon.csv; k-anonymity 1 -> 5; result is anonymized`. Open the
+explorer page in a browser; [docs/noise-explorer.md](docs/noise-explorer.md#open-the-page)
+gives the command for each system, and warns that the page holds real values from the column.
+
+## How it works, on one row
+
+`scan` classifies every column. On the sample table it finds four direct identifiers
+(`customer_id`, `full_name`, `email`, `cpf`), a voucher code that nearly every row has its own
+value of, and `age` as a quasi-identifier. `propose` turns that into a plan, and `apply` runs
+it. One row before and after:
+
+| | customer_id | full_name | email | signup_date | age | monthly_spend |
+|---|---|---|---|---|---|---|
+| Before | 6242 | Barbara Sanchez | alexandererica@example.net | 2024-07-01 15:20:42 | 33 | 100.98131 |
+| After | ID-0498 | Steven Edwards | rvasquez@example.net | 2024-11-18 | 47 | 136.0 |
+
+- The identifiers are replaced: fresh codes for the ID, random fakes for name, email and CPF.
+- Timestamps are cut to the day and amounts rounded to three significant figures, because a
+  value distinct in every row would single the row out.
+- Ages are averaged in groups of five, and local suppression blanks the rare cells that would
+  still make a row unique.
+- The rows come back in a fresh random order, so the "after" row is a different customer:
+  nothing in the release lines it up with the original.
+
+`apply` then checks the released table and labels it `anonymized`, `at_risk`, `pseudonymized`
+or `identifiable`, with the reason for anything short of the target.
 
 The same flow in Python. `scan`, `propose`, `validate`, `apply` and `reveal` take pandas,
 Polars and DuckDB tables and return the same kind. A DuckDB table needs the plan's
@@ -171,10 +201,14 @@ Exit codes:
 - [docs/techniques.md](docs/techniques.md): every technique, its parameters and its effect
 - [docs/business-confidentiality.md](docs/business-confidentiality.md): sharing company data,
   such as tenant revenue and rent, without revealing any one company's figures
-- [docs/noise-explorer.md](docs/noise-explorer.md): reading the noise explorer and its metrics
+- [docs/noise-explorer.md](docs/noise-explorer.md): writing and opening the noise explorer
+  page, and reading its metrics
 - [docs/synthesis.md](docs/synthesis.md): schemas, planted patterns, synthesis from a
   sample, and data-science challenges
-- [ARCHITECTURE.md](ARCHITECTURE.md): how the code is organised and where to change things
+- [ARCHITECTURE.md](ARCHITECTURE.md): C4-style system views, how the code is organised and
+  where to change things
+- [CONTRIBUTING.md](CONTRIBUTING.md): the project's standards for code, design, tests, docs,
+  privacy review, commits and releases
 - [CHANGELOG.md](CHANGELOG.md): released changes
 
 ## Development
@@ -189,3 +223,5 @@ uv run mypy src
 
 GitHub Actions runs the same checks on Python 3.12 and 3.13 for every push to `main` and every
 pull request (`.github/workflows/ci.yml`).
+
+The standards every change follows are in [CONTRIBUTING.md](CONTRIBUTING.md).

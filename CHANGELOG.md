@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Documentation: a guide to writing and opening the noise explorer page (and a warning that it
+  holds real values), C4-style system views in `ARCHITECTURE.md`, the project's standards in
+  `CONTRIBUTING.md`, and a README quick start that runs on the bundled example schema.
+- The utility report computes the KS statistic without the exact p-value, so `apply` no longer
+  prints a numpy warning on large tables.
+
 ## 0.2.0
 
 - **The quick start reaches `anonymized`.** Under anonymization, `propose` generalizes

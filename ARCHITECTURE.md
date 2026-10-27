@@ -21,6 +21,95 @@ Beside that path:
 Everything is in-process. The only file I/O is in `table_files.py`,
 `noise_explorer/page.py` and `cli.py`.
 
+## System views (C4-style)
+
+These three views follow the C4 model's levels, drawn as plain Mermaid flowcharts. They show
+the system as it is: a library and a command line that run inside the user's own process,
+with no service, database or network call of their own.
+
+### Level 1: system context
+
+Who uses data-anonymizer, and what it touches.
+
+```mermaid
+flowchart LR
+  owner["Data owner or analyst<br/>(person)"]
+  recipient["Data recipient<br/>(person: provider, team, challenge participant)"]
+  keyholder["Key holder<br/>(person who may re-link or decrypt)"]
+  system["data-anonymizer<br/>(Python library and CLI)"]
+  files[("Files<br/>CSV and Parquet")]
+  frames[("In-memory and DuckDB tables<br/>pandas, Polars, DuckDB")]
+  browser["Web browser<br/>(opens the explorer page)"]
+
+  owner -->|"scans, plans, applies, synthesizes"| system
+  system -->|"reads and writes"| files
+  system -->|"reads and returns the same kind"| frames
+  system -->|"released table, report, challenge"| recipient
+  system -->|"explorer page, a local HTML file"| browser
+  keyholder -->|"reveal with the secret key"| system
+```
+
+- The data owner runs every step and decides what leaves their machine. The library sends
+  nothing anywhere.
+- The recipient gets only what the owner hands over: a released table, a challenge folder
+  without its `answers/`, or a synthetic table.
+- The key holder exists only for pseudonymization and reversible encryption. Anonymization
+  runs under a throwaway key, so nobody can re-link its output.
+
+### Level 2: containers
+
+The runnable parts and the data they produce.
+
+```mermaid
+flowchart TB
+  subgraph system["data-anonymizer"]
+    cli["anonymize CLI<br/>cli.py, argparse"]
+    library["Python library<br/>Anonymizer facade and modules"]
+  end
+  env[("ANONYMIZER_SECRET_KEY<br/>environment variable")]
+  plan[("Plan JSON<br/>editable")]
+  outputs[("Released table, report JSON,<br/>synthetic table, challenge folder")]
+  page[("Explorer page<br/>self-contained HTML")]
+  duckdb[("DuckDB connection<br/>optional, the user's own")]
+
+  cli -->|"calls"| library
+  env -->|"read only by the CLI"| cli
+  library -->|"writes and reads"| plan
+  library -->|"writes"| outputs
+  library -->|"writes"| page
+  library -->|"runs SQL on the user's relation"| duckdb
+```
+
+- The CLI only parses arguments, reads the key from the environment and prints results. The
+  library never reads environment variables.
+- On a DuckDB relation the library builds lazy queries on the user's own connection, so a
+  large table stays in DuckDB until the result is collected.
+
+### Level 3: components of the library
+
+```mermaid
+flowchart LR
+  facade["anonymizer.py<br/>Anonymizer facade"]
+  detection["detection/<br/>column categories"]
+  proposal["proposal.py and untreated_columns.py<br/>the plan"]
+  techniques["techniques/<br/>one expression per column"]
+  table["table.py and engines.py<br/>pandas, Polars, DuckDB"]
+  suppression["local_suppression.py<br/>k-anonymity"]
+  protection["protection.py, identifying_columns.py,<br/>evaluation/: the checks"]
+  synthesis["synthesis/<br/>schemas, generation, challenges"]
+  explorer["noise_explorer/<br/>sweep and page"]
+
+  facade --> detection --> proposal
+  facade --> techniques --> table
+  facade --> suppression
+  facade --> protection
+  facade --> synthesis
+  explorer --> techniques
+  synthesis --> detection
+```
+
+The code map below names every module and what must not live in it.
+
 ## Code map
 
 | Module | What lives here | What must not live here |
@@ -50,12 +139,13 @@ Everything is in-process. The only file I/O is in `table_files.py`,
 ```mermaid
 flowchart LR
   table[DataFrame] --> scan[detection.scan] --> findings[ColumnFinding list]
-  findings --> propose[proposal.propose_plan] --> plan[AnonymizationPlan JSON]
+  findings --> propose[proposal.propose_plan] --> untreated[untreated_columns]
+  untreated --> plan[AnonymizationPlan JSON]
   plan --> apply[Anonymizer.apply]
   table --> apply
   apply --> techniques[techniques catalogue] --> suppression[local_suppression]
-  suppression --> result[AnonymizationResult]
-  apply --> evaluation[evaluation: privacy + utility] --> result
+  suppression --> shuffle[row_order.shuffle_rows] --> result[AnonymizationResult]
+  apply --> evaluation[evaluation and protection checks] --> result
   table --> infer[synthesis.infer_schema] --> schema[DatasetSchema]
   schema --> generate[synthesis.generator] --> synthetic[synthetic DataFrame]
   table -. statistical fidelity .-> copula[synthesis.copula] --> generate
@@ -67,15 +157,20 @@ flowchart LR
   the same length and index. It never mutates its input.
 - Missing values stay missing through every technique except `suppress`, which blanks
   every cell, and `shuffle`, which moves them between rows.
-- All randomness comes from `context.rng` or the generator passed in, so `seed` reproduces
-  a run. All pseudonyms and keyed salts come from `context.keyed_digest`, and all encryption
-  keys from `context.derived_key`, so `secret_key` reproduces them. Cryptographic nonces and
-  random salts come from `os.urandom`, never from the seeded generator.
+- Noise per row comes from keyed hashes of the row key (`context.stream_key`, computed by
+  `engines.add_keyed_uniforms`), so the same row gets the same noise on every engine. Random
+  choices that stand in for values, such as category codes and random fakes, use
+  `context.choice_key` and `context.generator`. All pseudonyms and keyed salts come from
+  `context.keyed_digest`, and all encryption keys from `context.derived_key`, so
+  `secret_key` reproduces them. Cryptographic nonces and random salts come from
+  `os.urandom`, never from a seeded generator.
 - A reversible technique's inverse accepts the same parameters as the technique, so one
   plan drives both `apply` and `reveal`.
 - Synthesis never copies a direct identifier from a reference table. Identifier columns
   get fake values or fresh unique numbers.
-- Every random number used to build a schema row comes from a uniform number stored with the row (`draw_replay.py`), so an intervention can replay the build. Constraint filtering drops the numbers together with their rows.
+- Every random number used to build a schema row comes from a uniform number stored with
+  the row (`draw_replay.py`), so an intervention can replay the build. Constraint filtering
+  drops the numbers together with their rows.
 - Schema expressions are parsed with `ast` and evaluated node by node, never with `eval`.
   Random functions are allowed only in formulas, so conditions and constraints give the
   same answer every time they are checked.
