@@ -39,8 +39,11 @@ Every direct identifier follows the row for its protection and fidelity:
 | pseudonymization | `surrogate` (realistic, consistent); `keyed_hash` for record IDs and identifiers without a fake generator | `keyed_hash` |
 | anonymization | `surrogate` with `consistent: false` (random per cell); `scramble_categories` for record IDs, so the rows of one entity stay together without the real ID | `suppress` |
 
-The default target is `anonymization`. Free text with personal data always gets
-`redact_entities`. Company names get `scramble_categories` (`ORG-…` codes) in every mode.
+The default target is `anonymization`. Free text with personal data gets `suppress` under
+anonymization, because no list or pattern finds every name written into a sentence (a
+lowercase or foreign name passes them all), and `redact_entities` under pseudonymization.
+Keeping a redacted copy under anonymization is a choice you make in the plan; the release then
+stays `at_risk`. Company names get `scramble_categories` (`ORG-…` codes) in every mode.
 
 `scramble_categories` codes are random per run under anonymization. Under
 pseudonymization they are keyed (`keyed: true`), so the same label gets the same code in
@@ -127,8 +130,8 @@ The checks follow the three criteria of the EDPB Guidelines 02/2026 on anonymisa
 
 | Level | Meaning |
 |---|---|
-| `anonymized` | No linking technique and no direct identifier left, and every check above passed on this release: the quasi-identifier groups meet `k_target`, no row is unique across its discrete columns, no column is a fingerprint, noisy values do not re-link by nearest value, and no sensitive attribute fails the diversity, closeness or skew limits. For `apply_many`, the joined tables pass the same k and inference checks. This is not a proof that nobody can be re-identified: see the caveats below |
-| `at_risk` | No link to people, but a record can still be isolated or a sensitive value inferred. A column cleaned with `redact_entities` always stays here: no pattern finds every name written into a sentence or a JSON field (the bundled first-name and municipality lists find the common ones) |
+| `anonymized` | No linking technique and no direct identifier left, and every check above passed on this release: the quasi-identifier groups (including the columns of a joint microaggregation) meet `k_target`, no row is unique across its discrete columns, no column is a fingerprint, noisy values do not re-link by nearest value, and no sensitive attribute fails the diversity, closeness or skew limits. For `apply_many`, the tables are joined through every link and pass the same k and inference checks. It means no check found a way to single out a record or read a sensitive value from this release. It does not mean nobody can be re-identified, and it makes three promises smaller than they may sound: **membership** is not hidden (k-anonymity does not say whether a person is in the table, and Mondrian cut values and medians come from the data, so in a small table they can show whether a particular person is in it; use differential privacy, `synthesize_private` or `aggregate_private`, when membership itself is secret); **inference** is bounded, not excluded (the skew check flags a group at 90% confidence and 30 points above the base rate by default, so a group at 89% passes; lower `inference_confidence` and `inference_gain`, or set `t_target`, for a stricter release); and **people** are counted as entities only when the plan has an `entity_column`, otherwise repeated rows of one person count as several. See the caveats below |
+| `at_risk` | No link to people, but a record can still be isolated or a sensitive value inferred. A column cleaned with `redact_entities` always stays here, with or without the `ner` extra: no list, pattern or model finds every name written into a sentence or a JSON field, so the problem suggests dropping the column or reviewing its text. Under anonymization the proposal drops free text for that reason |
 | `pseudonymized` | Identifiers replaced, but a linking technique lets the key holder re-link them |
 | `identifiable` | A direct identifier was left as it was. This is checked on the data: more than 1% of a direct identifier's values surviving unchanged counts, whatever the technique. For `redact_entities`, any text that still holds a recognisable document, email, phone, listed first name with a surname, or municipality counts |
 
@@ -141,7 +144,8 @@ The `anonymized` level also comes with caveats, because these checks are necessa
 not sufficient. They only look at the columns the plan lists and at tables released in one
 call:
 - columns the detector missed are not treated;
-- free text can hide names;
+- free text can hide names, since no list, pattern or model finds every name, which is why
+  anonymization drops free text by default and keeps a redacted copy at `at_risk`;
 - quasi-identifiers outside the plan, or outside data an attacker holds, are not counted;
 - whether the output is anonymous for a given recipient depends on the context. The CJEU
   ruled in *EDPS v SRB* (C-413/23 P, 2025) that pseudonymized data may be anonymous for a
@@ -185,7 +189,14 @@ The description comes from the cuts that enclose the group, not from the smalles
 value inside it, so one extreme record (a single 90-year-old among teenagers) never shows in
 the release. A column that no cut bounds reads `any value`, unless every value in the table is
 equal. A column with one value in a group is still described by its bounds. Categories are
-described by the set of values present, which can name a rare category.
+described by the set of values present. A category held by fewer than `k_target` rows in the
+whole table is never named: it reads `other` inside the set, so the set does not show that its
+few holders are in the table.
+
+The cut values and the medians are values of the data, so in a small table they can show whether
+a particular person is in it (a cut at `under 50` where the nearest ordinary values are 20 and
+60). Mondrian protects against singling a person out of the released table, not against telling
+whether that person was in the source. Use differential privacy when membership is secret.
 
 A missing cell takes its group's description, so that every row of a group holds the same
 value. A group in which the column is missing everywhere keeps it missing. A column of dates
@@ -234,8 +245,16 @@ would single it out. Records are grouped by which listed columns they have, and 
 is microaggregated over the columns it shares, in groups of at least `group_size`. A set with
 fewer records than that has its listed columns blanked. When the blanked records are still
 fewer than `group_size`, the smallest groups are blanked with them, so no blank record stands
-alone. The protection check also counts the listed columns when it looks for records that are
-unique across the released columns, however many distinct values they hold.
+alone. The protection check treats the listed columns as quasi-identifiers: it counts them when it
+looks for records that are unique across the released columns, however many distinct values
+they hold, and it groups by their released vectors in the k-anonymity and skew checks, so five
+records that share one vector and one diagnosis make the release `at_risk`.
+
+MDAV counts rows, not people. With an `entity_column` in the plan, each entity becomes one
+point (the mean of its rows), every group holds at least `group_size` distinct entities, and
+all the rows of an entity get its group's vector; the isolated-record and skew checks then count
+entities too. Without an `entity_column`, the five identical visits of one person are five
+records and can form a group on their own.
 
 Limits: the work grows
 with the square of the number of rows, so very large tables should be sampled or grouped
@@ -407,10 +426,21 @@ or `scramble_categories`), the released tables are joined on it. The check count
 there, over the quasi-identifiers of all the joined tables together: a combination shared by
 fewer entities than the largest `k_target`, or a group in which a sensitive value passes the
 [skewed-group](#skewed-groups) limits, makes every table of that join `at_risk`. The problem
-names the other tables and the linking column. Fix it by dropping the link column from the
-release or by releasing the tables in separate calls, so each gets its own codes. Still not
-checked: joins on columns that differ in name, joins through values you left readable (such
-as a date), and pseudonymized tables, which join by design. On the command line, `oblitus apply-many` reads a manifest:
+names the other tables and the links. Fix it by dropping the link column from the
+release or by releasing the tables in separate calls, so each gets its own codes.
+
+The join follows links through other tables. A bridge table holding an account and a case
+code joins a table that has only the account to a table that has only the case code, so the
+check joins every connected group of tables through all their links, and counts entities by
+the link with the fewest distinct values (the person, when the other links are visits or cases).
+
+Two columns with different names are linked too when they code the same entities by how often
+they occur: if both hold at least five distinct values, at least 80% of their per-value row
+counts agree, and at least half of the values can be paired by a count that no other value has,
+the values are paired by count and the tables are joined on that pairing. The heuristic misses
+entities that occur equally often (every account has five rows), tables that were filtered or
+sampled so the counts differ, and counts changed by noise. Still not checked: joins through
+values you left readable (such as a date), and pseudonymized tables, which join by design. On the command line, `oblitus apply-many` reads a manifest:
 
 ```json
 {"tables": {
