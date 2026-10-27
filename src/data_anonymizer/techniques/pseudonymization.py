@@ -272,7 +272,7 @@ def _random_surrogate(
         index: context.surrogates.value_for(category, int(seed), like=style_example)
         for index, seed in enumerate(seeds)
     }
-    (uniform,) = table.uniforms(context.stream_key(column, "surrogate"))
+    (uniform,) = table.uniforms(context.choice_key(column, "surrogate"))
     pick = table.add((uniform * pool_size).floor().cast(nw.Int64))
     fakes = table.lookup(pick, pool, nw.String)
     return nw.when(~value.is_null()).then(fakes)

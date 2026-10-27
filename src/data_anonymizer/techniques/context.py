@@ -32,9 +32,22 @@ class TechniqueContext:
         """
         return _hkdf(self.randomness_key, f"stream:{purpose}:{column}", 32)
 
+    def choice_key(self, column: str, purpose: str) -> bytes:
+        """Key random choices that stand in for values, such as category codes or fakes.
+
+        Unlike noise, these choices could link two releases: the same code or fake in both
+        would join them. So they also depend on the secret key, which an anonymization run
+        replaces with a throwaway one. Codes and fakes are then fresh in every anonymized
+        release, and reproducible for the key holder under pseudonymization.
+        """
+        return _hkdf(self.secret_key + self.randomness_key, f"choice:{purpose}:{column}", 32)
+
     def generator(self, column: str, purpose: str) -> np.random.Generator:
-        """A seeded generator for random choices made in Python, such as shuffling codes."""
-        seed = int.from_bytes(self.stream_key(column, purpose)[:8], "big")
+        """A seeded generator for random choices made in Python, such as shuffling codes.
+
+        It follows `choice_key`, so its choices are fresh in every anonymized release.
+        """
+        seed = int.from_bytes(self.choice_key(column, purpose)[:8], "big")
         return np.random.default_rng(seed)
 
     def keyed_digest(self, value: str, algorithm: str = "sha256") -> bytes:

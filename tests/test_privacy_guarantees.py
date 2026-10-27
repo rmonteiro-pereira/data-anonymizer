@@ -183,3 +183,40 @@ def test_proposals_shift_dates_per_entity(people):
 
     assert plan.entity_column == "customer_id"
     assert plan.action_for("birth_date").params["by"] == "customer_id"
+
+
+def test_anonymized_codes_are_fresh_in_every_release_even_with_a_key(people):
+    plan = AnonymizationPlan(
+        fidelity=Fidelity.STATISTICAL,
+        actions=[
+            ColumnAction(column="city", technique="scramble_categories"),
+            ColumnAction(
+                column="email",
+                technique="surrogate",
+                params={"category": "email", "consistent": False},
+            ),
+        ],
+    )
+    anonymizer = Anonymizer(secret_key=KEY, seed=1)
+
+    releases = [anonymizer.apply(people, plan).data for _ in range(4)]
+
+    assert not releases[0]["email"].equals(releases[1]["email"])
+    # Four cities have 24 orders, so four releases with one code mapping would be a fluke.
+    mappings = {
+        tuple(sorted(zip(people["city"], release["city"], strict=True))) for release in releases
+    }
+    assert len(mappings) > 1
+
+
+def test_pseudonymized_codes_are_reproducible_for_the_key_holder(people):
+    plan = AnonymizationPlan(
+        fidelity=Fidelity.STATISTICAL,
+        protection=Protection.PSEUDONYMIZATION,
+        actions=[ColumnAction(column="city", technique="scramble_categories")],
+    )
+
+    first = Anonymizer(secret_key=KEY, seed=1).apply(people, plan).data
+    second = Anonymizer(secret_key=KEY, seed=1).apply(people, plan).data
+
+    assert first["city"].equals(second["city"])

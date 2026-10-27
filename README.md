@@ -112,7 +112,7 @@ result.utility.max_correlation_change
 
 | Variable | Required | Default | What it does |
 |---|---|---|---|
-| `ANONYMIZER_SECRET_KEY` | for `reveal` | random per run | At least 16 bytes; a shorter key is refused. Keys every pseudonym and keyed salt, and is the master secret for the encryption keys. With the same key, the same value always gets the same pseudonym, so tables pseudonymized separately still join. `reveal` refuses to run without it. `apply` warns and uses a random key, so pseudonyms change on every run and encrypted columns can never be revealed. Anonymization plans ignore it and use a throwaway key. |
+| `ANONYMIZER_SECRET_KEY` | for `reveal` | random per run | At least 16 bytes; a shorter key is refused. Keys every pseudonym and keyed salt, and is the master secret for the encryption keys. With the same key, the same value always gets the same pseudonym, so tables pseudonymized separately still join. `reveal` refuses to run without it. `apply` warns and uses a random key, so pseudonyms change on every run and encrypted columns can never be revealed. Anonymization plans use a throwaway key instead for everything that could link a release back or to another release: pseudonyms, encryption, category codes and random fakes. The key still drives their noise, which is reproducible for the key holder, so keep it secret even then. |
 
 In Python, pass `secret_key=` to `Anonymizer`; the library never reads the environment.
 Treat the key like a password. Anyone who holds it can decrypt the reversible columns,

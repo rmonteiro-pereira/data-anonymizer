@@ -17,7 +17,10 @@ to the person.
   keyed hashes, Argon2 and bcrypt, consistent surrogates, scrambling and encryption.
   Argon2 and bcrypt with a random salt are refused too, because anyone can test a
   guessed value against the published hash.
-- The plan runs under a throwaway key.
+- The plan runs under a throwaway key for everything that could link a release: category
+  codes and random fakes are fresh in every run, so two releases cannot be joined on them.
+  Noise stays keyed on the secret key and seed. Reissuing the same release gives the same
+  noise, so averaging repeated releases gains nothing.
 - Quasi-identifiers are generalized, and local suppression then blanks cells until each
   combination is shared by at least `k_target` rows.
 
