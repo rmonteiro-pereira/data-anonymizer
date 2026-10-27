@@ -465,12 +465,14 @@ def _free_text_leftovers(plan: AnonymizationPlan) -> list[str]:
         if action.params.get("entity_model") is None:
             problems.append(
                 f"{action.column}: redact_entities labels emails, document numbers and phones, "
-                "but names and other free-text details may remain"
+                "but names and other free-text details may remain, and no list finds every "
+                "name; drop the column (suppress) or review its text before release"
             )
         else:
             problems.append(
                 f"{action.column}: redact_entities also uses a model for names and addresses, "
-                "but a model can miss some"
+                "but a model can miss some; drop the column (suppress) or review its text "
+                "before release"
             )
     return problems
 

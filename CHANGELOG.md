@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Anonymization drops free text by default.** No list or pattern finds every name in prose
+  (lowercase and foreign names pass them all), so the proposal suppresses free-text columns
+  under anonymization. A kept `redact_entities` column stays `at_risk`, and the problem suggests
+  dropping it or reviewing its text. Pseudonymization still redacts.
 - **`apply_many` joins the whole graph of tables.** Tables linked through a bridge table are
   joined together, and two columns with different names that code the same entities are linked
   when their values occur equally often (`frequency_links.py`). k-anonymity and inference are
