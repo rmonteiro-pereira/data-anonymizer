@@ -149,8 +149,8 @@ def test_reveal_recovers_reversible_columns_and_leaves_one_way_ones(people):
     revealed = Anonymizer(secret_key="vault-for-tests-0123456789").reveal(anonymized, plan)
 
     assert not anonymized["email"].isin(people["email"]).any()
-    assert revealed["email"].equals(people["email"].astype(object))
-    assert revealed["cpf"].equals(people["cpf"].astype(object))
+    assert revealed["email"].astype(object).equals(people["email"].astype(object))
+    assert revealed["cpf"].astype(object).equals(people["cpf"].astype(object))
     assert (revealed["full_name"] == "[REDACTED]").all()
 
 

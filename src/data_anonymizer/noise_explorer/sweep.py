@@ -14,6 +14,7 @@ import pandas as pd
 from data_anonymizer.evaluation.disclosure import deflection_metrics
 from data_anonymizer.surrogates import SurrogateFactory
 from data_anonymizer.techniques import BUILTIN_TECHNIQUES, TechniqueContext
+from data_anonymizer.techniques.catalogue import apply_to_series
 
 # For each technique: the parameter swept, its values from weakest to strongest,
 # and fixed parameters. Laplace runs with the column's own bounds, which is
@@ -181,7 +182,7 @@ def _run_sweeps(
                 surrogates=SurrogateFactory(),
             )
             params = {**fixed, parameter: _parameter_value(value)}
-            released = technique.apply(original.astype(float), context, params)
+            released = apply_to_series(technique, original.astype(float), context, params)
             runs.append((float(value), released.astype(float)))
         results[name] = runs
     return results

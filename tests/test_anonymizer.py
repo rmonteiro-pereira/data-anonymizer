@@ -1,3 +1,4 @@
+import narwhals as nw
 import pandas as pd
 import pytest
 
@@ -164,8 +165,8 @@ def test_duplicate_actions_for_one_column_are_rejected():
 
 
 def test_extra_techniques_can_be_used_in_plans(people):
-    def uppercase(values, context):
-        return values.str.upper()
+    def uppercase(table, column, context):
+        return nw.col(column).str.to_uppercase()
 
     shout = Technique(
         name="uppercase",

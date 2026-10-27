@@ -1,5 +1,6 @@
 """The entry point: scan a table, propose a plan, apply it, or synthesize a new table."""
 
+import hashlib
 import secrets
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
@@ -32,6 +33,7 @@ from data_anonymizer.synthesis import (
     generate_from_schema,
     infer_schema,
 )
+from data_anonymizer.table import Table
 from data_anonymizer.techniques import BUILTIN_TECHNIQUES, Technique, TechniqueContext
 
 # Shorter keys can be guessed, and every pseudonym and encryption key derives from it.
@@ -81,6 +83,7 @@ class Anonymizer:
                 "generate one with `openssl rand -hex 32`"
             )
         self._secret_key = secret_key if secret_key is not None else secrets.token_bytes(32)
+        self._randomness_key = _randomness_key(secret_key, seed)
         self._seed = seed
         self._locale = locale
         self._techniques: dict[str, Technique] = dict(BUILTIN_TECHNIQUES)
@@ -120,15 +123,14 @@ class Anonymizer:
         """
         self.validate(frame, plan)
         context = self._context(frame, throwaway_key=plan.protection is Protection.ANONYMIZATION)
-        anonymized = frame.copy()
+        table = Table.from_native(frame)
         for action in plan.actions:
             technique = self._techniques[action.technique]
             try:
-                anonymized[action.column] = technique.apply(
-                    frame[action.column], context, action.params
-                )
+                technique.apply(table, action.column, context, action.params)
             except (TypeError, ValueError) as error:
                 raise PlanError(f"{action.column}: {action.technique} failed: {error}") from error
+        anonymized = table.to_native()
 
         suppressed_cells = 0
         if plan.enforce_k_anonymity:
@@ -155,18 +157,16 @@ class Anonymizer:
         """
         self.validate(frame, plan)
         context = self._context(frame)
-        revealed = frame.copy()
+        table = Table.from_native(frame)
         for action in plan.actions:
             technique = self._techniques[action.technique]
             if not technique.reversible:
                 continue
             try:
-                revealed[action.column] = technique.reverse(
-                    frame[action.column], context, action.params
-                )
+                technique.reverse(table, action.column, context, action.params)
             except ValueError as error:
                 raise PlanError(f"{action.column}: cannot reveal: {error}") from error
-        return revealed
+        return table.to_native()
 
     def validate(self, frame: pd.DataFrame, plan: AnonymizationPlan) -> None:
         """Raise PlanError when a plan cannot run on this table."""
@@ -250,6 +250,7 @@ class Anonymizer:
             table=frame,
             secret_key=secret_key,
             surrogates=SurrogateFactory(self._locale),
+            randomness_key=self._randomness_key,
         )
 
     def _privacy(self, frame: pd.DataFrame, plan: AnonymizationPlan) -> PrivacyReport:
@@ -259,6 +260,20 @@ class Anonymizer:
             plan.sensitive_attributes,
             k_target=plan.k_target,
         )
+
+
+def _randomness_key(secret_key: bytes | None, seed: int | None) -> bytes:
+    # Noise drawn under the secret key is reproducible for whoever holds it and
+    # unpredictable for everyone else. A seed alone gives reproducible noise that
+    # anyone who knows the seed can recompute, which suits tests and demos only.
+    # Neither gives fresh noise on every run.
+    if secret_key is not None:
+        material = secret_key + b"|seed:" + str(seed).encode()
+    elif seed is not None:
+        material = b"data-anonymizer public seed:" + str(seed).encode()
+    else:
+        material = secrets.token_bytes(32)
+    return hashlib.sha256(material).digest()
 
 
 def _missing_listed_columns(frame: pd.DataFrame, plan: AnonymizationPlan) -> list[str]:
