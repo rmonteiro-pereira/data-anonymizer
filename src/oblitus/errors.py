@@ -23,3 +23,8 @@ class KeyGenerationError(AnonymizerError):
 
 class EntropySourceUnavailableError(AnonymizerError):
     """An entropy source cannot deliver now, such as a missing device or no network."""
+
+
+class PrivacyBudgetError(AnonymizerError):
+    """A differential-privacy request lacks a declared bound or domain, or would spend more
+    privacy budget than was declared."""

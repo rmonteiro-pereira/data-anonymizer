@@ -101,6 +101,7 @@ flowchart LR
   suppression["local_suppression.py<br/>k-anonymity"]
   protection["protection.py, identifying_columns.py,<br/>evaluation/: the checks"]
   synthesis["synthesis/<br/>schemas, generation, challenges"]
+  privacy["differential_privacy/<br/>budget, aggregates, MST"]
   explorer["noise_explorer/<br/>sweep and page"]
 
   facade --> detection
@@ -109,6 +110,7 @@ flowchart LR
   facade --> suppression
   facade --> protection
   facade --> synthesis
+  facade --> privacy
   explorer --> techniques
   synthesis --> detection
 ```
@@ -138,7 +140,8 @@ The code map below names every module and what must not live in it.
 | `noise_explorer/` | `sweep.py` (runs noise techniques at increasing strengths and measures each), `page.py` and `template.html` (the self-contained interactive page) | Noise algorithms; they come from `techniques/` |
 | `synthesis/` | `schema.py` (`DatasetSchema`, columns, overrides, correlations, constraints, `Question`), `expressions.py` (the safe expression language), `marginals.py` (inverse distribution functions), `patterns.py` (conditions, formulas, outliers, exact statistics, gaps), `generator.py` (the four-step build and constraint filtering), `column_values.py` (the values of one column: uniforms, draw or formula, conditions, outliers), `panel.py` (a panel's settings, row layout, column levels and lags of a finished table), `panel_generation.py` (builds a panel period by period), `time_series.py` (the `time_series` section of an answer key), `draw_replay.py` (the uniform numbers behind every row, stored with it so a build can be replayed), `causal_graph.py` (the graph a schema declares, column roles and back-door adjustment sets), `interventions.py` (`do(treatment = value)` by replaying the stored numbers), `treatment_effects.py` (the `causal` section of an answer key), `unique_values.py` (unique integer keys and templates), `copula.py` (Gaussian copula learned from a reference, optionally per level), `latent_correlation.py` (correlation of the hidden normal variables behind categories and numbers), `inference.py` (schema from a table), `rare_values.py` (merges rare categories and pulls in extreme numbers so one record cannot reappear), `challenge.py` (train/test split, answer key and leakage flags), `drift.py` (shifted test rows and drift kind), `label_noise.py` (flipped or perturbed labels) | Detection rules; it calls `detection.scan` |
 | `key_generation.py`, `entropy_sources.py` | `generate_key`: mixes `os.urandom` (always) with extra entropy sources through HKDF, health-checks physical samples and reports each source. `entropy_sources.py` holds the built-in readers (hardware RNG, microphone, camera, CPU jitter, beacons) | Anything about plans or techniques |
-| `anonymizer.py` | `Anonymizer`, the facade that wires the above together (`scan`, `propose`, `apply`, `apply_many`, `reveal`, `synthesize`, `challenge`), and `AnonymizationResult` | Rules; it only orchestrates |
+| `differential_privacy/` | `budget.py` (`PrivacyBudget`, `Spend`, `compose_budget`: the one place where epsilon and zCDP rho are added and a budget is refused), `domains.py` (public column domains: listed values or bounds and bins, to codes and back), `aggregates.py` (noisy counts, sums and means per group with OpenDP, imported lazily), `mst_synthesis.py` (MST: noisy one-way counts, exponential-mechanism tree, noisy pair counts), `tree_model.py` (consistent non-negative tree and row sampling from noisy counts) | Bounds or domains read from the data; reading tables from files |
+| `anonymizer.py` | `Anonymizer`, the facade that wires the above together (`scan`, `propose`, `apply`, `apply_many`, `reveal`, `synthesize`, `synthesize_private`, `aggregate_private`, `challenge`), and `AnonymizationResult` | Rules; it only orchestrates |
 | `table_files.py` | Read and write CSV or Parquet by extension, with Polars | Anything else |
 | `cli.py` | The `oblitus` command; reads `OBLITUS_SECRET_KEY` | Logic beyond parsing arguments and printing |
 
@@ -191,7 +194,7 @@ flowchart LR
 
 ## Cross-cutting concerns
 
-- **Errors**: `errors.py`. `PlanError` for plans, `SchemaError` for schemas,
+- **Errors**: `errors.py`. `PlanError` for plans, `SchemaError` for schemas, `PrivacyBudgetError` for budgets,
   `TableFormatError` for file types. All inherit from `AnonymizerError`. The CLI turns them
   into exit code 2, and uses exit code 3 when `apply` misses the plan's protection target.
 - **Validation**: plans and schemas are pydantic models validated on load. A plan is also
@@ -212,4 +215,5 @@ flowchart LR
 | A privacy, utility or disclosure metric | `evaluation/` |
 | What the noise explorer sweeps or shows | `DEFAULT_SWEEPS` in `noise_explorer/sweep.py`; `noise_explorer/template.html` |
 | A distribution, pattern or expression function for synthesis | `synthesis/marginals.py`, `synthesis/patterns.py`, `synthesis/expressions.py`, and `docs/synthesis.md` |
+| Differential privacy: a mechanism, its cost, or the budget split | `differential_privacy/`; the cost of every noisy step goes through `compose_budget`; `docs/differential-privacy.md` |
 | A CLI command or flag | `cli.py` and the README command table |
