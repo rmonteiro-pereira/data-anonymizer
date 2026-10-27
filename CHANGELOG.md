@@ -14,18 +14,16 @@
   (`normalize`, `method: index`, `by` the entity) instead of `robust`, or uses `rank` when no
   entity column is found, so the default mall release reaches `anonymized`. `index` rounds to 6
   decimals, and l-diversity skips a sensitive column with a single released value.
-- `normalize` with `robust`, `zscore` or `minmax` and no `by` is reported as a shift and scale
-  under anonymization even with `allow_shape_change`, since that flag only permits a shape
-  change. `docs/protection.md` gains "What the checks cannot catch": small or multi-column
+- `allow_shape_change` no longer hides an ungrouped `robust`, `zscore` or `minmax` rescale
+  from the report, since that flag only permits a shape change. `docs/protection.md` gains "What the checks cannot catch": small or multi-column
   keys, group sizes that survive fresh codes, and business figures without an entity column.
 - **Collusion in a small `OTHER` bucket is documented.** `min_entities` protects against one
   member; two of three members can pool their records, so use privacy fidelity (5) when members
   might collude.
 - **An affine rescale is a problem under anonymization.** `normalize` with `robust`, `zscore` or
-  `minmax` and no `allow_shape_change` now makes the release `at_risk`, naming the inversion
-  (two known values, or one known value plus a true total) and the fix (`normalize` by entity
-  with `allow_shape_change`, or `rank`). Pseudonymization keeps it as a caveat. The default
-  business proposal, which uses `robust`, is therefore `at_risk` until a column is changed.
+  `minmax` and no `by` makes the release `at_risk`, naming the inversion (two known values, or
+  one known value plus a true total) and the fix (`normalize` by entity with
+  `allow_shape_change`, or `rank`). Pseudonymization keeps it as a caveat.
 - `surrogate` never draws a fake equal to a real value of the column; random fakes could
   occasionally repeat a real email from the input.
 - **`OTHER` segments are large enough too.** `scramble_categories` with `min_count` or
