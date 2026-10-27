@@ -21,9 +21,10 @@
   not only a lag of the target itself.
 
 - **Untreated key columns are replaced, not guessed by cut-off.** Under anonymization,
-  `propose` gives every untreated discrete column (text, integer or nearly whole-number decimal
-  with at least 20 distinct values that group rows) a `scramble_categories` action, so nobody can
-  look up their own value. For plans you write, the same column makes the release `at_risk`
+  `propose` gives every untreated text column with at least 20 distinct values that group rows
+  a `scramble_categories` action, so nobody can look up their own value. Whole-number columns
+  are kept, since they may be measurements. For any plan, an untreated text or whole-number
+  column like this makes the release `at_risk`
   whatever its rows per value (the median bound is gone), and so does a pair of such columns
   that is unique only together. A decimal column counts as discrete at 99% whole numbers.
 

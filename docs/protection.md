@@ -42,13 +42,13 @@ The default target is `anonymization`. Free text with personal data always gets
 pseudonymization they are keyed (`keyed: true`), so the same label gets the same code in
 every release.
 
-Under anonymization, the proposal also gives every untreated discrete column (text, integer, or
-decimal that is nearly all whole numbers, with at least 20 distinct values that group rows) a
-`scramble_categories` action with prefix `KEY`. The codes are fresh for every release and keep
-the grouping, so a model can still use the column while nobody can look up their own value. It
-costs numeric meaning for integer measurements such as counts or hours; list such a column in
-the plan or give it another technique to keep it. Decimals with real fractions and timestamps
-are left alone. Pseudonymization proposals are unchanged.
+Under anonymization, the proposal also gives every untreated text column with at least 20
+distinct values that group rows a `scramble_categories` action with prefix `KEY`. The codes are
+fresh for every release and keep the grouping, so a model can still use the column while nobody
+can look up their own value. Whole-number columns are kept, because they may be measurements
+such as counts or hours whose distribution must survive; when one of them groups rows like a
+key, the protection report flags it and the release is `at_risk`. Replace it or list it in the
+plan. Pseudonymization proposals are unchanged.
 
 The proposal picks an entity column: the company column if there is one, otherwise the
 record ID. `date_shift` then moves every date of one entity by the same offset, so the

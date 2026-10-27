@@ -230,14 +230,31 @@ def test_the_proposal_replaces_an_untreated_key_with_fresh_codes():
     assert result.protection.level is ProtectionLevel.ANONYMIZED
 
 
-def test_the_proposal_replaces_both_columns_of_a_composite_key():
+def _composite_key_frame() -> pd.DataFrame:
     first = np.repeat(np.arange(60), 60 * 2)
     second = np.tile(np.repeat(np.arange(60), 2), 60)
-    frame = pd.DataFrame({"left": first, "right": second})
+    return pd.DataFrame({"left": first, "right": second})
+
+
+def test_the_proposal_replaces_both_text_columns_of_a_composite_key():
+    frame = _composite_key_frame().astype(str)
 
     plan = Anonymizer(seed=1).propose(frame)
 
     assert {action.column for action in plan.actions} == {"left", "right"}
+
+
+def test_a_whole_number_composite_key_is_kept_but_reported():
+    engine = Anonymizer(seed=1)
+    frame = _composite_key_frame()
+
+    plan = engine.propose(frame)
+    result = engine.apply(frame, plan)
+
+    # Whole numbers may be measurements whose distribution must survive, so they stay.
+    assert plan.action_for("left") is None
+    assert result.protection.level is ProtectionLevel.AT_RISK
+    assert any("left and right" in problem for problem in result.protection.problems)
 
 
 def test_the_proposal_keeps_measurements_and_pseudonymization_plans_unchanged():
