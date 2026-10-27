@@ -1,11 +1,14 @@
+import shutil
+
 import duckdb
+import narwhals as nw
 import numpy as np
 import pandas as pd
 import polars as pl
 import pytest
 
 from oblitus.anonymizer import Anonymizer
-from oblitus.engines import Engine
+from oblitus.engines import Engine, add_keyed_uniforms, collect, engine_of, to_working_frame
 from oblitus.errors import PlanError
 from oblitus.evaluation import assess_privacy
 from oblitus.evaluation.aligned_sample import align_sample
@@ -96,19 +99,56 @@ def _native(frame: pd.DataFrame, engine: Engine):
         return frame
     if engine is Engine.POLARS:
         return pl.from_pandas(frame)
+    if engine is Engine.SPARK:
+        return _spark_frame(frame)
     connection = duckdb.connect()
     return connection.from_df(frame)
+
+
+_SPARK_SESSION = None
+
+
+def _spark_frame(frame: pd.DataFrame):
+    """A Spark-style DataFrame; sqlframe stands in for PySpark, which needs Java."""
+    global _SPARK_SESSION
+    sqlframe_duckdb = pytest.importorskip("sqlframe.duckdb")
+    if _SPARK_SESSION is None:
+        _SPARK_SESSION = sqlframe_duckdb.DuckDBSession()
+    table = pl.from_pandas(frame)
+    ddl = ", ".join(f"{name} {_SPARK_TYPES[dtype]}" for name, dtype in table.schema.items())
+    return _SPARK_SESSION.createDataFrame(table.rows(), schema=ddl)
+
+
+_SPARK_TYPES = {
+    pl.Int64: "bigint",
+    pl.Float64: "double",
+    pl.String: "string",
+    pl.Boolean: "boolean",
+    pl.Date: "date",
+    pl.Datetime("us"): "timestamp",
+    pl.Datetime("ns"): "timestamp",
+}
+
+
+def _plain_pandas(native) -> pd.DataFrame:
+    if isinstance(native, pd.DataFrame):
+        return native
+    if isinstance(native, pl.DataFrame):
+        return native.to_pandas()
+    if isinstance(native, duckdb.DuckDBPyRelation):
+        return native.df()
+    frame = nw.from_native(native).collect().to_pandas()
+    # A Spark timestamp reads back in the session time zone; the wall-clock time is the value.
+    for name in frame.columns:
+        if isinstance(frame[name].dtype, pd.DatetimeTZDtype):
+            frame[name] = frame[name].dt.tz_localize(None)
+    return frame
 
 
 def _released(engine: Engine, name: str, column: str, params: dict, context) -> pd.DataFrame:
     table = Table.from_native(_native(_sample(), engine), row_key="id")
     BUILTIN_TECHNIQUES[name].apply(table, column, context, params)
-    native = table.to_native()
-    if engine is Engine.DUCKDB:
-        native = native.df()
-    elif engine is Engine.POLARS:
-        native = native.to_pandas()
-    return native.sort_values("id").reset_index(drop=True)
+    return _plain_pandas(table.to_native()).sort_values("id").reset_index(drop=True)
 
 
 @pytest.mark.parametrize(("name", "column", "params"), ENGINE_TECHNIQUES)
@@ -116,7 +156,7 @@ def test_every_engine_releases_the_same_values(context, name, column, params):
     released = {engine: _released(engine, name, column, params, context) for engine in Engine}
 
     reference = released[Engine.POLARS][column]
-    for engine in (Engine.PANDAS, Engine.DUCKDB):
+    for engine in (Engine.PANDAS, Engine.DUCKDB, Engine.SPARK):
         other = released[engine][column]
         if pd.api.types.is_numeric_dtype(reference):
             np.testing.assert_allclose(other, reference, rtol=1e-9, equal_nan=True)
@@ -163,11 +203,7 @@ def test_reordered_values_keep_the_column_and_its_gaps(context, engine):
     (sort_key,) = table.uniforms(context.stream_key("amount", "test"))
 
     table.replace("amount", table.reorder_values("amount", sort_key))
-    native = table.to_native()
-    released = native.df() if engine is Engine.DUCKDB else native
-    if engine is Engine.POLARS:
-        released = released.to_pandas()
-    released = released.sort_values("id").reset_index(drop=True)
+    released = _plain_pandas(table.to_native()).sort_values("id").reset_index(drop=True)
 
     assert released["amount"].isna().tolist() == frame["amount"].isna().tolist()
     assert sorted(released["amount"].dropna()) == sorted(frame["amount"].dropna())
@@ -272,11 +308,7 @@ def _migrated_plan() -> AnonymizationPlan:
 
 
 def _as_pandas(native) -> pd.DataFrame:
-    if isinstance(native, duckdb.DuckDBPyRelation):
-        native = native.df()
-    elif isinstance(native, pl.DataFrame):
-        native = native.to_pandas()
-    return native.sort_values("id").reset_index(drop=True)
+    return _plain_pandas(native).sort_values("id").reset_index(drop=True)
 
 
 def _anonymizer() -> Anonymizer:
@@ -313,7 +345,7 @@ def test_every_engine_releases_the_same_values_for_the_migrated_techniques():
     }
 
     reference = released[Engine.POLARS]
-    for engine in (Engine.PANDAS, Engine.DUCKDB):
+    for engine in (Engine.PANDAS, Engine.DUCKDB, Engine.SPARK):
         for column in ("email", "age", "amount"):
             other = released[engine][column]
             if pd.api.types.is_numeric_dtype(reference[column]):
@@ -339,11 +371,12 @@ def test_a_proposed_plan_runs_and_agrees_between_in_memory_engines(engine, peopl
     assert result.protection.problems == pandas_result.protection.problems
 
 
-def test_a_duckdb_table_needs_the_plans_row_key():
+@pytest.mark.parametrize("engine", [Engine.DUCKDB, Engine.SPARK])
+def test_a_lazy_table_needs_the_plans_row_key(engine):
     plan = _migrated_plan().model_copy(update={"row_key": None})
 
     with pytest.raises(PlanError, match="row_key"):
-        _anonymizer().apply(_native(_ledger(), Engine.DUCKDB), plan)
+        _anonymizer().apply(_native(_ledger(), engine), plan)
 
 
 def test_a_row_key_that_is_not_in_the_table_is_refused():
@@ -378,10 +411,15 @@ def test_the_aligned_sample_picks_the_same_rows_on_every_engine():
         )
         picked[engine] = sorted(sample.original["id"])
 
-    assert picked[Engine.PANDAS] == picked[Engine.POLARS] == picked[Engine.DUCKDB]
+    assert (
+        picked[Engine.PANDAS]
+        == picked[Engine.POLARS]
+        == picked[Engine.DUCKDB]
+        == picked[Engine.SPARK]
+    )
 
 
-@pytest.mark.parametrize("engine", [Engine.POLARS, Engine.DUCKDB])
+@pytest.mark.parametrize("engine", [Engine.POLARS, Engine.DUCKDB, Engine.SPARK])
 def test_scan_finds_the_same_categories_on_every_engine(engine, people):
     expected = [(f.column, f.category) for f in _anonymizer().scan(people)]
 
@@ -402,7 +440,7 @@ def test_privacy_is_measured_the_same_on_every_engine(engine):
     assert report.rows_below_target > 0
 
 
-@pytest.mark.parametrize("engine", [Engine.POLARS, Engine.DUCKDB])
+@pytest.mark.parametrize("engine", [Engine.POLARS, Engine.DUCKDB, Engine.SPARK])
 def test_suppression_blanks_the_same_cells_on_every_engine(engine):
     frame = _ledger()
     expected = enforce_k_anonymity(frame, ["store", "age"], k=3)
@@ -410,12 +448,11 @@ def test_suppression_blanks_the_same_cells_on_every_engine(engine):
     outcome = enforce_k_anonymity(_native(frame, engine), ["store", "age"], k=3)
 
     assert outcome.suppressed_cells == expected.suppressed_cells > 0
-    released = outcome.data.df() if engine is Engine.DUCKDB else outcome.data.to_pandas()
-    released = released.sort_values("id").reset_index(drop=True)
+    released = _plain_pandas(outcome.data).sort_values("id").reset_index(drop=True)
     assert released["age"].isna().tolist() == expected.data["age"].isna().tolist()
 
 
-@pytest.mark.parametrize("engine", [Engine.POLARS, Engine.DUCKDB])
+@pytest.mark.parametrize("engine", [Engine.POLARS, Engine.DUCKDB, Engine.SPARK])
 def test_the_noise_explorer_accepts_any_engine(engine):
     frame = _ledger()
 
@@ -444,7 +481,12 @@ def test_tied_values_get_the_same_result_on_every_engine(context, name, params):
         BUILTIN_TECHNIQUES[name].apply(table, "age", context, params)
         released[engine] = _as_pandas(table.to_native())["age"].tolist()
 
-    assert released[Engine.PANDAS] == released[Engine.POLARS] == released[Engine.DUCKDB]
+    assert (
+        released[Engine.PANDAS]
+        == released[Engine.POLARS]
+        == released[Engine.DUCKDB]
+        == released[Engine.SPARK]
+    )
 
 
 @pytest.mark.parametrize("engine", list(Engine))
@@ -540,3 +582,68 @@ def test_duckdb_columns_with_dots_or_quotes_are_refused_clearly(name):
 
     with pytest.raises(ValueError, match="dots or double quotes"):
         Table.from_native(relation)
+
+
+# Spark: the same engine layer, tested on sqlframe because Java is not available everywhere.
+
+
+def _java_is_available() -> bool:
+    return shutil.which("java") is not None
+
+
+def test_engine_of_names_spark_frames():
+    assert engine_of(_native(_ledger(), Engine.SPARK)) is Engine.SPARK
+    assert Engine.SPARK.is_lazy
+
+
+def test_keyed_uniforms_on_spark_equal_the_python_definition_for_every_kind_of_key():
+    frame = pd.DataFrame({"id": [1, 2, 3, 4], "text": ["a", "é", None, "person@example.com"]})
+    names = ["u0", "u1", "u2", "u3"]
+    spark_frame, _ = to_working_frame(_spark_frame(frame))
+    in_memory, _ = to_working_frame(frame)
+    for source in ("id", "text"):
+        expected = add_keyed_uniforms(
+            in_memory, Engine.POLARS, key=b"parity-key", source=source, names=names
+        )
+        on_spark = add_keyed_uniforms(
+            spark_frame, Engine.SPARK, key=b"parity-key", source=source, names=names
+        )
+
+        released = collect(on_spark).to_pandas().sort_values("id").reset_index(drop=True)
+
+        for name in names:
+            np.testing.assert_array_equal(released[name], expected.get_column(name).to_numpy())
+
+
+def test_a_spark_table_with_k_anonymity_enforced_matches_duckdb():
+    plan = _migrated_plan().model_copy(update={"enforce_k_anonymity": True, "k_target": 5})
+
+    spark = _anonymizer().apply(_native(_ledger(), Engine.SPARK), plan)
+    duck = _anonymizer().apply(_native(_ledger(), Engine.DUCKDB), plan)
+
+    assert spark.suppressed_cells == duck.suppressed_cells
+    assert spark.protection.level == duck.protection.level
+    assert spark.privacy_after == duck.privacy_after
+
+
+def test_spark_columns_with_dots_or_backticks_are_refused_clearly():
+    renamed = _spark_frame(pd.DataFrame({"id": [1, 2]})).withColumnRenamed("id", "i.d")
+
+    with pytest.raises(ValueError, match="dots or backticks"):
+        Table.from_native(renamed)
+
+
+@pytest.mark.skipif(not _java_is_available(), reason="real PySpark needs Java")
+def test_real_pyspark_releases_the_same_values_as_polars(context):
+    pyspark_sql = pytest.importorskip("pyspark.sql")
+    session = pyspark_sql.SparkSession.builder.master("local[1]").getOrCreate()
+    frame = _ledger()
+    on_spark = Table.from_native(session.createDataFrame(frame), row_key="id")
+    in_memory = Table.from_native(pl.from_pandas(frame), row_key="id")
+
+    for table in (on_spark, in_memory):
+        BUILTIN_TECHNIQUES["gaussian_noise"].apply(table, "amount", context, {})
+    spark_values = _plain_pandas(on_spark.to_native()).sort_values("id")
+    polars_values = _plain_pandas(in_memory.to_native()).sort_values("id")
+
+    np.testing.assert_allclose(spark_values["amount"], polars_values["amount"], rtol=1e-9)

@@ -13,7 +13,7 @@ from typing import Any
 
 import narwhals as nw
 
-from oblitus.engines import Engine, WorkingFrame, collect, lookup_frame
+from oblitus.engines import WorkingFrame, collect, engine_of_frame, lookup_frame
 
 # Separates the parts of a joined key; it does not occur in ordinary text.
 _PART_SEPARATOR = "\x1f"
@@ -59,7 +59,7 @@ def overwrite_by_key(
         columns[new_names[column]] = values
         dtypes[new_names[column]] = dtype
 
-    engine = Engine.DUCKDB if isinstance(frame, nw.LazyFrame) else Engine.POLARS
+    engine = engine_of_frame(frame)
     lookup = lookup_frame(frame, engine, columns, dtypes)
     lookup = lookup.with_columns(_joined_key(part_names).alias(_JOIN_KEY)).drop(*part_names)
     keyed = frame.with_columns(_joined_key(key_columns).alias(_JOIN_KEY))
