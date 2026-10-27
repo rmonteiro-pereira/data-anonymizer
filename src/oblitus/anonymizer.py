@@ -47,6 +47,7 @@ from oblitus.synthesis import (
 from oblitus.synthesis.rare_values import min_records_for
 from oblitus.table import ROW_KEY_COLUMN, Table, row_key_problem
 from oblitus.techniques import BUILTIN_TECHNIQUES, Technique, TechniqueContext
+from oblitus.token_vault import TokenVault
 from oblitus.untreated_columns import treat_untreated_columns
 
 # Shorter keys can be guessed, and every pseudonym and encryption key derives from it.
@@ -144,25 +145,60 @@ class Anonymizer:
             plan = plan.model_copy(update={"row_key": None})
         return plan
 
-    def apply(self, frame: Any, plan: AnonymizationPlan) -> AnonymizationResult:
+    def apply(
+        self, frame: Any, plan: AnonymizationPlan, *, vault: TokenVault | None = None
+    ) -> AnonymizationResult:
         """Run a plan on a pandas, Polars or DuckDB table and measure the result.
 
         The released table comes back as the same kind of table. An anonymization plan
         that names a linking technique is refused before anything runs, and runs under
         a throwaway key so nothing it produces can be re-linked later. A DuckDB table
-        needs the plan's `row_key`, because its row order is not fixed.
+        needs the plan's `row_key`, because its row order is not fixed. A plan that
+        tokenizes needs the `vault` that will hold the tokens.
 
         Privacy is measured on the whole table by the engine that holds it. Utility and
         the value-by-value protection checks run on at most `MAX_SAMPLE_ROWS` rows,
         the same rows of the original and the released table.
         """
         self.validate(frame, plan)
+        context = self._context(throwaway_key=_is_anonymization(plan), vault=vault)
+        return self._apply_validated(frame, plan, context)
+
+    def apply_many(
+        self,
+        frames: Mapping[str, Any],
+        plans: Mapping[str, AnonymizationPlan],
+        *,
+        vault: TokenVault | None = None,
+    ) -> dict[str, AnonymizationResult]:
+        """Run one plan per table on several related tables, so people stay consistent.
+
+        `frames` and `plans` are keyed by the same table names. Every plan is checked
+        against its table before any table runs. Pseudonyms come from the secret key, date
+        shifts from the key and the entity column (give date columns of different tables the
+        same `stream`), and tokens from the shared `vault`, so the same person gets the same
+        stand-ins in every table. Plans that anonymize share one throwaway key across the
+        call: codes agree between the tables of this release and cannot be linked to any other
+        release. Protection is assessed on each table on its own.
+        """
+        self._validate_many(frames, plans)
+        anonymizing = self._context(throwaway_key=True, vault=vault)
+        pseudonymizing = self._context(vault=vault)
+        results: dict[str, AnonymizationResult] = {}
+        for name, frame in frames.items():
+            plan = plans[name]
+            context = anonymizing if _is_anonymization(plan) else pseudonymizing
+            results[name] = self._apply_validated(frame, plan, context)
+        return results
+
+    def _apply_validated(
+        self, frame: Any, plan: AnonymizationPlan, context: TechniqueContext
+    ) -> AnonymizationResult:
         engine = engine_of(frame)
         if engine.is_lazy and plan.row_key is None:
             raise PlanError(
                 "a DuckDB table needs the plan's row_key: name a column that identifies each row"
             )
-        context = self._context(throwaway_key=plan.protection is Protection.ANONYMIZATION)
         table = _table_for(frame, plan)
         original = table.original_frame()
         self._run_actions(table, plan, context)
@@ -192,15 +228,17 @@ class Anonymizer:
             ),
         )
 
-    def reveal(self, frame: Any, plan: AnonymizationPlan) -> Any:
+    def reveal(
+        self, frame: Any, plan: AnonymizationPlan, *, vault: TokenVault | None = None
+    ) -> Any:
         """Undo the plan's reversible actions on an anonymized table.
 
-        Needs the secret key the table was anonymized with. Columns whose technique is
-        one-way are returned unchanged, and recovered values come back as text. The
-        result is the same kind of table as the input.
+        Needs the secret key the table was anonymized with, and the `vault` when the plan
+        tokenizes. Columns whose technique is one-way are returned unchanged, and recovered
+        values come back as text. The result is the same kind of table as the input.
         """
         self.validate(frame, plan)
-        context = self._context()
+        context = self._context(vault=vault)
         table = _table_for(frame, plan)
         for action in plan.actions:
             technique = self._techniques[action.technique]
@@ -223,6 +261,24 @@ class Anonymizer:
         problems += _missing_listed_columns(columns, plan)
         if not problems and plan.protection is Protection.ANONYMIZATION:
             problems = linking_actions(plan, self._techniques)
+        if problems:
+            raise PlanError("; ".join(problems))
+
+    def _validate_many(
+        self, frames: Mapping[str, Any], plans: Mapping[str, AnonymizationPlan]
+    ) -> None:
+        if set(frames) != set(plans):
+            only_frames = sorted(set(frames) - set(plans))
+            only_plans = sorted(set(plans) - set(frames))
+            raise PlanError(
+                f"tables without a plan: {only_frames}; plans without a table: {only_plans}"
+            )
+        problems: list[str] = []
+        for name, frame in frames.items():
+            try:
+                self.validate(frame, plans[name])
+            except PlanError as error:
+                problems.append(f"table {name!r}: {error}")
         if problems:
             raise PlanError("; ".join(problems))
 
@@ -303,12 +359,15 @@ class Anonymizer:
         rng = np.random.default_rng(self._seed)
         return build_challenge(schema, rows, rng=rng, surrogates=SurrogateFactory(self._locale))
 
-    def _context(self, *, throwaway_key: bool = False) -> TechniqueContext:
+    def _context(
+        self, *, throwaway_key: bool = False, vault: TokenVault | None = None
+    ) -> TechniqueContext:
         secret_key = secrets.token_bytes(32) if throwaway_key else self._secret_key
         return TechniqueContext(
             secret_key=secret_key,
             surrogates=SurrogateFactory(self._locale),
             randomness_key=self._randomness_key,
+            vault=vault,
         )
 
     def _privacy(self, frame: Any, plan: AnonymizationPlan) -> PrivacyReport:
@@ -318,6 +377,10 @@ class Anonymizer:
             plan.sensitive_attributes,
             k_target=plan.k_target,
         )
+
+
+def _is_anonymization(plan: AnonymizationPlan) -> bool:
+    return plan.protection is Protection.ANONYMIZATION
 
 
 def _user_data(

@@ -97,6 +97,16 @@ the proposal falls back:
 - pseudonymization: `keyed_hash` for identifiers, and `keep` with "choose a technique by
   hand" for everything else.
 
+## Tokenization vaults
+
+`tokenize` is pseudonymization: the vault maps each token to its value, so anyone who can
+read the vault can re-link every record. Treat the vault as you treat the original data:
+keep it away from the recipient of the released table, restrict who may read it, and delete it
+when no one needs to reveal tokens any more, which cuts the link. The tokens themselves
+carry no information about their values. See
+[techniques.md](techniques.md#tokenization-and-its-vault). `oblitus apply`, `reveal` and
+`apply-many` take `--vault PATH`, a SQLite file.
+
 ## The protection checks
 
 `result.protection` holds the outcome:
@@ -179,6 +189,39 @@ three things:
 
 `oblitus apply` and `oblitus reveal` take `--row-key COLUMN`, which overrides the
 plan's `row_key`.
+
+## Several tables in one call
+
+`Anonymizer.apply_many(frames, plans, vault=None)` takes related tables and one plan per table,
+both keyed by table name, and returns one `AnonymizationResult` per table. One plan per table
+keeps each plan an ordinary reviewable file, proposed for its own columns. The tables share
+what links a person:
+
+- **Pseudonyms** come from the secret key, so the same value gives the same `keyed_hash` or
+  consistent `surrogate` in every table.
+- **Date offsets** come from the key and the entity column. List `date_shift` with the same
+  `by` column (the person's ID), `max_days` and `stream` in each table's plan, and one person's
+  dates move by the same number of days in every table, so intervals between events survive.
+  Without `stream`, columns with the same name already agree.
+- **Tokens** come from the one `vault`, so a value has one token in every table.
+- **Anonymization** runs every anonymizing plan of the call under one throwaway key. Category
+  codes and random fakes agree between the tables of this release, and cannot be joined to
+  any other release.
+
+Every plan is validated against its table before the first table runs, and a refused plan
+names its table. Protection is assessed per table on its own, so a table's level says nothing
+about what its columns reveal when joined to another table of the same release. On the command
+line, `oblitus apply-many` reads a manifest:
+
+```json
+{"tables": {
+  "customers": {"input": "customers.csv", "output": "out/customers.csv", "plan": "customers_plan.json"},
+  "orders": {"input": "orders.csv", "output": "out/orders.csv"}
+}}
+```
+
+Relative paths are read from the manifest's folder, and a table without a `plan` gets a
+proposed one. The exit code is 3 when any table misses its protection target.
 
 ## What keyed noise cannot hide
 

@@ -20,6 +20,7 @@ from oblitus.techniques import (
     noise,
     perturbation,
     rescaling,
+    tokenization,
 )
 from oblitus.techniques import pseudonymization as pseudo
 from oblitus.techniques.context import TechniqueContext
@@ -270,6 +271,17 @@ _BUILTINS = (
         encryption.format_preserving_encrypt,
         "Reversible NIST FF1 encryption that keeps length, format and separators.",
         inverse=encryption.format_preserving_decrypt,
+        replaces_identifiers=True,
+    ),
+    Technique(
+        "tokenize",
+        _PSEUDO,
+        _RELATIONSHIPS,
+        _ALL_KINDS,
+        tokenization.tokenize,
+        "Replace with a random token; the mapping lives in a vault you pass in.",
+        inverse=tokenization.detokenize,
+        linkable=True,
         replaces_identifiers=True,
     ),
     Technique(

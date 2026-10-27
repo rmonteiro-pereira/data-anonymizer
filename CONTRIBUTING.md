@@ -50,7 +50,8 @@ The formatter decides layout: `ruff format`, at 100 columns (`pyproject.toml`). 
 - **Name modules after domain concepts**, such as `local_suppression.py` or
   `identifying_columns.py`, never `utils`, `helpers` or `manager`.
 - **Keep decisions pure and I/O at the edges.** Only `table_files.py`, `noise_explorer/page.py`,
-  `cli.py`, and the JSON `save` and `load` of `plan.py` and `synthesis/schema.py` touch files. The library never reads environment variables or configures
+  `cli.py`, `token_vault.py` (the SQLite vault), `table_manifest.py`, and the JSON `save` and
+  `load` of `plan.py` and `synthesis/schema.py` touch files. The library never reads environment variables or configures
   logging; the CLI does.
 - **Validate at the boundary.** Plans and schemas are pydantic models validated on load, and a
   plan is checked against the table before anything runs. Inside, trust the typed objects.

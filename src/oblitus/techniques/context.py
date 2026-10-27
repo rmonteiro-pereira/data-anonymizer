@@ -8,6 +8,7 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
 from oblitus.surrogates import SurrogateFactory
+from oblitus.token_vault import TokenVault
 
 
 @dataclass(frozen=True, slots=True)
@@ -18,11 +19,14 @@ class TechniqueContext:
     impossible to reverse for anyone without the key. `randomness_key` drives every
     random draw: noise per row comes from keyed hashes of the row key, so a run is
     reproducible on any engine and nobody without the key can recompute the noise.
+    `vault` is where tokenization keeps its token and value pairs; it is None unless the
+    caller passes one.
     """
 
     secret_key: bytes
     surrogates: SurrogateFactory
     randomness_key: bytes
+    vault: TokenVault | None = None
 
     def stream_key(self, column: str, purpose: str) -> bytes:
         """Key the random numbers one technique draws for one column.

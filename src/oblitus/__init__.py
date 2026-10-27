@@ -17,6 +17,7 @@ from oblitus.techniques import (
     TechniqueContext,
     TechniqueFamily,
 )
+from oblitus.token_vault import MemoryVault, SqliteVault, TokenVault
 
 logging.getLogger(__name__).addHandler(logging.NullHandler())
 
@@ -33,6 +34,7 @@ __all__ = [
     "DataCategory",
     "DatasetSchema",
     "Fidelity",
+    "MemoryVault",
     "PlanError",
     "PrivacyReport",
     "Protection",
@@ -40,11 +42,13 @@ __all__ = [
     "ProtectionLevel",
     "SchemaError",
     "Sensitivity",
+    "SqliteVault",
     "StatisticalEffect",
     "TableFormatError",
     "Technique",
     "TechniqueContext",
     "TechniqueFamily",
+    "TokenVault",
     "UtilityReport",
     "infer_schema",
 ]

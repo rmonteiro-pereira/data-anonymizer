@@ -57,9 +57,6 @@ Planned, not yet implemented:
   - An optional `python-stdnum` extra for more countries, and `phonenumbers` for
     international phones.
   - Passport MRZ, crypto wallet addresses, and confidence calibrated on a labelled benchmark.
-- **Tokenization with a vault**: random tokens with the mapping kept in a separate store.
-- **Multi-table consistency**: keep pseudonyms and date offsets consistent across several
-  tables in one call.
 - **Stronger anonymization**:
   - Mondrian multidimensional generalization;
   - generalization hierarchies (postal code → region → state);
@@ -187,8 +184,9 @@ locale for fake values, such as `pt_BR`; default `en_US`). Tables can be `.csv` 
 |---|---|
 | `oblitus scan INPUT [--sample-size N]` | Prints each column's category, sensitivity, confidence and evidence |
 | `oblitus propose INPUT [--protection P] [--fidelity F] [-o PLAN]` | Writes a plan as JSON (stdout without `-o`) |
-| `oblitus apply INPUT -o OUTPUT [--plan PLAN] [--protection P] [--fidelity F] [--report REPORT] [--row-key COLUMN]` | Applies a plan, or proposes one first. Prints the protection level reached. `--report` writes privacy, utility and protection results as JSON. `--row-key` overrides the plan's `row_key` |
-| `oblitus reveal INPUT --plan PLAN -o OUTPUT [--row-key COLUMN]` | Decrypts the columns the plan encrypted and leaves one-way columns as they are |
+| `oblitus apply INPUT -o OUTPUT [--plan PLAN] [--protection P] [--fidelity F] [--report REPORT] [--row-key COLUMN] [--vault PATH]` | Applies a plan, or proposes one first. Prints the protection level reached. `--report` writes privacy, utility and protection results as JSON. `--row-key` overrides the plan's `row_key`. `--vault` is the SQLite file that holds the tokens of a `tokenize` column; it is as sensitive as the original data |
+| `oblitus apply-many MANIFEST [--protection P] [--fidelity F] [--report REPORT] [--vault PATH]` | Applies a plan to each related table listed in a JSON manifest, so one person gets the same pseudonym, token and date offset in every table. See [docs/protection.md](docs/protection.md#several-tables-in-one-call) |
+| `oblitus reveal INPUT --plan PLAN -o OUTPUT [--row-key COLUMN] [--vault PATH]` | Decrypts the columns the plan encrypted, detokenizes those it tokenized (with `--vault`), and leaves one-way columns as they are |
 | `oblitus explore-noise INPUT --column NAME -o PAGE.html [--band SD] [--max-rows N]` | Writes the interactive noise explorer for one numeric column. Columns longer than `N` values (default 200,000) are explored on a random sample |
 | `oblitus infer-schema INPUT [--fidelity F] [-o SCHEMA]` | Learns a generation schema from a table |
 | `oblitus synthesize -o OUTPUT [--rows N] [--schema SCHEMA] [--reference INPUT] [--fidelity F]` | Generates a synthetic table |

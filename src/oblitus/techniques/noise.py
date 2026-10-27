@@ -93,15 +93,20 @@ def date_shift(
     *,
     max_days: int = 30,
     by: str | None = None,
+    stream: str | None = None,
 ) -> nw.Expr:
     """Move each date by a random whole number of days between -max_days and +max_days.
 
     With `by`, every row of the same entity (a person, a store) moves by the same
     offset. Without it, each row gets its own offset, and averaging the many rows of
     one person recovers their true date within days.
+
+    The offsets are keyed on the column's name, so same-named date columns of different
+    tables already agree. Give `stream` a name to replace it: date columns of any names
+    that share a `stream`, `by` values and `max_days` move each entity by the same offset.
     """
     dates = as_datetime_expression(table, column)
-    (uniform,) = table.uniforms(context.stream_key(column, "date_shift"), by=by)
+    (uniform,) = table.uniforms(context.stream_key(stream or column, "date_shift"), by=by)
     offsets_possible = 2 * max_days + 1
     offset = (uniform * offsets_possible).floor().cast(nw.Int64) - max_days
     return shift_days(dates, offset, range(-max_days, max_days + 1))

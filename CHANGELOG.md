@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+- **Tokenization with a vault.** The `tokenize` technique replaces values with random tokens
+  (optionally keeping length and format, or with a prefix) and keeps the mapping in a vault you
+  pass to `apply` and `reveal`. `MemoryVault` and the SQLite-backed `SqliteVault` are built in,
+  and `TokenVault` is the interface for your own. The CLI takes `--vault PATH`. It is
+  pseudonymization, so anonymization plans refuse it.
+- **Several tables in one call.** `Anonymizer.apply_many` and `oblitus apply-many MANIFEST`
+  protect related tables together: the same person gets the same pseudonym, token and date
+  offset in every table, and anonymizing plans share one throwaway key for the call. Protection
+  is assessed per table. `date_shift` takes a `stream` name so date columns of different names
+  share per-entity offsets.
+
 ## 0.3.0
 
 - **Renamed to oblitus.** The package is `oblitus` on PyPI (`pip install oblitus`), the import

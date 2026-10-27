@@ -10,6 +10,7 @@ import json
 import os
 import sys
 from collections.abc import Sequence
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import asdict
 from pathlib import Path
 
@@ -23,6 +24,8 @@ from oblitus.plan import AnonymizationPlan, Fidelity, Protection
 from oblitus.synthesis import DatasetSchema, infer_schema
 from oblitus.synthesis.rare_values import min_records_for
 from oblitus.table_files import read_table, write_table
+from oblitus.table_manifest import TableManifest
+from oblitus.token_vault import SqliteVault, TokenVault
 
 SECRET_KEY_VARIABLE = "OBLITUS_SECRET_KEY"
 
@@ -44,7 +47,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             f"error: reveal needs {SECRET_KEY_VARIABLE}, the key used to anonymize", file=sys.stderr
         )
         return 2
-    if secret_key is None and arguments.command == "apply":
+    if secret_key is None and arguments.command in ("apply", "apply-many"):
         print(
             f"warning: {SECRET_KEY_VARIABLE} is not set; "
             "pseudonymization plans will give different pseudonyms on every run",
@@ -99,13 +102,25 @@ def _build_parser() -> argparse.ArgumentParser:
     _add_protection(apply_parser)
     apply_parser.add_argument("--report", type=Path, help="write privacy and utility metrics")
     _add_row_key(apply_parser)
+    _add_vault(apply_parser)
     apply_parser.set_defaults(handler=_apply)
+
+    many_parser = commands.add_parser(
+        "apply-many", help="anonymize several related tables so the same person stays consistent"
+    )
+    many_parser.add_argument("manifest", type=Path, help="JSON file listing each table")
+    _add_fidelity(many_parser)
+    _add_protection(many_parser)
+    many_parser.add_argument("--report", type=Path, help="write one metrics report per table")
+    _add_vault(many_parser)
+    many_parser.set_defaults(handler=_apply_many)
 
     reveal_parser = commands.add_parser("reveal", help="undo reversible techniques")
     reveal_parser.add_argument("input", type=Path)
     reveal_parser.add_argument("--plan", type=Path, required=True)
     reveal_parser.add_argument("-o", "--output", type=Path, required=True)
     _add_row_key(reveal_parser)
+    _add_vault(reveal_parser)
     reveal_parser.set_defaults(handler=_reveal)
 
     schema_parser = commands.add_parser("infer-schema", help="learn a schema from a table")
@@ -180,6 +195,21 @@ def _add_row_key(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_vault(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--vault",
+        type=Path,
+        metavar="PATH",
+        help="SQLite file holding tokens and their values; as sensitive as the original data",
+    )
+
+
+def _open_vault(path: Path | None) -> AbstractContextManager[TokenVault | None]:
+    if path is None:
+        return nullcontext(None)
+    return SqliteVault(path)
+
+
 def _with_row_key(plan: AnonymizationPlan, row_key: str | None) -> AnonymizationPlan:
     if row_key is None:
         return plan
@@ -214,36 +244,74 @@ def _apply(anonymizer: Anonymizer, arguments: argparse.Namespace) -> None:
             frame, fidelity=arguments.fidelity, protection=arguments.protection
         )
 
-    result = anonymizer.apply(frame, _with_row_key(plan, arguments.row_key))
+    with _open_vault(arguments.vault) as vault:
+        result = anonymizer.apply(frame, _with_row_key(plan, arguments.row_key), vault=vault)
     write_table(result.data, arguments.output)
     if arguments.report is not None:
-        arguments.report.write_text(_report_json(result) + "\n", encoding="utf-8")
+        report = json.dumps(_report(result), indent=2)
+        arguments.report.write_text(report + "\n", encoding="utf-8")
+    _print_outcome(result, arguments.output)
+    if not result.protection.reached:
+        raise ProtectionNotReachedError(f"the {plan.protection.value} target was not reached")
+
+
+def _apply_many(anonymizer: Anonymizer, arguments: argparse.Namespace) -> None:
+    manifest = TableManifest.load(arguments.manifest)
+    frames = {name: read_table(table.input) for name, table in manifest.tables.items()}
+    plans = {
+        name: _plan_for(anonymizer, frames[name], table.plan, arguments)
+        for name, table in manifest.tables.items()
+    }
+    with _open_vault(arguments.vault) as vault:
+        results = anonymizer.apply_many(frames, plans, vault=vault)
+    for name, result in results.items():
+        output = manifest.tables[name].output
+        write_table(result.data, output)
+        print(f"{name}: ", end="")
+        _print_outcome(result, output)
+    if arguments.report is not None:
+        reports = {name: _report(result) for name, result in results.items()}
+        arguments.report.write_text(json.dumps(reports, indent=2) + "\n", encoding="utf-8")
+    missed = [name for name, result in results.items() if not result.protection.reached]
+    if missed:
+        raise ProtectionNotReachedError(
+            f"the protection target was not reached for: {', '.join(missed)}"
+        )
+
+
+def _plan_for(
+    anonymizer: Anonymizer, frame, plan_path: Path | None, arguments: argparse.Namespace
+) -> AnonymizationPlan:
+    if plan_path is not None:
+        return AnonymizationPlan.load(plan_path)
+    return anonymizer.propose(frame, fidelity=arguments.fidelity, protection=arguments.protection)
+
+
+def _print_outcome(result: AnonymizationResult, output: Path) -> None:
     print(
-        f"wrote {len(result.data)} rows to {arguments.output}; "
+        f"wrote {len(result.data)} rows to {output}; "
         f"k-anonymity {result.privacy_before.k_anonymity} -> {result.privacy_after.k_anonymity}; "
         f"result is {result.protection.level.value}"
     )
     for problem in result.protection.problems:
         print(f"  - {problem}")
-    if not result.protection.reached:
-        raise ProtectionNotReachedError(f"the {plan.protection.value} target was not reached")
 
 
-def _report_json(result: AnonymizationResult) -> str:
-    report = {
+def _report(result: AnonymizationResult) -> dict:
+    return {
         "plan": result.plan.model_dump(mode="json"),
         "privacy_before": asdict(result.privacy_before),
         "privacy_after": asdict(result.privacy_after),
         "protection": asdict(result.protection),
         "utility": asdict(result.utility),
     }
-    return json.dumps(report, indent=2)
 
 
 def _reveal(anonymizer: Anonymizer, arguments: argparse.Namespace) -> None:
     frame = read_table(arguments.input)
     plan = _with_row_key(AnonymizationPlan.load(arguments.plan), arguments.row_key)
-    revealed = anonymizer.reveal(frame, plan)
+    with _open_vault(arguments.vault) as vault:
+        revealed = anonymizer.reveal(frame, plan, vault=vault)
     write_table(revealed, arguments.output)
     print(f"wrote {len(revealed)} rows to {arguments.output}")
 

@@ -43,6 +43,7 @@ EXPRESSION_TECHNIQUES = [
     ("multiplicative_noise", "amount", {"relative_scale": 0.2}),
     ("date_shift", "when", {"max_days": 10}),
     ("date_shift", "when", {"max_days": 10, "by": "store"}),
+    ("date_shift", "when", {"max_days": 10, "by": "store", "stream": "visits"}),
     ("shuffle", "amount", {}),
     ("rank_swap", "amount", {"max_distance_percent": 10.0}),
     ("randomized_response", "store", {"keep_probability": 0.5}),
