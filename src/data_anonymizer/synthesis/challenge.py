@@ -23,7 +23,14 @@ from data_anonymizer.synthesis.generator import generate_with_replay
 from data_anonymizer.synthesis.label_noise import corrupt_labels
 from data_anonymizer.synthesis.panel import Level
 from data_anonymizer.synthesis.panel_generation import SchemaSwitch
-from data_anonymizer.synthesis.schema import ColumnSchema, DatasetSchema, Question, Split, Task
+from data_anonymizer.synthesis.schema import (
+    ColumnSchema,
+    DatasetSchema,
+    Question,
+    Split,
+    Task,
+    columns_feeding,
+)
 from data_anonymizer.synthesis.time_series import describe_time_series
 from data_anonymizer.synthesis.treatment_effects import causal_answer
 from data_anonymizer.taxonomy import ColumnKind
@@ -362,20 +369,7 @@ def _with_float_nulls(frame: pd.DataFrame) -> pd.DataFrame:
 
 def _ancestors(schema: DatasetSchema, name: str) -> set[str]:
     """Return the columns that feed a column, in the same period or through `lag`."""
-    found: set[str] = set()
-    pending = list(_feeding_columns(schema, name))
-    while pending:
-        current = pending.pop()
-        if current not in found:
-            found.add(current)
-            pending.extend(_feeding_columns(schema, current))
-    return found
-
-
-def _feeding_columns(schema: DatasetSchema, name: str) -> set[str]:
-    column = schema.column(name)
-    names = {other.name for other in schema.columns}
-    return (column.dependencies() | column.lagged_dependencies()) & names
+    return columns_feeding({column.name: column for column in schema.columns}, name)
 
 
 def _feature_roles(schema: DatasetSchema, question: Question) -> dict[str, list[str]]:

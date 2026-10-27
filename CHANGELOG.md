@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **A random split refuses lags of hidden copies of the target.** A published column that reads
+  a lag of any column depending on the target, directly or through other columns, is refused,
+  not only a lag of the target itself.
+
 - **Entity keys are found by how they link rows.** An untreated text, integer or whole-number
   float column with at least 50 distinct values and a median of 10 or fewer rows per value now
   makes the release `at_risk`. The old cut-off of 1,000 distinct values let 999 accounts through.
