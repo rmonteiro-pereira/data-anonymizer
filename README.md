@@ -46,13 +46,6 @@ and how far each record moved](https://raw.githubusercontent.com/rmonteiro-perei
 
 Planned, not yet implemented:
 
-- **Detection.**
-  - An optional named-entity extra for names and addresses inside text: GLiNER with
-    `urchade/gliner_multi_pii-v1` or a Portuguese PII model, or Presidio.
-  - Names and cities recognized from their values, using IBGE name and municipality lists.
-  - An optional `python-stdnum` extra for more countries, and `phonenumbers` for
-    international phones.
-  - Passport MRZ, crypto wallet addresses, and confidence calibrated on a labelled benchmark.
 - **Differential privacy**: AIM synthesis. Its reference package pulls in PyTorch and JAX,
   learns column domains from the data and keeps its budget accounting inside the library (see
   [docs/differential-privacy.md](https://github.com/rmonteiro-pereira/oblitus/blob/main/docs/differential-privacy.md#limits)).
@@ -74,6 +67,10 @@ pip install "oblitus[audio]" "oblitus[camera]"
 pip install "oblitus[opendp]"
 # with attack-based risk checks (Anonymeter):
 pip install "oblitus[anonymeter]"
+# more countries' identifiers and international phone numbers:
+pip install "oblitus[identifiers]"
+# names and addresses inside free text, with a named-entity model:
+pip install "oblitus[ner]"
 ```
 
 `uv add oblitus` works too. The package imports as `oblitus` and installs the `oblitus`

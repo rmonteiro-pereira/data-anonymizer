@@ -42,6 +42,7 @@ class DataCategory(StrEnum):
     NATIONAL_ID = "national_id"
     IMEI = "imei"
     MAC_ADDRESS = "mac_address"
+    CRYPTO_WALLET = "crypto_wallet"
     ORGANIZATION = "organization"
     RECORD_ID = "record_id"
     FREE_TEXT_WITH_PII = "free_text_with_pii"
@@ -102,6 +103,7 @@ _DIRECT_IDENTIFIERS = {
     DataCategory.NATIONAL_ID,
     DataCategory.IMEI,
     DataCategory.MAC_ADDRESS,
+    DataCategory.CRYPTO_WALLET,
     DataCategory.ORGANIZATION,
     DataCategory.RECORD_ID,
     DataCategory.FREE_TEXT_WITH_PII,

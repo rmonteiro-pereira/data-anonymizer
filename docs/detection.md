@@ -4,14 +4,14 @@
 - a storage kind;
 - a `DataCategory`;
 - a `Sensitivity`;
-- a confidence between 0 and 1;
+- a confidence between 0 and 1, calibrated on a labelled benchmark (see below);
 - the evidence, in one sentence.
 
 ## Categories
 
 | Sensitivity | Meaning | Categories |
 |---|---|---|
-| direct identifier | Points at one person, or one company, on its own | email, phone, person_name, cpf, cnpj, ssn, credit_card, iban, ip_address, street_address, cnh, nis, health_card, voter_id, vehicle_registration, vehicle_plate, pix_key, invoice_key, national_id, imei, mac_address, organization, record_id, free_text_with_pii |
+| direct identifier | Points at one person, or one company, on its own | email, phone, person_name, cpf, cnpj, ssn, credit_card, iban, ip_address, street_address, cnh, nis, health_card, voter_id, vehicle_registration, vehicle_plate, pix_key, invoice_key, national_id, imei, mac_address, crypto_wallet, organization, record_id, free_text_with_pii |
 | quasi-identifier | Identifies in combination | url, postal_code, city, date_of_birth, age, gender, geo_coordinate, nationality, marital_status, business_segment, floor_area |
 | sensitive | What an attacker wants to learn | income, health, special_category (race, religion, politics, union, sexual orientation, biometric, genetic), business_revenue, rent |
 | non-sensitive | Nothing found | generic_numeric, generic_category, generic_datetime, generic_text |
@@ -48,12 +48,16 @@ person under the LGPD.
 | German tax ID (Steuer-IdNr) | Digit repetition rule and ISO 7064 MOD 11,10 |
 | UK National Insurance number | Allowed prefixes and an A–D suffix |
 | Italian codice fiscale | Check letter |
+| Passport MRZ | Two lines of 44 characters (TD3), with the ICAO 9303 check digits of the passport number, birth date, expiry date, personal number and the whole line. The lines may be joined or split by a line break |
+| Bitcoin address | Base58check (starts 1 or 3, double SHA-256 checksum) or bech32 and bech32m (`bc1...`, polymod checksum; one case only) |
+| Ethereum address | `0x` and 40 hex digits. Mixed-case addresses must pass the EIP-55 checksum; all-lowercase or all-uppercase ones carry none and pass on shape |
+| City | The value is one of the 5,570 IBGE municipality names (about 5,300 distinct), ignoring case and accents. Not searched for in free text |
 | Email, URL | Format |
 
 IBAN, DNI/NIE, UK National Insurance, codice fiscale, alphanumeric CNPJ and vehicle plates are matched in upper and lower case.
 
-These have no value check and are found by column name only: street addresses, cities,
-RG and passport numbers, age, gender, coordinates, income, health, special categories,
+These have no value check and are found by column name only: street addresses, cities
+outside Brazil, RG and passport numbers, age, gender, coordinates, income, health, special categories,
 nationality, marital status and the business figures (segment, revenue, rent, floor
 area). Organizations are found by name only. Person names are found by name, and a
 column named after a person (`customer`, `titular`, `owner`) also needs values shaped
@@ -124,3 +128,53 @@ text. It raises `TableFormatError` for duplicate column names and `ValueError` f
 `sample_size` below 1.
 
 Findings below 0.6 confidence get "please review" in the proposed plan.
+
+## Names and cities from their values
+
+- **Cities.** A column whose values are mostly IBGE municipality names is a city, even when its
+  name says nothing. A column named `city` whose values are not Brazilian is still a city, from
+  the name alone.
+- **Person names.** A column with no name hint whose values are two to five words in title case
+  and start with a common Brazilian first name or end with a common surname is a person name (0.65 raw confidence), instead
+  of a record ID. The lists are small package data files in `src/oblitus/detection/data/`
+  (see the README there): first names from the IBGE 2010 Census names ranking, municipalities
+  from the IBGE localities API, and surnames from the Faker `pt_BR` provider, because IBGE
+  publishes no surname ranking. They are public data. `benchmarks/build_reference_lists.py`
+  rebuilds them.
+
+## Optional extras
+
+- **`identifiers`** (`pip install "oblitus[identifiers]"`). With `python-stdnum` installed, the
+  detector also recognizes the Mexican CURP, Chilean RUT, Argentine CUIT/CUIL, Swedish
+  personnummer, Danish CPR, Finnish HETU, Irish PPS number, Belgian national number, Swiss AHV
+  number, French NIR and Indian PAN, each checked by `stdnum`. Only formats with punctuation,
+  letters or a check digit are listed, so bare digit strings are not claimed. With
+  `phonenumbers` installed, a `+` number that the library says is valid for its country counts
+  as a phone even when the digit-count rule would reject it. Without the extras the built-in
+  rules decide alone, and nothing is imported.
+- **`ner`** (`pip install "oblitus[ner]"`). Free text can also be read by a named-entity model
+  that finds names and addresses, which no pattern can. Set `entity_model` on a
+  `redact_entities` action to `"gliner"` (`urchade/gliner_multi_pii-v1`) or `"presidio"`:
+  `{"column": "note", "technique": "redact_entities", "params": {"entity_model": "gliner"}}`.
+  Names become `<PERSON_NAME>` and addresses `<STREET_ADDRESS>`. Patterns keep their characters
+  when a name overlaps them, and `categories` limits what the model may label. The model is
+  downloaded and loaded when the first text is read, never at import, and the protection check
+  on the released text asks the same model. A model can miss a name, so the report still lists
+  the column as one where free-text details may remain. Any object with a
+  `find(text) -> [(start, end, category)]` method can stand in for a model in code that calls
+  `find_entities` directly. The extra pulls in PyTorch, so CI does not install it.
+
+## Confidence calibration
+
+The rule-based score (tiers above) is mapped to a probability with a monotone curve fitted by
+isotonic regression on a labelled benchmark of 120 synthetic columns
+(`benchmarks/detection_benchmark.py`): clean identifiers, identifiers with and without a name
+hint, identifiers mixed with junk, names that promise a category the values do not keep, and
+columns with nothing sensitive, all generated from the library's own surrogates. A reported
+confidence of 0.9 therefore means that about nine in ten findings with that score were right
+on the benchmark. The knots are constants in `detection/calibration.py`. After changing a
+detection rule, refit them with `uv run python -m benchmarks.calibrate_detection`. A test
+keeps the expected calibration error under 0.05 on the training columns and under 0.12 on a
+second benchmark from another seed. `scan(..., calibrated=False)` returns the raw score. The
+benchmark is synthetic and Brazil-leaning, so treat the numbers as a guide to how the tiers
+rank, not as a measured error rate on your own data.

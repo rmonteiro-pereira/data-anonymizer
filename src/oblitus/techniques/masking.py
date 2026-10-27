@@ -2,6 +2,7 @@
 
 import narwhals as nw
 
+from oblitus.detection.named_entities import NamedEntityBackend, load_named_entity_backend
 from oblitus.detection.patterns import ValueRecognizer, recognizers_for
 from oblitus.detection.text_entities import find_entities
 from oblitus.table import Table
@@ -67,22 +68,32 @@ def redact_entities(
     context: TechniqueContext,
     *,
     categories: list[str] | None = None,
+    entity_model: str | None = None,
 ) -> nw.Expr:
     """Replace personal data found inside free text with labels such as `<EMAIL>`.
 
     The text is normalized before it is read, so zero-width characters, look-alike letters
     and digits, `[at]` for an at-sign, and document numbers split by spaces or punctuation
     are found and removed too. Names and other details no pattern recognizes stay in the
-    text.
+    text, unless `entity_model` (`"gliner"` or `"presidio"`, from the `ner` extra) is set:
+    that model then finds names and addresses as well.
     """
     wanted = None if categories is None else [DataCategory(item) for item in categories]
     recognizers = recognizers_for(wanted)
-    return lookup_distinct(table, column, lambda text: _redact_text(text, recognizers))
+    backend = None if entity_model is None else load_named_entity_backend(entity_model)
+    return lookup_distinct(
+        table, column, lambda text: _redact_text(text, recognizers, backend, wanted)
+    )
 
 
-def _redact_text(text: str, recognizers: tuple[ValueRecognizer, ...]) -> str:
+def _redact_text(
+    text: str,
+    recognizers: tuple[ValueRecognizer, ...],
+    backend: NamedEntityBackend | None = None,
+    wanted: list[DataCategory] | None = None,
+) -> str:
     # Replacing from the end keeps the earlier spans' offsets valid.
-    for span in reversed(find_entities(text, recognizers)):
+    for span in reversed(find_entities(text, recognizers, backend, wanted)):
         label = f"<{span.category.value.upper()}>"
         text = text[: span.start] + label + text[span.end :]
     return text

@@ -9,6 +9,7 @@ from collections.abc import Callable
 import numpy as np
 from faker import Faker
 
+from oblitus.detection.crypto_wallets import base58check_encode, eip55_checksum_case
 from oblitus.taxonomy import DataCategory
 
 Generator = Callable[[Faker], str]
@@ -44,6 +45,16 @@ def fake_cnpj(faker: Faker) -> str:
     return f"{text[:2]}.{text[2:5]}.{text[5:8]}/{text[8:12]}-{text[12:]}"
 
 
+def fake_crypto_wallet(faker: Faker) -> str:
+    """Return a random wallet address with a valid checksum: Bitcoin or Ethereum."""
+    if faker.random_int(0, 1) == 0:
+        # Version byte 0 is a legacy Bitcoin address; the 20 bytes stand in for a key hash.
+        key_hash = bytes(faker.random_int(0, 255) for _ in range(20))
+        return base58check_encode(b"\x00" + key_hash)
+    digits = "".join(f"{faker.random_int(0, 255):02x}" for _ in range(20))
+    return "0x" + eip55_checksum_case(digits)
+
+
 _GENERATORS: dict[DataCategory, Generator] = {
     DataCategory.EMAIL: lambda faker: faker.email(),
     DataCategory.PHONE: lambda faker: faker.phone_number(),
@@ -57,6 +68,7 @@ _GENERATORS: dict[DataCategory, Generator] = {
     DataCategory.URL: lambda faker: faker.url(),
     DataCategory.STREET_ADDRESS: lambda faker: faker.street_address(),
     DataCategory.CITY: lambda faker: faker.city(),
+    DataCategory.CRYPTO_WALLET: fake_crypto_wallet,
     DataCategory.POSTAL_CODE: lambda faker: faker.postcode(),
     DataCategory.RECORD_ID: lambda faker: faker.uuid4(),
     DataCategory.GENERIC_TEXT: lambda faker: faker.sentence(nb_words=6),

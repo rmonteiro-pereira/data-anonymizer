@@ -11,12 +11,13 @@ what was typed.
 """
 
 import re
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Collection, Iterable
 from dataclasses import dataclass
 
 from oblitus.detection import checksums
+from oblitus.detection.named_entities import NamedEntityBackend
 from oblitus.detection.patterns import ValueRecognizer
-from oblitus.detection.text_normalization import normalize_text
+from oblitus.detection.text_normalization import NormalizedText, normalize_text
 from oblitus.taxonomy import DataCategory
 
 Span = tuple[int, int]
@@ -107,10 +108,17 @@ class LabelledSpan:
     category: DataCategory
 
 
-def find_entities(text: str, recognizers: Iterable[ValueRecognizer]) -> list[LabelledSpan]:
+def find_entities(
+    text: str,
+    recognizers: Iterable[ValueRecognizer],
+    named_entities: NamedEntityBackend | None = None,
+    named_categories: Collection[DataCategory] | None = None,
+) -> list[LabelledSpan]:
     """Return the personal data in a text, in the order of the text, without overlaps.
 
-    When two recognizers claim the same characters, the one listed first keeps them.
+    When two recognizers claim the same characters, the one listed first keeps them. A
+    named-entity backend reads last, so a name never overrides a document number. With
+    `named_categories`, the backend's findings of other categories are dropped.
     """
     normalized = normalize_text(text)
     claimed: list[LabelledSpan] = []
@@ -118,16 +126,35 @@ def find_entities(text: str, recognizers: Iterable[ValueRecognizer]) -> list[Lab
         spans = recognizer.find_spans(normalized.text)
         spans += _DISGUISED_FINDERS.get(recognizer.category, _no_spans)(normalized.text)
         for start, end in sorted(set(spans)):
-            original_start, original_end = normalized.original_span(start, end)
-            span = LabelledSpan(original_start, original_end, recognizer.category)
-            if not any(_overlap(span, other) for other in claimed):
-                claimed.append(span)
+            _claim(claimed, normalized, start, end, recognizer.category)
+    if named_entities is not None:
+        for start, end, category in sorted(named_entities.find(normalized.text)):
+            if named_categories is None or category in named_categories:
+                _claim(claimed, normalized, start, end, category)
     return sorted(claimed, key=lambda span: span.start)
 
 
-def holds_entities(text: str, recognizers: Iterable[ValueRecognizer]) -> bool:
-    """True when the text still holds personal data a recognizer can find."""
-    return bool(find_entities(text, recognizers))
+def holds_entities(
+    text: str,
+    recognizers: Iterable[ValueRecognizer],
+    named_entities: NamedEntityBackend | None = None,
+) -> bool:
+    """True when the text still holds personal data a recognizer or the backend can find."""
+    return bool(find_entities(text, recognizers, named_entities))
+
+
+def _claim(
+    claimed: list[LabelledSpan],
+    normalized: NormalizedText,
+    start: int,
+    end: int,
+    category: DataCategory,
+) -> None:
+    """Add a span, given in the normalized text, unless it overlaps one already claimed."""
+    original_start, original_end = normalized.original_span(start, end)
+    span = LabelledSpan(original_start, original_end, category)
+    if not any(_overlap(span, other) for other in claimed):
+        claimed.append(span)
 
 
 def _overlap(first: LabelledSpan, second: LabelledSpan) -> bool:

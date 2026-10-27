@@ -63,6 +63,21 @@
 - **Attack-based risk.** `oblitus.evaluation.assess_attack_risks` and `oblitus apply
   --attack-risks` run Anonymeter's singling-out, linkability and inference attacks and report
   each risk with a confidence interval. They need `pip install "oblitus[anonymeter]"`.
+- **Names and addresses inside free text.** `redact_entities` takes `entity_model`
+  (`"gliner"` or `"presidio"`, from the new `ner` extra). The model loads only when a text is
+  first read, and the protection check on the released text uses it too.
+- **Names and cities from their values.** The detector knows Brazilian first names and the 5,570
+  municipalities (IBGE public data, bundled), so an unnamed column of people or of cities is
+  recognized. Unnamed columns of person names are no longer called record IDs.
+- **More identifiers.** Passport machine-readable zones (ICAO 9303 check digits) are national
+  IDs. Bitcoin (base58check and bech32) and Ethereum (EIP-55) addresses are the new
+  `crypto_wallet` category, with fake values for them. The new `identifiers` extra adds
+  `python-stdnum` recognizers for ten more national numbers and `phonenumbers` validation of
+  international phones; without it the built-in rules decide as before.
+- **Calibrated confidence.** `scan` reports a confidence fitted on a labelled benchmark, so a
+  finding at 0.9 is right about nine times in ten. Pass `calibrated=False` for the raw score.
+  `uv run python -m benchmarks.calibrate_detection` refits it.
+- CI installs every extra except `ner`, which pulls in PyTorch.
 
 ## 0.3.0
 
