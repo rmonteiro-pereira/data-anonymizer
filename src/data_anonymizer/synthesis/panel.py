@@ -180,6 +180,11 @@ def _check_column_in_panel(column: "ColumnSchema", levels: dict[str, Level], pan
         raise ValueError(f"{column.name}: only entity-level columns can be unique in a panel")
     if column.level is Level.PERIOD and (column.exact or column.outlier_fraction > 0):
         raise ValueError(f"{column.name}: a period-level column has one value per period")
+    if column.level is Level.ROW and column.exact:
+        raise ValueError(
+            f"{column.name}: exact would hold in every period, not over the whole panel; "
+            "make the column entity-level or drop exact"
+        )
     own_level = column.level
     allowed = {name for name, level in levels.items() if level is own_level}
     if own_level is Level.ENTITY:

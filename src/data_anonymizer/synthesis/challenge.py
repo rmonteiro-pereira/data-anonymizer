@@ -76,6 +76,8 @@ def build_challenge(
     in_test = split.in_test
     truth = _truth_per_split(schema, split.test_schema, question, full, in_test)
     published = full.drop(columns=question.hidden_columns)
+    withheld_lags = _target_lags_in_test_periods(schema, question)
+    published = _without_test_period_lags(schema, question, published, in_test, withheld_lags)
     train = published[~in_test].reset_index(drop=True)
     clean_train = train
     test_rows = published[in_test].reset_index(drop=True)
@@ -105,6 +107,7 @@ def build_challenge(
         answer_key["label_noise"] = _describe_label_noise(question, changed_labels, best_clean)
     if schema.panel is not None:
         answer_key["time_series"] = describe_time_series(schema, question, in_test)
+        answer_key["time_series"]["withheld_test_columns"] = withheld_lags
     if question.treatment is not None:
 
         def outcome_as_numbers(answers: pd.Series) -> np.ndarray:
@@ -206,6 +209,51 @@ def _panel_truth_per_split(
     if isinstance(test_truth, str):
         return test_truth
     return pd.Series(np.where(in_test, test_truth.to_numpy(), train_truth.to_numpy()))
+
+
+def _target_lags_in_test_periods(schema: DatasetSchema, question: Question) -> list[str]:
+    """Published columns that read an earlier target, which a time split must withhold.
+
+    A test row's lag of the target is the previous test row's withheld label, so publishing it
+    hands out the answers. Columns that read the current target are leaks the key already
+    names, so they are not touched.
+    """
+    if schema.panel is None or question.split is not Split.TIME:
+        return []
+    hidden = set(question.hidden_columns)
+    same_period_effects = CausalGraph.of(schema).descendants(question.target)
+    return [
+        column.name
+        for column in schema.columns
+        if column.name not in hidden
+        and column.name != question.target
+        and column.name not in same_period_effects
+        and question.target in _ancestors(schema, column.name)
+    ]
+
+
+def _without_test_period_lags(
+    schema: DatasetSchema,
+    question: Question,
+    published: pd.DataFrame,
+    in_test: np.ndarray,
+    withheld: list[str],
+) -> pd.DataFrame:
+    """Blank the withheld columns in every test period after the first.
+
+    The first test period keeps them: its lag is the last training value, which is known when
+    forecasting. Later periods must be forecast from the training horizon.
+    """
+    if not withheld:
+        return published
+    panel = schema.panel
+    assert panel is not None
+    first_test_period = panel.first_test_period(question.test_share)
+    after_first = in_test & (panel.row_period_index() > first_test_period)
+    blanked = published.copy()
+    for name in withheld:
+        blanked[name] = blanked[name].mask(after_first)
+    return blanked
 
 
 def _with_label_noise(

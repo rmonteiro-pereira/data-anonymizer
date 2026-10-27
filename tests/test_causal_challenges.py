@@ -254,6 +254,61 @@ def test_without_confounding_the_adjustment_set_is_empty():
     assert adjustment.columns == []
 
 
+def test_a_hidden_cause_blocked_by_a_published_confounder_still_has_an_adjustment_set():
+    structure = graph({"u": [], "c": ["u"], "t": ["c"], "y": ["t", "c"]})
+
+    adjustment = structure.adjustment_set("t", "y", {"c", "t", "y"})
+
+    assert adjustment.columns == ["c"]
+
+
+def test_a_cause_of_the_treatment_correlated_with_the_outcome_is_a_confounder():
+    structure = graph({"z": [], "t": ["z"], "y": ["t"]}, [("z", "y")])
+
+    roles = structure.roles("t", "y")
+    adjustment = structure.adjustment_set("t", "y", {"z", "t", "y"})
+
+    assert roles.confounders == ["z"]
+    assert adjustment.columns == ["z"]
+
+
+def test_adjusting_for_the_collider_of_m_bias_is_not_chosen():
+    structure = graph(
+        {"a": [], "b": [], "m": ["a", "b"], "t": ["a"], "y": ["t", "b"]},
+    )
+
+    adjustment = structure.adjustment_set("t", "y", {"m", "t", "y"})
+
+    assert adjustment.columns == []
+
+
+def test_a_collider_is_not_added_when_a_real_confounder_needs_adjusting():
+    structure = graph(
+        {"a": [], "b": [], "c": [], "m": ["a", "b"], "t": ["a", "c"], "y": ["t", "b", "c"]},
+    )
+
+    adjustment = structure.adjustment_set("t", "y", {"c", "m", "t", "y"})
+
+    assert adjustment.columns == ["c"]
+
+
+def test_a_front_door_only_structure_has_no_back_door_set():
+    structure = graph({"m": ["t"], "t": [], "y": ["m"]}, [("t", "y")])
+
+    adjustment = structure.adjustment_set("t", "y", {"m", "t", "y"})
+
+    assert adjustment.columns is None
+    assert "unobserved" in adjustment.reason
+
+
+def test_a_confounded_mediator_does_not_make_the_mediator_an_adjustment():
+    structure = graph({"u": [], "t": [], "m": ["t", "u"], "y": ["m", "u"]})
+
+    adjustment = structure.adjustment_set("t", "y", {"t", "m", "y"})
+
+    assert adjustment.columns == []
+
+
 def small_schema(**question: Any) -> dict[str, Any]:
     """A confounded binary treatment with a probability behind a binary outcome."""
     return {
@@ -286,6 +341,24 @@ def test_a_binary_outcome_effect_matches_the_effect_on_its_probability():
     assert abs(causal["ate"] - on_probability["ate"]) < 0.01
     assert on_probability["ate"] > 0.1
     assert on_probability["att"] is not None
+
+
+def test_a_two_valued_integer_modifier_reports_one_entry_per_value():
+    schema = small_schema(effect_modifiers=["tier"])
+    schema["columns"].insert(
+        1, {"name": "tier", "kind": "integer", "minimum": 0, "maximum": 1, "mean": 0.5, "std": 0.5}
+    )
+    schema["columns"][3]["formula"] = "sigmoid(-0.5 + 0.8 * x + (1.0 + tier) * t)"
+
+    causal = (
+        Anonymizer(seed=5)
+        .challenge(DatasetSchema.model_validate(schema), 20_000)
+        .answer_key["causal"]
+    )
+
+    entries = causal["cate"]["tier"]
+    assert [entry["level"] for entry in entries] == ["0", "1"]
+    assert entries[1]["effect"] > entries[0]["effect"]
 
 
 def test_a_category_treatment_needs_its_control_and_treated_values():

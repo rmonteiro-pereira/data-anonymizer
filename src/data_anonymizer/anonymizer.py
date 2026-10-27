@@ -42,15 +42,12 @@ from data_anonymizer.synthesis import (
     generate_from_schema,
     infer_schema,
 )
+from data_anonymizer.synthesis.rare_values import min_records_for
 from data_anonymizer.table import ROW_KEY_COLUMN, Table, row_key_problem
 from data_anonymizer.techniques import BUILTIN_TECHNIQUES, Technique, TechniqueContext
 
 # Shorter keys can be guessed, and every pseudonym and encryption key derives from it.
 MIN_SECRET_KEY_BYTES = 16
-
-# Privacy-first synthesis leaves out categories rarer than this, since they can
-# point at the few people who have them.
-_PRIVACY_MIN_CATEGORY_COUNT = 5
 
 
 @dataclass(frozen=True, slots=True)
@@ -281,7 +278,7 @@ class Anonymizer:
             return generate_from_schema(schema, rows, rng=rng, surrogates=surrogates)
 
         if schema is None:
-            min_count = _PRIVACY_MIN_CATEGORY_COUNT if fidelity is Fidelity.PRIVACY else 1
+            min_count = min_records_for(fidelity)
             schema = infer_schema(reference, self.scan(reference), min_category_count=min_count)
         return generate_from_reference(
             reference,

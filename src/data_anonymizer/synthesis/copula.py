@@ -4,6 +4,8 @@ Fitting gives every column a hidden normal variable through its own empirical
 distribution, then estimates how those variables correlate (see `latent_correlation`).
 Sampling draws correlated normal values and maps them back. Numbers come out interpolated
 between observed quantiles, so the generator produces new values rather than copying rows.
+A category seen only a few times is merged into `OTHER`, and the largest and smallest numbers
+are pulled in, so no single record can reappear (see `rare_values`).
 
 A copula can also be fitted per level of some category columns, so that each level keeps its
 own distributions and correlations.
@@ -23,6 +25,11 @@ from data_anonymizer.synthesis.latent_correlation import (
     LatentColumn,
     OrdinalIntervals,
     latent_correlation,
+)
+from data_anonymizer.synthesis.rare_values import (
+    MIN_RECORDS_STATISTICAL,
+    merge_rare_categories,
+    pull_in_extremes,
 )
 from data_anonymizer.taxonomy import ColumnKind
 
@@ -203,8 +210,10 @@ def _level_value(level: Any, kind: ColumnKind) -> Any:
 def _fit_column(values: pd.Series, kind: ColumnKind) -> tuple[Marginal, LatentColumn]:
     present_mask = values.notna().to_numpy()
     present = values[present_mask]
-    marginal = _marginal(present, kind)
     raw = _raw_values(present, kind)
+    if kind is ColumnKind.CATEGORY:
+        raw = merge_rare_categories(raw, MIN_RECORDS_STATISTICAL)
+    marginal = _marginal(raw, kind)
     if isinstance(marginal, NumericMarginal):
         scores = np.full(len(values), np.nan)
         if len(present):
@@ -225,8 +234,7 @@ def _raw_values(present: pd.Series, kind: ColumnKind) -> np.ndarray:
     return present.astype(str).to_numpy(dtype=object)
 
 
-def _marginal(present: pd.Series, kind: ColumnKind) -> Marginal:
-    raw = _raw_values(present, kind)
+def _marginal(raw: np.ndarray, kind: ColumnKind) -> Marginal:
     if kind in (ColumnKind.CATEGORY, ColumnKind.BOOLEAN):
         counts = pd.Series(raw).value_counts()
         cumulative = np.cumsum(counts.to_numpy()) / counts.sum()
@@ -237,7 +245,8 @@ def _marginal(present: pd.Series, kind: ColumnKind) -> Marginal:
         )
     if len(raw) == 0:
         raw = np.array([0.0])
-    return NumericMarginal(kind=kind, sorted_values=np.sort(raw))
+    sorted_values = pull_in_extremes(np.sort(raw), MIN_RECORDS_STATISTICAL)
+    return NumericMarginal(kind=kind, sorted_values=sorted_values)
 
 
 def _correlation(columns: list[LatentColumn]) -> np.ndarray:

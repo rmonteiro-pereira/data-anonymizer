@@ -176,11 +176,53 @@ def test_privacy_synthesis_keeps_the_mean_and_sign_of_zero_inflated_heavy_tailed
 
 
 def test_privacy_inference_hides_rare_categories():
-    frame = pd.DataFrame({"plan": ["basic"] * 20 + ["vip-celebrity"]})
+    frame = pd.DataFrame({"plan": ["basic"] * 30 + ["vip"] * 3 + ["gold"] * 2})
 
     schema = infer_schema(frame, min_category_count=5)
 
     assert schema.columns[0].choices == ["basic", "OTHER"]
+    assert schema.columns[0].weights == [30.0, 5.0]
+
+
+def test_rare_categories_too_few_for_their_own_level_join_the_most_common_one():
+    frame = pd.DataFrame({"plan": ["basic"] * 20 + ["vip-celebrity"]})
+
+    schema = infer_schema(frame)
+
+    assert schema.columns[0].choices == ["basic"]
+    assert schema.columns[0].weights == [21.0]
+
+
+def test_statistical_synthesis_does_not_reproduce_a_category_seen_once():
+    reference = pd.DataFrame({"country": ["US"] * 600 + ["FR"] * 399 + ["CANARY"]})
+
+    synthetic = Anonymizer(seed=4).synthesize(20_000, reference=reference)
+
+    assert "CANARY" not in set(synthetic["country"])
+    assert {"US", "FR"} <= set(synthetic["country"])
+
+
+def test_synthesis_does_not_reproduce_one_extreme_record():
+    generator = np.random.default_rng(8)
+    values = generator.normal(100, 20, 3000).round(2)
+    reference = pd.DataFrame({"amount": np.append(values, 999_999.0)})
+
+    for fidelity in (Fidelity.STATISTICAL, Fidelity.PRIVACY):
+        synthetic = Anonymizer(seed=4).synthesize(20_000, reference=reference, fidelity=fidelity)
+
+        assert synthetic["amount"].max() < 1000, fidelity
+
+
+def test_privacy_quantile_points_need_enough_records_beyond_them():
+    values = np.sort(np.random.default_rng(2).normal(50, 9, 1000).round(3))
+    schema = infer_schema(pd.DataFrame({"x": values}), min_category_count=20)
+
+    quantiles = schema.columns[0].quantiles
+    assert quantiles is not None
+    assert max(quantiles) == 1.0
+    assert quantiles[1.0] == values[-21]
+    assert quantiles[0.0] == values[20]
+    assert all(20 <= probability * 999 <= 979 for probability in quantiles if 0 < probability < 1)
 
 
 def test_synthesis_needs_a_schema_or_a_reference():

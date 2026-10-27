@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- **Synthesis and challenge leaks closed.**
+  - A time-split panel challenge blanks columns that read `lag` of the target after the first
+    test period, because they published the previous test row's label. The key names them in
+    `time_series.withheld_test_columns`.
+  - Learned synthesis merges categories seen fewer than 5 times (20 with `privacy` fidelity)
+    into `OTHER`, and caps the extreme tail so one record cannot reappear. Privacy quantile
+    points need 20 records beyond them.
+  - The causal adjustment set searches published non-descendants of the treatment, so a hidden
+    cause blocked by a published column no longer gives `null`, and a cause of the treatment
+    correlated with the outcome is a confounder.
+  - A numeric effect modifier with 10 or fewer distinct values reports one entry per value.
+  - `exact` on a row-level panel column is rejected, because it held in every period.
+
 - **Time series and panels.**
   - A schema can declare a `panel` of entities over periods. Columns take a `level` (`row`,
     `entity` or `period`), and formulas can read `lag(column, k)`, `period` and `entity_index`,
