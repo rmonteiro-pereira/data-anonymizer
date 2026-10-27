@@ -574,16 +574,32 @@ def _check_question(
         raise ValueError("the question's target cannot be hidden")
     _check_positive_label(question, by_name[question.target])
     _check_label_noise(question, by_name[question.target])
-    _check_split(question, panel)
+    _check_split(question, panel, by_name)
     _check_treatment(question, by_name, panel)
 
 
-def _check_split(question: Question, panel: Panel | None) -> None:
+def _check_split(question: Question, panel: Panel | None, by_name: dict[str, ColumnSchema]) -> None:
     if question.split is Split.TIME and panel is None:
         raise ValueError("the question's split is 'time', which needs a schema with a panel")
     if panel is not None and question.test_shift and question.split is not Split.TIME:
         raise ValueError(
             "a panel's test_shift changes the test periods, so the question needs split: 'time'"
+        )
+    if panel is None or question.split is Split.TIME:
+        return
+    # With a random split, a published lag of the target in one row is the label of a
+    # neighbouring test row, so the test answers could be read straight off the files.
+    lagging = [
+        name
+        for name, column in by_name.items()
+        if name != question.target
+        and name not in question.hidden_columns
+        and question.target in column.lagged_dependencies()
+    ]
+    if lagging:
+        raise ValueError(
+            f"{', '.join(lagging)} read the target of earlier periods, which with a random "
+            "split publishes test labels in neighbouring rows; use split: 'time'"
         )
 
 

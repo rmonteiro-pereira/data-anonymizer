@@ -254,6 +254,7 @@ def test_a_random_split_on_a_panel_keeps_every_period_in_both_splits(sales_schem
     spec = example_json()
     spec["question"]["split"] = "random"
     del spec["question"]["test_shift"]
+    spec["question"]["hidden_columns"].append("last_month_sales")
 
     challenge = Anonymizer(seed=6).challenge(DatasetSchema.model_validate(spec))
 
@@ -547,3 +548,12 @@ def test_every_example_schema_with_a_question_builds_a_challenge(example):
 
     assert len(challenge.train) > 0
     assert challenge.answer_key["target"] == schema.question.target
+
+
+def test_a_random_split_refuses_published_lags_of_the_target():
+    spec = example_json()
+    spec["question"]["split"] = "random"
+    del spec["question"]["test_shift"]
+
+    with pytest.raises(ValueError, match="last_month_sales read the target of earlier periods"):
+        DatasetSchema.model_validate(spec)
