@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- **Anonymization drops free text by default.** No list or pattern finds every name in prose
+  (lowercase and foreign names pass them all), so the proposal suppresses free-text columns
+  under anonymization. A kept `redact_entities` column stays `at_risk`, and the problem suggests
+  dropping it or reviewing its text. Pseudonymization still redacts.
+- **`apply_many` joins the whole graph of tables.** Tables linked through a bridge table are
+  joined together, and two columns with different names that code the same entities are linked
+  when their values occur equally often (`frequency_links.py`). k-anonymity and inference are
+  checked over each connected group of tables, per entity.
+- **Joint microaggregation counts people when the plan has an `entity_column`.** MDAV groups
+  hold at least `group_size` distinct entities, an entity's rows share one vector, and the
+  isolated-record and skew checks count entities, so five identical visits of one person are no
+  longer a group of five.
+- **Joint microaggregation columns count as quasi-identifiers.** The k-anonymity and skew
+  checks now group by the aggregated vector too, so five records that share one released vector
+  and one diagnosis make the release `at_risk`.
+- **Mondrian does not name rare categories.** A category held by fewer than `k_target` rows in
+  the table reads `other` inside a released set instead of showing its name.
 - **`apply_many` checks the join.** Anonymized tables that release the same column with
   consistent codes are joined and checked for k-anonymity and inference over entities. A join that
   singles out an entity makes every table of it `at_risk`, naming the other table and the link.

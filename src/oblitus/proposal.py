@@ -169,6 +169,10 @@ def _direct_identifier_rule(
     category: DataCategory, protection: Protection, fidelity: Fidelity
 ) -> Rule:
     if category is DataCategory.FREE_TEXT_WITH_PII:
+        if protection is Protection.ANONYMIZATION:
+            # No list or pattern finds every name written into a sentence, so anonymization
+            # drops the text unless the person decides to keep a redacted copy.
+            return Rule("suppress", note="free text cannot be proven free of names; removed")
         return Rule("redact_entities", note="personal data inside text labelled")
     if category is DataCategory.ORGANIZATION:
         # Codes keep each company's rows together, so its behaviour can still be modelled.

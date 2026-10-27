@@ -12,8 +12,9 @@ group between two cuts reads `20 to under 40`, and the outermost groups are open
 20` and `90 or more`. The midpoint style publishes the group's median instead. A group that no
 cut bounds on this column reads `any value`, unless all the table's values are equal. Categories are
 described by the set of their values, or by their closest common ancestor when the plan gives a
-hierarchy. Missing cells take the description of their group, so that every row of a group
-holds the same value.
+hierarchy. A category held by fewer than k rows in the whole table is never named in a set: it
+reads `other`, so the set does not show that its few holders are in the table. Missing cells
+take the description of their group, so that every row of a group holds the same value.
 """
 
 import math
@@ -30,6 +31,7 @@ from oblitus.plan import RangeStyle
 
 _EPOCH = datetime(1970, 1, 1)
 OPEN = (-math.inf, math.inf)
+RARE_CATEGORY_LABEL = "other"
 
 
 class ColumnShape(StrEnum):
@@ -60,6 +62,8 @@ class GeneralizedColumn:
         *,
         hierarchy: GeneralizationHierarchy | None = None,
         style: RangeStyle = RangeStyle.RANGE,
+        row_counts: Sequence[int] | None = None,
+        rare_below: int = 0,
     ) -> None:
         self.name = name
         self.shape = shape_of(dtype)
@@ -67,6 +71,7 @@ class GeneralizedColumn:
         self._values = list(values)
         self._hierarchy = hierarchy
         self._style = style
+        self._rare_categories = _rare_categories(self._values, row_counts, rare_below)
         self.order = self._encode()
         self._present = np.isfinite(self.order)
         self._extent = self._whole_table_extent()
@@ -161,10 +166,29 @@ class GeneralizedColumn:
         if self._hierarchy is not None:
             level = self._hierarchy.lowest_common_level(values)
             return self._hierarchy.ancestor(values[0], level)
-        distinct = sorted({str(value) for value in values})
+        names = {str(value) for value in values}
+        distinct = sorted(names - self._rare_categories)
+        if names & self._rare_categories:
+            distinct.append(RARE_CATEGORY_LABEL)
         if len(distinct) == 1:
             return distinct[0]
         return "{" + ", ".join(distinct) + "}"
+
+
+def _rare_categories(
+    values: Sequence[Any], row_counts: Sequence[int] | None, rare_below: int
+) -> set[str]:
+    """Categories held by fewer than `rare_below` rows in the whole table.
+
+    A set that names such a category would show that its few holders are in the table.
+    """
+    if row_counts is None or rare_below <= 1:
+        return set()
+    totals: dict[str, int] = {}
+    for value, count in zip(values, row_counts, strict=True):
+        if value is not None:
+            totals[str(value)] = totals.get(str(value), 0) + int(count)
+    return {name for name, total in totals.items() if total < rare_below}
 
 
 def _rank_or_missing(value: Any, rank: dict[str, int]) -> float:

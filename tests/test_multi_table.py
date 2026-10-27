@@ -385,3 +385,94 @@ def test_a_joined_inference_names_the_sensitive_attribute():
     texts = " ".join(results["first"].protection.problems)
     assert results["first"].protection.level is ProtectionLevel.AT_RISK
     assert "second.diagnosis" in texts or "second.band" in texts
+
+
+def _plan_for(identifiers: list[str], quasi_identifiers: list[str], **overrides):
+    settings = {
+        "fidelity": Fidelity.PRIVACY,
+        "protection": Protection.ANONYMIZATION,
+        "direct_identifiers": identifiers,
+        "quasi_identifiers": quasi_identifiers,
+        "actions": [
+            ColumnAction(column=column, technique="scramble_categories") for column in identifiers
+        ],
+        "k_target": 5,
+    }
+    settings.update(overrides)
+    return AnonymizationPlan(**settings)
+
+
+def _grid_people() -> tuple[np.ndarray, np.ndarray]:
+    """A hundred people, one in each district and band cell of a ten by ten grid."""
+    people = np.arange(100)
+    return people // 10, people % 10
+
+
+def test_a_bridge_table_joins_tables_that_share_no_column():
+    districts, bands = _grid_people()
+    people = np.repeat(np.arange(100), 5)
+    frames = {
+        "residence": pd.DataFrame({"account": people, "district": districts[people]}),
+        "bridge": pd.DataFrame({"account": people, "case": people + 1000}),
+        "clinic": pd.DataFrame(
+            {"case": people + 1000, "band": bands[people], "diagnosis": ["D", "H"] * 250}
+        ),
+    }
+    plans = {
+        "residence": _plan_for(["account"], ["district"]),
+        "bridge": _plan_for(["account", "case"], []),
+        "clinic": _plan_for(["case"], ["band"], sensitive_attributes=["diagnosis"]),
+    }
+
+    results = Anonymizer(secret_key=KEY).apply_many(frames, plans)
+
+    for result in results.values():
+        assert result.protection.level is ProtectionLevel.AT_RISK
+        assert any("joined with" in text for text in result.protection.problems)
+
+
+def test_pairwise_joins_that_each_keep_k_do_not_flag_a_bridge_chain():
+    people = np.repeat(np.arange(100), 5)
+    frames = {
+        "residence": pd.DataFrame({"account": people, "district": people % 2}),
+        "bridge": pd.DataFrame({"account": people, "case": people + 1000}),
+        "clinic": pd.DataFrame({"case": people + 1000, "band": (people // 2) % 2}),
+    }
+    plans = {
+        "residence": _plan_for(["account"], ["district"]),
+        "bridge": _plan_for(["account", "case"], []),
+        "clinic": _plan_for(["case"], ["band"]),
+    }
+
+    results = Anonymizer(secret_key=KEY).apply_many(frames, plans)
+
+    assert all(r.protection.level is ProtectionLevel.ANONYMIZED for r in results.values())
+
+
+def test_tables_that_code_the_same_accounts_under_different_names_are_joined_by_row_counts():
+    districts, bands = _grid_people()
+    visits = np.arange(100) + 5
+    people = np.repeat(np.arange(100), visits)
+    frames = {
+        "residence": pd.DataFrame({"account": people, "district": districts[people]}),
+        "clinic": pd.DataFrame({"patient": people, "band": bands[people]}),
+    }
+    plans = {
+        "residence": _plan_for(["account"], ["district"]),
+        "clinic": _plan_for(["patient"], ["band"]),
+    }
+
+    results = Anonymizer(secret_key=KEY).apply_many(frames, plans)
+
+    for result in results.values():
+        assert result.protection.level is ProtectionLevel.AT_RISK
+        assert any("same row counts" in text for text in result.protection.problems)
+
+
+def test_columns_whose_values_all_occur_equally_often_are_not_paired_by_row_counts():
+    from oblitus.frequency_links import pair_by_frequency
+
+    left = pd.Series(np.repeat(np.arange(20), 5))
+    right = pd.Series(np.repeat(np.arange(20), 5))
+
+    assert pair_by_frequency(left, right) == {}

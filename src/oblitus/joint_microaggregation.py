@@ -45,7 +45,12 @@ class JointMicroaggregationOutcome:
 
 
 def microaggregate_jointly(
-    frame: Any, columns: Sequence[str], group_size: int, *, row_key: str | None = None
+    frame: Any,
+    columns: Sequence[str],
+    group_size: int,
+    *,
+    row_key: str | None = None,
+    entity_column: str | None = None,
 ) -> JointMicroaggregationOutcome:
     """Replace the numeric `columns` of every record by the mean of its MDAV group.
 
@@ -53,15 +58,19 @@ def microaggregate_jointly(
     A record missing some of the columns joins the records missing the same ones. `row_key`
     names a column with a different value in every row. A DuckDB table needs it,
     because its rows have no fixed order. Pandas and Polars tables use the row position.
+
+    With `entity_column`, each entity is one point (the mean of its rows) and every group holds
+    at least `group_size` entities, so a person with many identical rows is not their own group.
+    All rows of an entity then get the group's vector. Without it, rows count as people.
     """
     if group_size < 2:
         raise ValueError("group_size must be at least 2")
     if len(set(columns)) < 2:
         raise ValueError("joint microaggregation needs at least two different columns")
     if isinstance(frame, (nw.DataFrame, nw.LazyFrame)):
-        return _microaggregate(frame, list(columns), group_size, row_key)
+        return _microaggregate(frame, list(columns), group_size, row_key, entity_column)
     working, engine = to_working_frame(frame)
-    outcome = _microaggregate(working, list(columns), group_size, row_key)
+    outcome = _microaggregate(working, list(columns), group_size, row_key, entity_column)
     return JointMicroaggregationOutcome(to_native(outcome.data, engine), outcome.groups)
 
 
@@ -104,7 +113,11 @@ def _distances(points: np.ndarray, target: np.ndarray) -> np.ndarray:
 
 
 def _microaggregate(
-    frame: WorkingFrame, columns: list[str], group_size: int, row_key: str | None
+    frame: WorkingFrame,
+    columns: list[str],
+    group_size: int,
+    row_key: str | None,
+    entity_column: str | None,
 ) -> JointMicroaggregationOutcome:
     schema = frame.collect_schema()
     for column in columns:
@@ -113,17 +126,20 @@ def _microaggregate(
         if not schema[column].is_numeric():
             raise ValueError(f"column {column!r} is not numeric")
     key, numbered = _row_key_of(frame, row_key)
-    rows = collect(numbered.select(key, *columns))
+    names = schema.names()
+    entity = entity_column if entity_column in names and entity_column != key else None
+    rows = collect(numbered.select(key, *columns, *([entity] if entity else [])))
     keys = rows.get_column(key).to_list()
     if len(set(keys)) != len(keys):
         raise ValueError(f"row key {key!r} repeats; every row needs its own key")
     values = rows.select(*[nw.col(column).cast(nw.Float64) for column in columns]).to_numpy()
-    groups, blanked = _groups_by_pattern(values, group_size)
-    averaged = values.copy()
-    for group in groups:
-        cells = np.ix_(group.members, group.columns)
-        averaged[cells] = values[cells].mean(axis=0)
-    averaged[blanked] = np.nan
+    if entity is None:
+        averaged, group_count = _group_means(values, group_size)
+    else:
+        entity_of_row = _entity_numbers(rows.get_column(entity).to_list())
+        entity_means = _mean_per_entity(values, entity_of_row)
+        averaged_entities, group_count = _group_means(entity_means, group_size)
+        averaged = averaged_entities[entity_of_row]
 
     replacements = {
         column: (_column_values(averaged[:, position], schema[column]), schema[column])
@@ -132,7 +148,41 @@ def _microaggregate(
     rewritten = overwrite_by_key(numbered, [key], [(item,) for item in keys], replacements)
     if row_key is None:
         rewritten = rewritten.drop(key)
-    return JointMicroaggregationOutcome(rewritten, len(groups))
+    return JointMicroaggregationOutcome(rewritten, group_count)
+
+
+def _group_means(points: np.ndarray, group_size: int) -> tuple[np.ndarray, int]:
+    """Each point replaced by its group's mean, blank where its group had to be blanked."""
+    groups, blanked = _groups_by_pattern(points, group_size)
+    averaged = points.copy()
+    for group in groups:
+        cells = np.ix_(group.members, group.columns)
+        averaged[cells] = points[cells].mean(axis=0)
+    averaged[blanked] = np.nan
+    return averaged, len(groups)
+
+
+def _entity_numbers(entities: list[Any]) -> np.ndarray:
+    """A number per entity for every row; a row with no entity counts as its own entity."""
+    numbers: dict[Any, int] = {}
+    result = np.empty(len(entities), dtype=int)
+    for position, entity in enumerate(entities):
+        label = entity if entity is not None else ("no entity", position)
+        result[position] = numbers.setdefault(label, len(numbers))
+    return result
+
+
+def _mean_per_entity(values: np.ndarray, entity_of_row: np.ndarray) -> np.ndarray:
+    """One row per entity: the mean of each column over the entity's rows that have it."""
+    entity_count = int(entity_of_row.max()) + 1 if len(entity_of_row) else 0
+    totals = np.zeros((entity_count, values.shape[1]))
+    present = ~np.isnan(values)
+    np.add.at(totals, entity_of_row, np.where(present, values, 0.0))
+    counts = np.zeros((entity_count, values.shape[1]))
+    np.add.at(counts, entity_of_row, present.astype(float))
+    means = np.full_like(totals, np.nan)
+    np.divide(totals, counts, out=means, where=counts > 0)
+    return means
 
 
 @dataclass(frozen=True, slots=True)

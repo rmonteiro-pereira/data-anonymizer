@@ -1,7 +1,7 @@
 import pandas as pd
 import pytest
 
-from oblitus import Anonymizer, ProtectionLevel
+from oblitus import Anonymizer, ColumnAction, Protection, ProtectionLevel
 from oblitus.detection import scan_column
 from oblitus.detection.patterns import TEXT_RECOGNIZERS
 from oblitus.detection.text_entities import find_entities, holds_entities
@@ -95,7 +95,18 @@ def test_a_column_that_only_holds_names_is_not_taken_for_prose(column, values):
     assert finding.category is not DataCategory.FREE_TEXT_WITH_PII
 
 
-def test_the_default_release_redacts_names_in_notes_and_is_not_called_anonymized():
+def _keep_redacted_copy(plan, params=None):
+    """The plan with its free-text column redacted instead of dropped."""
+    plan.actions = [
+        action if action.column != "payload" else _redaction(params) for action in plan.actions
+    ]
+
+
+def _redaction(params):
+    return ColumnAction(column="payload", technique="redact_entities", params=params or {})
+
+
+def test_the_default_anonymization_drops_notes_instead_of_trusting_a_redaction():
     frame = pd.DataFrame(
         {"payload": [note for note in NOTES for _ in range(5)], "diagnosis": ["D", "H"] * 5}
     )
@@ -104,22 +115,43 @@ def test_the_default_release_redacts_names_in_notes_and_is_not_called_anonymized
 
     result = anonymizer.apply(frame, plan)
 
+    assert plan.action_for("payload").technique == "suppress"
+    assert result.data["payload"].isna().all() or (result.data["payload"] == "").all()
+
+
+def test_the_default_pseudonymization_still_redacts_names_in_notes():
+    frame = pd.DataFrame(
+        {"payload": [note for note in NOTES for _ in range(5)], "diagnosis": ["D", "H"] * 5}
+    )
+    anonymizer = Anonymizer(seed=1)
+
+    plan = anonymizer.propose(frame, protection=Protection.PSEUDONYMIZATION)
+
     assert plan.action_for("payload").technique == "redact_entities"
+
+
+def test_a_kept_redacted_copy_hides_listed_names_but_stays_at_risk():
+    frame = pd.DataFrame(
+        {"payload": [note for note in NOTES for _ in range(5)], "diagnosis": ["D", "H"] * 5}
+    )
+    anonymizer = Anonymizer(seed=1)
+    plan = anonymizer.propose(frame)
+    _keep_redacted_copy(plan)
+
+    result = anonymizer.apply(frame, plan)
+
     released = " ".join(result.data["payload"])
     for survivor in ("Ana", "Silva", "Santos", "Maria", "Souza", "Bauru"):
         assert survivor not in released
-    assert result.protection.level is not ProtectionLevel.ANONYMIZED
+    assert result.protection.level is ProtectionLevel.AT_RISK
+    assert any("drop the column" in problem for problem in result.protection.problems)
 
 
 def test_names_left_in_the_text_make_the_release_identifiable():
     frame = pd.DataFrame({"payload": NOTES * 10, "diagnosis": ["D", "H"] * 10})
     anonymizer = Anonymizer(seed=1)
     plan = anonymizer.propose(frame)
-    plan.actions = [action for action in plan.actions if action.column != "payload"] + [
-        action.model_copy(update={"params": {"categories": ["email"]}})
-        for action in plan.actions
-        if action.column == "payload"
-    ]
+    _keep_redacted_copy(plan, {"categories": ["email"]})
 
     result = anonymizer.apply(frame, plan)
 

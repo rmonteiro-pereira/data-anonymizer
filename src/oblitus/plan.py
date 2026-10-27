@@ -170,6 +170,18 @@ class AnonymizationPlan(BaseModel):
             return self.protection is Protection.ANONYMIZATION
         return self.shuffle_rows
 
+    @property
+    def released_quasi_identifiers(self) -> list[str]:
+        """The quasi-identifiers plus the columns of every joint microaggregation step.
+
+        A group's released vector over those columns tells an attacker who holds a person's
+        measurements which group they are in, just as a listed quasi-identifier would.
+        """
+        microaggregated = [
+            column for step in self.joint_microaggregation for column in step.columns
+        ]
+        return list(dict.fromkeys([*self.quasi_identifiers, *microaggregated]))
+
     def action_for(self, column: str) -> ColumnAction | None:
         """Return the action planned for a column, or None when it is left alone."""
         for action in self.actions:

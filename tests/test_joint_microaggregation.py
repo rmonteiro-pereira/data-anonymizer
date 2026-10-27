@@ -8,6 +8,7 @@ from oblitus import AnonymizationPlan, Anonymizer, ColumnAction, Fidelity, PlanE
 from oblitus.engines import Engine
 from oblitus.joint_microaggregation import mdav_groups, microaggregate_jointly
 from oblitus.plan import JointMicroaggregation
+from oblitus.protection import ProtectionLevel
 
 
 def _measurements(rows: int = 100) -> pd.DataFrame:
@@ -175,3 +176,70 @@ def test_the_protection_check_counts_microaggregated_columns_even_with_many_dist
 
     assert problems
     assert "height" in problems[0]
+
+
+def test_a_group_of_missing_weight_records_that_all_share_a_diagnosis_is_flagged():
+    rng = np.random.default_rng(812)
+    frame = pd.DataFrame(rng.normal(size=(500, 2)), columns=["height", "weight"])
+    frame["diagnosis"] = ["D"] * 5 + ["H"] * 495
+    frame.loc[:4, "height"] = np.linspace(999.1, 999.5, 5)
+    frame.loc[:4, "weight"] = np.nan
+    plan = _plan(actions=[], row_key=None, sensitive_attributes=["diagnosis"], l_target=1)
+
+    result = Anonymizer(seed=1).apply(frame, plan)
+
+    assert result.protection.level is ProtectionLevel.AT_RISK
+    assert any("diagnosis" in problem for problem in result.protection.problems)
+
+
+def _repeated_visits() -> pd.DataFrame:
+    rng = np.random.default_rng(813)
+    people = rng.normal(size=(100, 2))
+    people[0] = [999.1, 800.2]
+    frame = pd.DataFrame(np.repeat(people, 5, axis=0), columns=["height", "weight"])
+    frame["person"] = np.repeat(np.arange(100), 5)
+    frame["diagnosis"] = ["D"] * 5 + ["H"] * 495
+    return frame
+
+
+def test_a_group_holds_the_group_size_in_distinct_entities_not_rows():
+    frame = _repeated_visits()
+
+    outcome = microaggregate_jointly(frame, ["height", "weight"], 5, entity_column="person")
+
+    people_per_vector = outcome.data.groupby(["height", "weight"])["person"].nunique()
+    assert people_per_vector.min() >= 5
+    assert not ((outcome.data["height"] == 999.1) & (outcome.data["weight"] == 800.2)).any()
+
+
+def test_an_entity_keeps_one_vector_across_all_its_rows():
+    frame = _repeated_visits()
+
+    outcome = microaggregate_jointly(frame, ["height", "weight"], 5, entity_column="person")
+
+    assert outcome.data.groupby("person")[["height", "weight"]].nunique().max().max() == 1
+
+
+def test_a_repeated_outlier_is_not_released_as_a_certain_diagnosis():
+    plan = _plan(
+        actions=[ColumnAction(column="person", technique="scramble_categories")],
+        row_key=None,
+        entity_column="person",
+        sensitive_attributes=["diagnosis"],
+        l_target=1,
+    )
+
+    result = Anonymizer(seed=1).apply(_repeated_visits(), plan)
+
+    assert result.protection.level is ProtectionLevel.ANONYMIZED
+    people_per_vector = result.data.groupby(["height", "weight"])["person"].nunique()
+    assert people_per_vector.min() >= 5
+
+
+def test_without_an_entity_column_repeated_rows_of_one_person_count_as_several():
+    frame = _repeated_visits()
+
+    outcome = microaggregate_jointly(frame, ["height", "weight"], 5)
+
+    outlier = outcome.data[(outcome.data["height"] == 999.1) & (outcome.data["weight"] == 800.2)]
+    assert outlier["person"].nunique() == 1
