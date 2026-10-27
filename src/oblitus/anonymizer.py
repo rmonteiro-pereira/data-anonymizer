@@ -4,12 +4,20 @@ import hashlib
 import secrets
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pandas as pd
+import polars as pl
 
 from oblitus.anonymity_enforcement import enforce_plan_targets
+from oblitus.chunked_apply import (
+    DEFAULT_CHUNK_ROWS,
+    ChunkedResult,
+    ReleasedChunk,
+    apply_in_chunks,
+)
 from oblitus.detection import ColumnFinding, scan, scan_column
 from oblitus.differential_privacy import (
     PrivacyBudget,
@@ -22,6 +30,7 @@ from oblitus.differential_privacy import (
 from oblitus.engines import (
     Engine,
     WorkingFrame,
+    collect,
     column_names,
     engine_of,
     pandas_columns,
@@ -61,6 +70,7 @@ from oblitus.synthesis import (
 )
 from oblitus.synthesis.rare_values import min_records_for
 from oblitus.table import ROW_KEY_COLUMN, Table, row_key_problem
+from oblitus.table_files import scan_table
 from oblitus.techniques import BUILTIN_TECHNIQUES, Technique, TechniqueContext
 from oblitus.token_vault import TokenVault
 from oblitus.untreated_columns import treat_untreated_columns
@@ -73,7 +83,7 @@ MIN_SECRET_KEY_BYTES = 16
 class AnonymizationResult:
     """The anonymized table plus how private and how faithful it is.
 
-    `data` is the same kind of table the plan was applied to: pandas, Polars or DuckDB.
+    `data` is the same kind of table the plan was applied to: pandas, Polars, DuckDB or Spark.
     """
 
     data: Any
@@ -129,7 +139,7 @@ class Anonymizer:
         return self._techniques
 
     def scan(self, frame: Any, *, sample_size: int = 1000) -> list[ColumnFinding]:
-        """Classify every column of a pandas, Polars or DuckDB table.
+        """Classify every column of a pandas, Polars, DuckDB or Spark table.
 
         Polars and DuckDB columns are read into pandas one at a time, so a large table
         is never held in pandas whole.
@@ -167,7 +177,7 @@ class Anonymizer:
     def apply(
         self, frame: Any, plan: AnonymizationPlan, *, vault: TokenVault | None = None
     ) -> AnonymizationResult:
-        """Run a plan on a pandas, Polars or DuckDB table and measure the result.
+        """Run a plan on a pandas, Polars, DuckDB or Spark table and measure the result.
 
         The released table comes back as the same kind of table. An anonymization plan
         that names a linking technique is refused before anything runs, and runs under
@@ -182,6 +192,46 @@ class Anonymizer:
         self.validate(frame, plan)
         context = self._context(throwaway_key=_is_anonymization(plan), vault=vault)
         return self._apply_validated(frame, plan, context)
+
+    def apply_file(
+        self,
+        source: Path,
+        destination: Path,
+        plan: AnonymizationPlan,
+        *,
+        chunk_rows: int = DEFAULT_CHUNK_ROWS,
+        vault: TokenVault | None = None,
+    ) -> ChunkedResult:
+        """Run a plan on a CSV or Parquet file in chunks of `chunk_rows` rows, for large files.
+
+        The released rows are written to `destination` one chunk at a time, so the file never
+        has to fit in memory. Only techniques that treat each row on its own can run in chunks,
+        and the plan needs a `row_key`, which must be unique across the whole file. A plan with
+        a whole-column technique, k-anonymity or l-diversity enforcement, or joint
+        microaggregation is refused with a `PlanError` that lists each reason. An anonymization
+        plan must set `shuffle_rows` to false, because a chunked run keeps the input order.
+
+        The result equals what `apply` releases for a file that fits in memory. Its protection
+        level comes from the same checks: the whole-table ones read the released file lazily, and
+        the value-by-value ones run on the same keyed sample.
+        """
+        self.validate(scan_table(source), plan)
+        context = self._context(throwaway_key=_is_anonymization(plan), vault=vault)
+
+        def release_chunk(chunk: pl.DataFrame) -> ReleasedChunk:
+            _table, original, released = self._release_columns(chunk, plan, context)
+            return collect(original), collect(released)
+
+        return apply_in_chunks(
+            source,
+            destination,
+            plan,
+            self._techniques,
+            chunk_rows=chunk_rows,
+            release_chunk=release_chunk,
+            measure_privacy=lambda frame: self._privacy(frame, plan),
+            sample_key=self._sample_key,
+        )
 
     def apply_many(
         self,
@@ -216,12 +266,10 @@ class Anonymizer:
         engine = engine_of(frame)
         if engine.is_lazy and plan.row_key is None:
             raise PlanError(
-                "a DuckDB table needs the plan's row_key: name a column that identifies each row"
+                "a DuckDB or Spark table needs the plan's row_key: "
+                "name a column that identifies each row"
             )
-        table = _table_for(frame, plan)
-        original = table.original_frame()
-        self._run_actions(table, plan, context)
-        released = table.released_frame()
+        table, original, released = self._release_columns(frame, plan, context)
 
         enforcement = enforce_plan_targets(released, plan)
         released = enforcement.data
@@ -240,6 +288,15 @@ class Anonymizer:
                 plan, self._techniques, privacy_after, sample, released_table
             ),
         )
+
+    def _release_columns(
+        self, frame: Any, plan: AnonymizationPlan, context: TechniqueContext
+    ) -> tuple[Table, WorkingFrame, WorkingFrame]:
+        """Run the plan's column actions: the table, its original rows and its released rows."""
+        table = _table_for(frame, plan)
+        original = table.original_frame()
+        self._run_actions(table, plan, context)
+        return table, original, table.released_frame()
 
     def reveal(
         self, frame: Any, plan: AnonymizationPlan, *, vault: TokenVault | None = None

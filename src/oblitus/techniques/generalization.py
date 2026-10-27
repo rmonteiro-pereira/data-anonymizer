@@ -158,7 +158,11 @@ def truncate_date(
 def _start_of_week(dates: nw.Expr) -> nw.Expr:
     midnight = dates.dt.truncate("1d")
     # Weekdays count from 1 on Monday, so the way back to Monday is 1 minus the weekday.
-    days_to_monday = 1 - midnight.dt.weekday().cast(nw.Int64)
+    # Narwhals reports a Spark Sunday as 0 instead of 7, and no engine has a weekday 0 of its
+    # own, so mapping 0 to 7 is right everywhere.
+    weekday = midnight.dt.weekday().cast(nw.Int64)
+    monday_based = nw.when(weekday == 0).then(7).otherwise(weekday)
+    days_to_monday = 1 - monday_based
     return shift_days(midnight, days_to_monday, _DAYS_TO_MONDAY)
 
 

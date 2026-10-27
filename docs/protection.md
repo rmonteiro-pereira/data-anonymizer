@@ -338,9 +338,9 @@ pseudonymization. The protection checks still compare the rows before the shuffl
 sets it to the first column found to hold a different value in nearly every row. It does
 three things:
 - Random numbers for noise are keyed on it, so the same row gets the same noise on
-  pandas, Polars and DuckDB, and on every run with the same keys.
-- A DuckDB table needs it, and its values must be unique, because a DuckDB table has no
-  fixed row order. pandas and Polars tables without one use the row position.
+  pandas, Polars, DuckDB and Spark, and on every run with the same keys.
+- A DuckDB or Spark table needs it, and its values must be unique, because such a table has
+  no fixed row order. pandas and Polars tables without one use the row position.
 - It lines up the original and released rows when utility and the value-by-value protection
   checks compare them. The key holds the original values even when the plan replaces
   the column.
@@ -432,7 +432,7 @@ can subtract it. These limits are not reported per release:
 - **Without a row key, noise follows the row position.** Reordering the input changes which
   row gets which noise, and an attacker who can line up two releases on a public column can
   average them. Set `row_key` when a table is released more than once.
-- **DuckDB sees the derived key.** On DuckDB the random numbers are computed in SQL, so the
+- **The engine sees the derived key.** On DuckDB and Spark the random numbers are computed in SQL, so the
   per-column key derived from the secret key appears in the query text and in any query log
   or profile. It reveals that column's noise, not the secret key. Do not run releases on a
   connection whose query log others can read.
@@ -457,7 +457,12 @@ and still let someone who knows their own records follow those records:
 
 ## Large tables
 
-`Anonymizer` takes pandas, Polars and DuckDB tables and returns the kind it was given.
+`Anonymizer` takes pandas, Polars, DuckDB and Spark tables and returns the kind it was given.
+A Spark DataFrame stays a Spark query until a result is read: keyed noise is computed with
+`sha2` in Spark SQL and gives the same numbers as on every other engine, and lookups are
+joined on your own session. The Spark engine is tested on `sqlframe`, which has the PySpark
+API on top of DuckDB. It has not been run on a real Spark cluster. Spark column names cannot
+contain dots or backticks.
 - k-anonymity, l-diversity, local suppression, record isolation and fingerprint columns
   are computed on the whole table by the engine that holds it. Mondrian, joint
   microaggregation, l-diversity enforcement and t-closeness collect the distinct groups (or,
@@ -472,3 +477,49 @@ and still let someone who knows their own records follow those records:
 - A DuckDB `TIMESTAMP WITH TIME ZONE` column is read in the connection's time zone, so date
   techniques see local times. Set the connection's `TimeZone` before applying a plan when the
   release must use UTC.
+- A Spark `TIMESTAMP` is read back in the session time zone, so set `spark.sql.session.timeZone`
+  before applying a plan when the release must use UTC.
+
+## Files larger than memory
+
+`oblitus apply INPUT --plan PLAN --chunk-rows N -o OUTPUT`, or `Anonymizer.apply_file`, reads a
+CSV or Parquet file N rows at a time, runs the plan's actions on each chunk and appends the
+released rows to the output. Only one chunk is in memory at once.
+
+A technique can run in chunks only when a row's result does not depend on the other rows. These
+run in chunks and release the same values as an in-memory run on a file that fits:
+`keep`, `redact`, `suppress`, `partial_mask`, `redact_entities`, `keyed_hash`,
+`scramble_characters`, `argon2_hash`, `bcrypt_hash`, `encrypt`, `format_preserving_encrypt`,
+`tokenize`, `round_numeric`, `truncate_date`, `truncate_string`, `generalize_hierarchy`,
+`laplace_noise`, `multiplicative_noise` and `date_shift`. Keyed noise streams because each
+row's numbers come from its row key. `bin_numeric` runs with a whole-number `width`, and
+`top_bottom_code` with both `lower` and `upper` fixed.
+
+These are refused, before any row is read, with a `PlanError` that lists every reason:
+- techniques that read the whole column: `normalize`, `bin_numeric` by quantiles or bins,
+  `top_bottom_code` by quantiles, `gaussian_noise` (it rescales to the column's mean and
+  deviation), `shuffle`, `rank_swap`, `microaggregate`, `scramble_categories`, `suppress_rare`,
+  `randomized_response` and `surrogate`;
+- `truncate_date` and `date_shift` on a text column, because the date layout is guessed from
+  each chunk's values; convert the column to a date type first;
+- the plan's `enforce_k_anonymity`, `enforce_l_diversity` and `joint_microaggregation`;
+- a plan without a `row_key`. The key must be unique in the whole file, which a pass over it
+  checks first;
+- an anonymization plan whose `shuffle_rows` is not `false`, because a chunked release keeps
+  the input row order. A release that lines up with the original row by row is a weakness
+  `shuffle_rows` normally removes, so decide on it yourself.
+
+None of these has a first pass that collects its statistics. Run them in memory, or on a
+DuckDB table, where the engine does the work.
+
+The protection level is computed, not assumed. After the last chunk, the whole-table checks
+(k-anonymity, l-diversity, t-closeness, record isolation, fingerprint columns) read the output
+file, and the input file for the "before" figures, lazily and with the streaming engine, so each
+pass touches only the columns it needs. The value-by-value checks use the same keyed sample of at
+most 200,000 rows as an in-memory run. The reported level, problems and figures equal an
+in-memory run's. A run that fails part-way removes its partly written output.
+
+CSV chunks are split at line breaks outside quotes. A stray quote character inside an unquoted
+field makes the chunk's row count differ from the file's, and the run stops with a message. The
+first chunk fixes the output's column types, and a later chunk that cannot be cast to them stops
+the run.

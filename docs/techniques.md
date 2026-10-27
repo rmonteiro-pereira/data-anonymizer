@@ -149,4 +149,7 @@ column's minimum and maximum would leak those two numbers.
 2. Wrap it in a `Technique`. If it is reversible, set `inverse=`. A technique that needs a
    vault reads it from `context.vault`. If its output can be tied
    back to a person, set `linkable=True`.
+   A technique that reads the whole column (statistics, distinct values, ranks) sets
+   `whole_column_reason=` with a short phrase, so `oblitus apply --chunk-rows` refuses it. Leave
+   it unset only when each row's result depends on that row alone.
 3. Pass it as `Anonymizer(extra_techniques=[...])`. Plans can then name it.

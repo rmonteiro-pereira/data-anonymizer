@@ -7,6 +7,19 @@
   real record (Gower-like, for mixed columns) and the nearest-neighbour distance ratio. With a
   holdout, they add the DCR share and a distance-based membership-inference attack with a
   bootstrap interval, and give a pass or fail verdict. See `docs/synthesis.md`.
+- **Files larger than memory.** `oblitus apply --chunk-rows N` and `Anonymizer.apply_file`
+  process a CSV or Parquet file in chunks and write the output incrementally. Keyed per-row
+  techniques release exactly what an in-memory run releases. Techniques that read the whole
+  column, k-anonymity and l-diversity enforcement, joint microaggregation, a missing `row_key`
+  and an unshuffled-order anonymization plan are refused with a `PlanError` listing every
+  reason. The protection level comes from the same whole-table checks, run lazily over the
+  written file. `Technique` has a new `whole_column_reason` field.
+
+- **Spark tables.** `Anonymizer` takes PySpark DataFrames (extra `spark`) through the same
+  engine layer as DuckDB: the work stays lazy as Spark SQL, keyed noise is computed with
+  `sha2` and equals the pandas, Polars and DuckDB values, and the plan needs a `row_key`. The
+  engine parity tests run on `sqlframe`; real PySpark tests are skipped without Java.
+
 - **Tokenization with a vault.** The `tokenize` technique replaces values with random tokens
   (optionally keeping length and format, or with a prefix) and keeps the mapping in a vault you
   pass to `apply` and `reveal`. `MemoryVault` and the SQLite-backed `SqliteVault` are built in,

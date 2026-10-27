@@ -49,9 +49,6 @@ Planned, not yet implemented:
 - **Differential privacy**: AIM synthesis. Its reference package pulls in PyTorch and JAX,
   learns column domains from the data and keeps its budget accounting inside the library (see
   [docs/differential-privacy.md](https://github.com/rmonteiro-pereira/oblitus/blob/main/docs/differential-privacy.md#limits)).
-- **Scale**: Spark tables through the same engine layer (see
-  [docs/adr/0001-dataframe-backends.md](https://github.com/rmonteiro-pereira/oblitus/blob/main/docs/adr/0001-dataframe-backends.md)), and chunked
-  processing for files larger than memory.
 
 ## Install
 
@@ -63,6 +60,8 @@ pip install oblitus
 pip install "oblitus[duckdb]"
 # microphone and camera entropy sources for `oblitus keygen`:
 pip install "oblitus[audio]" "oblitus[camera]"
+# with PySpark, for Spark DataFrames (needs Java to run Spark itself):
+pip install "oblitus[spark]"
 # with OpenDP, for differentially private aggregates:
 pip install "oblitus[opendp]"
 # with attack-based risk checks (Anonymeter):
@@ -131,8 +130,8 @@ shortened here:
 or `identifiable`, with the reason for anything short of the target.
 
 The same flow in Python. `scan`, `propose`, `validate`, `apply` and `reveal` take pandas,
-Polars and DuckDB tables and return the same kind. A DuckDB table needs the plan's
-`row_key` (see [docs/protection.md](https://github.com/rmonteiro-pereira/oblitus/blob/main/docs/protection.md)).
+Polars, DuckDB and Spark tables and return the same kind. A DuckDB or Spark table needs the
+plan's `row_key` (see [docs/protection.md](https://github.com/rmonteiro-pereira/oblitus/blob/main/docs/protection.md)).
 
 ```python
 import pandas as pd
@@ -185,7 +184,7 @@ locale for fake values, such as `pt_BR`; default `en_US`). Tables can be `.csv` 
 |---|---|
 | `oblitus scan INPUT [--sample-size N]` | Prints each column's category, sensitivity, confidence and evidence |
 | `oblitus propose INPUT [--protection P] [--fidelity F] [-o PLAN]` | Writes a plan as JSON (stdout without `-o`) |
-| `oblitus apply INPUT -o OUTPUT [--plan PLAN] [--protection P] [--fidelity F] [--report REPORT] [--attack-risks] [--row-key COLUMN] [--vault PATH]` | Applies a plan, or proposes one first. Prints the protection level reached. `--report` writes privacy, utility and protection results as JSON. `--attack-risks` also runs the Anonymeter singling-out, linkability and inference attacks, prints each risk with its confidence interval and adds them to the report (needs `pip install "oblitus[anonymeter]"`). `--row-key` overrides the plan's `row_key` |
+| `oblitus apply INPUT -o OUTPUT [--plan PLAN] [--protection P] [--fidelity F] [--report REPORT] [--attack-risks] [--row-key COLUMN] [--vault PATH] [--chunk-rows N]` | Applies a plan, or proposes one first. Prints the protection level reached. `--report` writes privacy, utility and protection results as JSON. `--attack-risks` also runs the Anonymeter singling-out, linkability and inference attacks, prints each risk with its confidence interval and adds them to the report (needs `pip install "oblitus[anonymeter]"`). `--row-key` overrides the plan's `row_key`. `--chunk-rows N` streams a CSV or Parquet file N rows at a time and writes the output incrementally, for files larger than memory. It needs `--plan` with a `row_key` and refuses, with the reasons, any technique that reads the whole column (see [docs/protection.md](docs/protection.md#files-larger-than-memory)) |
 | `oblitus apply-many MANIFEST [--protection P] [--fidelity F] [--report REPORT] [--vault PATH]` | Applies a plan to each related table listed in a JSON manifest, so one person gets the same pseudonym, token and date offset in every table. See [docs/protection.md](docs/protection.md#several-tables-in-one-call) |
 | `oblitus reveal INPUT --plan PLAN -o OUTPUT [--row-key COLUMN] [--vault PATH]` | Decrypts the columns the plan encrypted, detokenizes those it tokenized (with `--vault`), and leaves one-way columns as they are |
 | `oblitus explore-noise INPUT --column NAME -o PAGE.html [--band SD] [--max-rows N]` | Writes the interactive noise explorer for one numeric column. Columns longer than `N` values (default 200,000) are explored on a random sample |
