@@ -49,6 +49,52 @@ def test_distributions_hit_the_requested_mean_and_std(distribution, mean, std):
     assert values.std() == pytest.approx(std, rel=0.1)
 
 
+def test_a_discrete_distribution_keeps_its_minimum_when_truncated():
+    schema = DatasetSchema(
+        columns=[
+            ColumnSchema(
+                name="visits",
+                kind=ColumnKind.INTEGER,
+                distribution=Distribution.POISSON,
+                mean=3,
+                minimum=2,
+                maximum=5,
+            ),
+            ColumnSchema(
+                name="zeros",
+                kind=ColumnKind.INTEGER,
+                distribution=Distribution.POISSON,
+                mean=1,
+                minimum=0,
+            ),
+        ]
+    )
+
+    frame = _generate(schema, rows=40_000)
+    shares = frame["visits"].value_counts(normalize=True)
+
+    assert shares[2] == pytest.approx(0.312, abs=0.015)
+    assert shares[5] == pytest.approx(0.141, abs=0.015)
+    assert (frame["zeros"] == 0).mean() == pytest.approx(0.368, abs=0.015)
+
+
+@pytest.mark.parametrize(
+    "settings",
+    [
+        {"distribution": Distribution.UNIFORM, "minimum": 1, "maximum": 6},
+        {"mean": 3.5, "std": 10, "minimum": 1, "maximum": 6},
+        {"quantiles": {0.5: 3.5}, "minimum": 1, "maximum": 6},
+    ],
+)
+def test_integer_bounds_are_as_likely_as_the_values_between_them(settings):
+    schema = DatasetSchema(columns=[ColumnSchema(name="roll", kind=ColumnKind.INTEGER, **settings)])
+
+    shares = _generate(schema, rows=60_000)["roll"].value_counts(normalize=True)
+
+    assert shares[1] > 0.8 * shares[3]
+    assert shares[6] > 0.8 * shares[4]
+
+
 def test_exact_statistics_are_matched_exactly():
     schema = DatasetSchema(
         columns=[

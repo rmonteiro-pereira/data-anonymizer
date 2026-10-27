@@ -36,6 +36,11 @@ synthetic = Anonymizer(seed=1, locale="pt_BR").synthesize(10_000, schema=schema)
 | `uniform` | `minimum`, `maximum` |
 | `quantiles` | `quantiles`: probability → value, such as `{"0": 1000, "0.5": 3000, "0.9": 9000, "1": 50000}`, joined by straight lines. `minimum` and `maximum` can stand in for the 0 and 1 points |
 
+`minimum` and `maximum` truncate a discrete shape such as `poisson` without losing the
+minimum itself. On an `integer` column they are inclusive: a `uniform` 1 to 6 gives every
+face the same share, because the continuous draw is widened by half a unit at each end
+before it is rounded.
+
 ## Planted patterns
 
 Every pattern below is in [examples/churn_challenge.json](../examples/churn_challenge.json).
@@ -95,6 +100,14 @@ deviations (default 6) into either tail, ignoring the bounds.
 rather than on average:
 - numbers: exactly `mean` and `std`;
 - categories and booleans: exactly the `weights` shares.
+
+Exactness is lost, without an error, when something moves values after the rescale or
+makes the target unreachable:
+- `minimum` and `maximum` clip the rescaled values, so bounds that do not leave room for
+  the target mean and std give a different mean and std;
+- an integer column rounds, so its std is off by a small rounding error;
+- `outlier_fraction` replaces values afterwards;
+- `constraints` drop rows afterwards, and a condition can redraw rows with its own settings.
 
 **Constraints.** `constraints` are row rules such as `end_date >= start_date`. Rows that
 break one are dropped and redrawn, and unique keys are drawn again over the final rows.

@@ -28,6 +28,8 @@
 - Synthesis fixes:
   - the expression language rejects huge powers, text repetition and over-long or deeply
     nested expressions, and reports evaluation errors as `ExpressionError`;
+  - a discrete distribution (Poisson) keeps its `minimum` value when truncated, and the
+    end values of an integer column's bounds are as likely as the rest;
 - Data-science challenges, from `challenge`: train and test files, plus an answer key
   with the true drivers and the best achievable scores.
 
