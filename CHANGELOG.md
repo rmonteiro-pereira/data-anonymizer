@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **`apply_many` checks the join.** Anonymized tables that release the same column with
+  consistent codes are joined and checked for k-anonymity and inference over entities. A join that
+  singles out an entity makes every table of it `at_risk`, naming the other table and the link.
 - **Joint microaggregation handles missing values.** Records missing a listed column are
   microaggregated among records missing the same ones, or blanked when too few exist, instead
   of keeping their other values. The protection check now looks for isolated records over the

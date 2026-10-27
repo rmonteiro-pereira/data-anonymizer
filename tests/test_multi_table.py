@@ -1,6 +1,7 @@
 import json
 
 import duckdb
+import numpy as np
 import pandas as pd
 import polars as pl
 import pytest
@@ -13,6 +14,7 @@ from oblitus import (
     MemoryVault,
     PlanError,
     Protection,
+    ProtectionLevel,
 )
 from oblitus.cli import main
 from oblitus.engines import Engine
@@ -292,3 +294,94 @@ def test_cli_apply_many_rejects_a_manifest_with_no_tables(tmp_path, monkeypatch,
 
     assert exit_code == 2
     assert "error" in capsys.readouterr().err
+
+
+def _four_accounts() -> dict[str, pd.DataFrame]:
+    """Twenty rows over four accounts: a district in one table, a band and diagnosis in another."""
+    accounts = np.repeat(np.arange(4), 5)
+    return {
+        "first": pd.DataFrame({"account": accounts, "district": accounts // 2}),
+        "second": pd.DataFrame(
+            {
+                "account": accounts,
+                "band": accounts % 2,
+                "diagnosis": np.where(accounts // 2 == 0, "D", "H"),
+            }
+        ),
+    }
+
+
+def _linked_plan(quasi_identifier: str, **overrides) -> AnonymizationPlan:
+    settings = {
+        "fidelity": Fidelity.PRIVACY,
+        "protection": Protection.ANONYMIZATION,
+        "direct_identifiers": ["account"],
+        "quasi_identifiers": [quasi_identifier],
+        "actions": [ColumnAction(column="account", technique="scramble_categories")],
+        "k_target": 5,
+    }
+    settings.update(overrides)
+    return AnonymizationPlan(**settings)
+
+
+def test_two_tables_that_single_out_an_entity_when_joined_are_both_at_risk():
+    plans = {"first": _linked_plan("district"), "second": _linked_plan("band")}
+
+    results = Anonymizer(secret_key=KEY).apply_many(_four_accounts(), plans)
+
+    for name, other in [("first", "second"), ("second", "first")]:
+        protection = results[name].protection
+        assert protection.level is ProtectionLevel.AT_RISK
+        assert not protection.reached
+        problem = next(text for text in protection.problems if "joined with" in text)
+        assert repr(other) in problem
+        assert "'account'" in problem
+        assert "drop the link column" in problem
+
+
+def test_each_table_alone_is_still_anonymized():
+    frames = _four_accounts()
+
+    alone = Anonymizer(secret_key=KEY).apply(frames["first"], _linked_plan("district"))
+
+    assert alone.protection.level is ProtectionLevel.ANONYMIZED
+
+
+def test_tables_whose_join_keeps_k_stay_anonymized():
+    accounts = np.repeat(np.arange(20), 2)
+    frames = {
+        "first": pd.DataFrame({"account": accounts, "district": accounts % 2}),
+        "second": pd.DataFrame({"account": accounts, "band": accounts % 2}),
+    }
+    plans = {"first": _linked_plan("district"), "second": _linked_plan("band")}
+
+    results = Anonymizer(secret_key=KEY).apply_many(frames, plans)
+
+    assert all(r.protection.level is ProtectionLevel.ANONYMIZED for r in results.values())
+
+
+def test_a_joined_inference_names_the_sensitive_attribute():
+    accounts = np.repeat(np.arange(40), 2)
+    district = (accounts // 2) % 2
+    band = accounts % 2
+    healthy = (district == 0) & (band == 0)
+    frames = {
+        "first": pd.DataFrame({"account": accounts, "district": district}),
+        "second": pd.DataFrame(
+            {
+                "account": accounts,
+                "band": band,
+                "diagnosis": np.where(healthy, "H", "D"),
+            }
+        ),
+    }
+    plans = {
+        "first": _linked_plan("district", k_target=2),
+        "second": _linked_plan("band", k_target=2, sensitive_attributes=["diagnosis"]),
+    }
+
+    results = Anonymizer(secret_key=KEY).apply_many(frames, plans)
+
+    texts = " ".join(results["first"].protection.problems)
+    assert results["first"].protection.level is ProtectionLevel.AT_RISK
+    assert "second.diagnosis" in texts or "second.band" in texts

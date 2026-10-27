@@ -12,7 +12,7 @@ or reveal. Under GDPR Article 4(5) and the LGPD, the output is still personal da
 value is that one dataset can be joined to another, and an authorized team can get back
 to the person.
 
-**Anonymization** removes every link to people:
+**Anonymization** removes every link to people that the plan's techniques can remove:
 - A plan that names a linking technique is refused before anything runs. That covers
   keyed hashes, Argon2 and bcrypt, consistent surrogates, scrambling and encryption.
   Argon2 and bcrypt with a random salt are refused too, because anyone can test a
@@ -127,7 +127,7 @@ The checks follow the three criteria of the EDPB Guidelines 02/2026 on anonymisa
 
 | Level | Meaning |
 |---|---|
-| `anonymized` | No link to people, and every check passed |
+| `anonymized` | No linking technique and no direct identifier left, and every check above passed on this release: the quasi-identifier groups meet `k_target`, no row is unique across its discrete columns, no column is a fingerprint, noisy values do not re-link by nearest value, and no sensitive attribute fails the diversity, closeness or skew limits. For `apply_many`, the joined tables pass the same k and inference checks. This is not a proof that nobody can be re-identified: see the caveats below |
 | `at_risk` | No link to people, but a record can still be isolated or a sensitive value inferred. A column cleaned with `redact_entities` always stays here: no pattern finds names written into a sentence or a JSON field |
 | `pseudonymized` | Identifiers replaced, but a linking technique lets the key holder re-link them |
 | `identifiable` | A direct identifier was left as it was. This is checked on the data: more than 1% of a direct identifier's values surviving unchanged counts, whatever the technique. For `redact_entities`, any text that still holds a recognisable document, email or phone counts |
@@ -138,7 +138,8 @@ caveat: two known values, or one known value plus a true total, undo the scale. 
 entity with `allow_shape_change`, or use `rank`.
 
 The `anonymized` level also comes with caveats, because these checks are necessary but
-not sufficient:
+not sufficient. They only look at the columns the plan lists and at tables released in one
+call:
 - columns the detector missed are not treated;
 - free text can hide names;
 - quasi-identifiers outside the plan, or outside data an attacker holds, are not counted;
@@ -400,9 +401,16 @@ what links a person:
   any other release.
 
 Every plan is validated against its table before the first table runs, and a refused plan
-names its table. Protection is assessed per table on its own, so a table's level says nothing
-about what its columns reveal when joined to another table of the same release. On the command
-line, `oblitus apply-many` reads a manifest:
+names its table. Protection is assessed per table, and then on the tables joined. When two or
+more anonymizing plans release the same column name with consistent codes (no action, `keep`
+or `scramble_categories`), the released tables are joined on it. The check counts entities
+there, over the quasi-identifiers of all the joined tables together: a combination shared by
+fewer entities than the largest `k_target`, or a group in which a sensitive value passes the
+[skewed-group](#skewed-groups) limits, makes every table of that join `at_risk`. The problem
+names the other tables and the linking column. Fix it by dropping the link column from the
+release or by releasing the tables in separate calls, so each gets its own codes. Still not
+checked: joins on columns that differ in name, joins through values you left readable (such
+as a date), and pseudonymized tables, which join by design. On the command line, `oblitus apply-many` reads a manifest:
 
 ```json
 {"tables": {

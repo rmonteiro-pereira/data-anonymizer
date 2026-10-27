@@ -91,6 +91,33 @@ class ProtectionAssessment:
     caveats: list[str] = field(default_factory=list)
 
 
+def with_added_exposures(
+    assessment: ProtectionAssessment, exposures: list[str]
+) -> ProtectionAssessment:
+    """The assessment after more record-isolation or inference problems were found.
+
+    A release that was `anonymized` becomes `at_risk`, and loses the caveats that only
+    belong to an anonymized release. Other levels keep their level and gain the problems.
+    """
+    if not exposures:
+        return assessment
+    level = assessment.level
+    if level is ProtectionLevel.ANONYMIZED:
+        level = ProtectionLevel.AT_RISK
+    if assessment.target is Protection.ANONYMIZATION:
+        reached = level is ProtectionLevel.ANONYMIZED
+    else:
+        reached = level is not ProtectionLevel.IDENTIFIABLE
+    caveats = [c for c in assessment.caveats if c not in _CAVEATS]
+    return ProtectionAssessment(
+        level=level,
+        target=assessment.target,
+        reached=reached,
+        problems=[*assessment.problems, *exposures],
+        caveats=caveats,
+    )
+
+
 def linking_actions(plan: AnonymizationPlan, techniques: Mapping[str, Technique]) -> list[str]:
     """Return a description of every action whose output can be tied back to a person."""
     return [

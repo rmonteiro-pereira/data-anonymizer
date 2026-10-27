@@ -3,7 +3,7 @@
 import hashlib
 import secrets
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -47,12 +47,14 @@ from oblitus.evaluation import (
     compare_tables,
 )
 from oblitus.evaluation.aligned_sample import align_sample
+from oblitus.joined_tables import joined_table_problems
 from oblitus.plan import AnonymizationPlan, ColumnAction, Fidelity, Protection
 from oblitus.proposal import propose_plan
 from oblitus.protection import (
     ProtectionAssessment,
     assess_protection,
     linking_actions,
+    with_added_exposures,
 )
 from oblitus.row_order import shuffle_rows
 from oblitus.surrogates import SurrogateFactory
@@ -248,7 +250,8 @@ class Anonymizer:
         same `stream`), and tokens from the shared `vault`, so the same person gets the same
         stand-ins in every table. Plans that anonymize share one throwaway key across the
         call: codes agree between the tables of this release and cannot be linked to any other
-        release. Protection is assessed on each table on its own.
+        release. Protection is assessed on each table on its own, and then on the tables joined
+        on every column they release with the same codes, which can make a table `at_risk`.
         """
         self._validate_many(frames, plans)
         anonymizing = self._context(throwaway_key=True, vault=vault)
@@ -258,7 +261,7 @@ class Anonymizer:
             plan = plans[name]
             context = anonymizing if _is_anonymization(plan) else pseudonymizing
             results[name] = self._apply_validated(frame, plan, context)
-        return results
+        return _with_join_problems(results, plans)
 
     def _apply_validated(
         self, frame: Any, plan: AnonymizationPlan, context: TechniqueContext
@@ -573,6 +576,18 @@ def _randomness_key(secret_key: bytes | None, seed: int | None) -> bytes:
     else:
         material = secrets.token_bytes(32)
     return hashlib.sha256(material).digest()
+
+
+def _with_join_problems(
+    results: dict[str, AnonymizationResult], plans: Mapping[str, AnonymizationPlan]
+) -> dict[str, AnonymizationResult]:
+    problems = joined_table_problems({name: r.data for name, r in results.items()}, plans)
+    return {
+        name: replace(
+            result, protection=with_added_exposures(result.protection, problems.get(name, []))
+        )
+        for name, result in results.items()
+    }
 
 
 def _missing_listed_columns(columns: list[str], plan: AnonymizationPlan) -> list[str]:
