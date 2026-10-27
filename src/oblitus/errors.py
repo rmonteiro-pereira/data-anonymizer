@@ -15,3 +15,7 @@ class SchemaError(AnonymizerError):
 
 class TableFormatError(AnonymizerError):
     """A table file has an extension the library cannot read or write."""
+
+
+class MissingExtraError(AnonymizerError, ImportError):
+    """A feature needs an optional dependency that is not installed."""

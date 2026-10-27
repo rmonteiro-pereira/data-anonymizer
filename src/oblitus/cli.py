@@ -13,10 +13,13 @@ from collections.abc import Sequence
 from dataclasses import asdict
 from pathlib import Path
 
+import pandas as pd
+import polars as pl
 from pydantic import ValidationError
 
 from oblitus.anonymizer import AnonymizationResult, Anonymizer
 from oblitus.errors import AnonymizerError, PlanError
+from oblitus.evaluation import AttackRiskReport, assess_attack_risks
 from oblitus.noise_explorer import explore_noise, save_page
 from oblitus.noise_explorer.sweep import DEFAULT_MAX_ROWS
 from oblitus.plan import AnonymizationPlan, Fidelity, Protection
@@ -98,6 +101,11 @@ def _build_parser() -> argparse.ArgumentParser:
     _add_fidelity(apply_parser)
     _add_protection(apply_parser)
     apply_parser.add_argument("--report", type=Path, help="write privacy and utility metrics")
+    apply_parser.add_argument(
+        "--attack-risks",
+        action="store_true",
+        help="also run singling-out, linkability and inference attacks (needs oblitus[anonymeter])",
+    )
     _add_row_key(apply_parser)
     apply_parser.set_defaults(handler=_apply)
 
@@ -216,8 +224,9 @@ def _apply(anonymizer: Anonymizer, arguments: argparse.Namespace) -> None:
 
     result = anonymizer.apply(frame, _with_row_key(plan, arguments.row_key))
     write_table(result.data, arguments.output)
+    attacks = _run_attacks(frame, result) if arguments.attack_risks else None
     if arguments.report is not None:
-        arguments.report.write_text(_report_json(result) + "\n", encoding="utf-8")
+        arguments.report.write_text(_report_json(result, attacks) + "\n", encoding="utf-8")
     print(
         f"wrote {len(result.data)} rows to {arguments.output}; "
         f"k-anonymity {result.privacy_before.k_anonymity} -> {result.privacy_after.k_anonymity}; "
@@ -229,7 +238,27 @@ def _apply(anonymizer: Anonymizer, arguments: argparse.Namespace) -> None:
         raise ProtectionNotReachedError(f"the {plan.protection.value} target was not reached")
 
 
-def _report_json(result: AnonymizationResult) -> str:
+def _run_attacks(original: pl.DataFrame, result: AnonymizationResult) -> AttackRiskReport:
+    """Attack the released table with Anonymeter and print each success rate."""
+    report = assess_attack_risks(
+        original.to_pandas(),
+        _as_pandas(result.data),
+        quasi_identifiers=result.plan.quasi_identifiers,
+        sensitive_attributes=result.plan.sensitive_attributes,
+    )
+    for risk in report.risks:
+        interval = f"{risk.ci_low:.2f} to {risk.ci_high:.2f}"
+        print(f"  attack {risk.attack}: risk {risk.risk:.2f} ({interval})")
+    for attack, reason in report.skipped.items():
+        print(f"  attack {attack} skipped: {reason}")
+    return report
+
+
+def _as_pandas(table) -> pd.DataFrame:
+    return table if isinstance(table, pd.DataFrame) else table.to_pandas()
+
+
+def _report_json(result: AnonymizationResult, attacks: AttackRiskReport | None = None) -> str:
     report = {
         "plan": result.plan.model_dump(mode="json"),
         "privacy_before": asdict(result.privacy_before),
@@ -237,6 +266,8 @@ def _report_json(result: AnonymizationResult) -> str:
         "protection": asdict(result.protection),
         "utility": asdict(result.utility),
     }
+    if attacks is not None:
+        report["attack_risks"] = asdict(attacks)
     return json.dumps(report, indent=2)
 
 
