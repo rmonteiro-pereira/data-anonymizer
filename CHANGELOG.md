@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Joint microaggregation handles missing values.** Records missing a listed column are
+  microaggregated among records missing the same ones, or blanked when too few exist, instead
+  of keeping their other values. The protection check now looks for isolated records over the
+  listed columns.
 - **Skewed groups are flagged.** Under anonymization, a quasi-identifier group where one sensitive
   value is at least 90% of the group and at least 30 points above its share in the table makes
   the release `at_risk`, even when l-diversity passes. The limits are the plan fields

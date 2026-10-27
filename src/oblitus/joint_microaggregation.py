@@ -13,8 +13,13 @@ group's mean in each column:
    centroid, and the rest is the last group. With fewer than 2k left, they are one group.
 
 Every group holds at least k records, so every released vector is shared by k records. Each
-column keeps its mean. Records with a missing value in any chosen column are left as they
-are, since they have no position in the space. The work is quadratic in the number of rows.
+column keeps its mean. A record with a missing value has no position in the full space, and
+leaving its other values alone would single it out. Records are therefore grouped by which of
+the chosen columns they have, and each such set of records is microaggregated over the columns
+they share. When a set holds fewer than k records, their chosen columns are blanked instead,
+and when all the blanked records together are still fewer than k, the smallest groups are
+blanked with them, so the blank records are not a group of their own to single out. The work is
+quadratic in the number of rows.
 """
 
 import math
@@ -42,10 +47,11 @@ class JointMicroaggregationOutcome:
 def microaggregate_jointly(
     frame: Any, columns: Sequence[str], group_size: int, *, row_key: str | None = None
 ) -> JointMicroaggregationOutcome:
-    """Replace the numeric `columns` of every complete record by the mean of its MDAV group.
+    """Replace the numeric `columns` of every record by the mean of its MDAV group.
 
     Takes a pandas, Polars or DuckDB table, or a Narwhals frame, and returns the same kind.
-    `row_key` names a column with a different value in every row. A DuckDB table needs it,
+    A record missing some of the columns joins the records missing the same ones. `row_key`
+    names a column with a different value in every row. A DuckDB table needs it,
     because its rows have no fixed order. Pandas and Polars tables use the row position.
     """
     if group_size < 2:
@@ -112,13 +118,12 @@ def _microaggregate(
     if len(set(keys)) != len(keys):
         raise ValueError(f"row key {key!r} repeats; every row needs its own key")
     values = rows.select(*[nw.col(column).cast(nw.Float64) for column in columns]).to_numpy()
-    complete = np.flatnonzero(~np.isnan(values).any(axis=1))
-    groups = [
-        complete[members] for members in mdav_groups(_standardized(values[complete]), group_size)
-    ]
+    groups, blanked = _groups_by_pattern(values, group_size)
     averaged = values.copy()
-    for members in groups:
-        averaged[members] = values[members].mean(axis=0)
+    for group in groups:
+        cells = np.ix_(group.members, group.columns)
+        averaged[cells] = values[cells].mean(axis=0)
+    averaged[blanked] = np.nan
 
     replacements = {
         column: (_column_values(averaged[:, position], schema[column]), schema[column])
@@ -128,6 +133,58 @@ def _microaggregate(
     if row_key is None:
         rewritten = rewritten.drop(key)
     return JointMicroaggregationOutcome(rewritten, len(groups))
+
+
+@dataclass(frozen=True, slots=True)
+class _PatternGroup:
+    """Records that share a missingness pattern, and the chosen columns they all have."""
+
+    members: np.ndarray
+    columns: np.ndarray
+
+
+def _groups_by_pattern(
+    values: np.ndarray, group_size: int
+) -> tuple[list[_PatternGroup], np.ndarray]:
+    """MDAV groups per missingness pattern, and the rows whose columns must be blanked.
+
+    A pattern with fewer than `group_size` records cannot form a group, so its records are
+    blanked. Records that are blank already count toward the size of the blank set.
+    """
+    present = ~np.isnan(values)
+    patterns, pattern_of_row = np.unique(present, axis=0, return_inverse=True)
+    groups: list[_PatternGroup] = []
+    blanked: list[np.ndarray] = []
+    already_blank = 0
+    for number, pattern in enumerate(patterns):
+        rows = np.flatnonzero(pattern_of_row.ravel() == number)
+        columns = np.flatnonzero(pattern)
+        if columns.size == 0:
+            already_blank += rows.size
+        elif rows.size < group_size:
+            blanked.append(rows)
+        else:
+            points = _standardized(values[rows[:, None], columns])
+            groups += [
+                _PatternGroup(rows[found], columns) for found in mdav_groups(points, group_size)
+            ]
+    if not blanked:
+        return groups, np.array([], dtype=int)
+    groups, blanked = _top_up_blank_set(groups, blanked, already_blank, group_size)
+    return groups, np.concatenate(blanked)
+
+
+def _top_up_blank_set(
+    groups: list[_PatternGroup], blanked: list[np.ndarray], already_blank: int, group_size: int
+) -> tuple[list[_PatternGroup], list[np.ndarray]]:
+    """Blank the smallest groups too until the blank records number at least `group_size`."""
+    remaining = sorted(groups, key=lambda group: group.members.size)
+    count = already_blank + sum(rows.size for rows in blanked)
+    while count < group_size and remaining:
+        smallest = remaining.pop(0)
+        blanked.append(smallest.members)
+        count += smallest.members.size
+    return remaining, blanked
 
 
 def _row_key_of(frame: WorkingFrame, row_key: str | None) -> tuple[str, WorkingFrame]:

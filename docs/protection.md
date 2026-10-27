@@ -228,7 +228,15 @@ shared by at least `group_size` records and every column keeps its mean. The ste
 the column actions and before k-anonymity is enforced, on the whole table, and it does not
 change a column's dtype: integers are rounded back to integers.
 
-Limits: a record with a missing value in any listed column is left as it is. The work grows
+A record with a missing value has no position in the full space, and keeping its other values
+would single it out. Records are grouped by which listed columns they have, and each such set
+is microaggregated over the columns it shares, in groups of at least `group_size`. A set with
+fewer records than that has its listed columns blanked. When the blanked records are still
+fewer than `group_size`, the smallest groups are blanked with them, so no blank record stands
+alone. The protection check also counts the listed columns when it looks for records that are
+unique across the released columns, however many distinct values they hold.
+
+Limits: the work grows
 with the square of the number of rows, so very large tables should be sampled or grouped
 first. Someone who knows all but one record of a group can subtract them from the mean to get
 the last one, as with `microaggregate`.

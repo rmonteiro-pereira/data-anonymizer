@@ -340,7 +340,15 @@ def _isolated_records(plan: AnonymizationPlan, released: WorkingFrame) -> list[s
         return []
     distinct = first_row(released.select(*[nw.col(c).n_unique().alias(c) for c in candidates]))
     discrete = [column for column in candidates if distinct[column] <= DISCRETE_LIMIT]
-    columns = list(dict.fromkeys([*plan.quasi_identifiers, *discrete]))
+    microaggregated = [
+        column
+        for step in plan.joint_microaggregation
+        for column in step.columns
+        if column in candidates
+    ]
+    # Microaggregated columns have many distinct values by nature, yet each record's vector over
+    # them must still be shared, so they count whatever their number of distinct values.
+    columns = list(dict.fromkeys([*plan.quasi_identifiers, *discrete, *microaggregated]))
     columns = [column for column in columns if column in names]
     if not columns:
         return []

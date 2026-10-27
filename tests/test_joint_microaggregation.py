@@ -59,14 +59,50 @@ def test_integer_columns_stay_whole_numbers():
     assert pd.api.types.is_integer_dtype(outcome.data["visits"])
 
 
-def test_records_with_a_gap_in_a_chosen_column_are_left_as_they_are():
+def test_a_lone_record_with_a_gap_does_not_keep_its_other_values():
     frame = _measurements(30)
     frame.loc[3, "height"] = None
 
     outcome = microaggregate_jointly(frame, ["height", "weight"], 3)
 
-    assert pd.isna(outcome.data.loc[3, "height"])
-    assert outcome.data.loc[3, "weight"] == frame.loc[3, "weight"]
+    assert pd.isna(outcome.data.loc[3, "weight"])
+    assert outcome.data.loc[3, "weight"] != frame.loc[3, "weight"]
+
+
+def test_blanked_records_number_at_least_the_group_size():
+    frame = _measurements(30)
+    frame.loc[3, "height"] = None
+
+    outcome = microaggregate_jointly(frame, ["height", "weight"], 3)
+
+    blank = outcome.data[["height", "weight"]].isna().all(axis=1)
+    assert blank.sum() >= 3
+    shared = outcome.data[~blank].groupby(["height", "weight"]).size()
+    assert shared.min() >= 3
+
+
+def test_records_missing_the_same_column_are_aggregated_among_themselves_on_the_others():
+    frame = _measurements(60)
+    frame.loc[:11, "height"] = None
+
+    outcome = microaggregate_jointly(frame, ["height", "weight"], 4)
+
+    gaps = outcome.data.iloc[:12]
+    assert gaps["height"].isna().all()
+    assert gaps["weight"].notna().all()
+    assert gaps.groupby("weight").size().min() >= 4
+    assert gaps["weight"].mean() == pytest.approx(frame.loc[:11, "weight"].mean())
+
+
+def test_an_outlier_with_a_gap_is_not_released_with_its_own_value():
+    rng = np.random.default_rng(812)
+    frame = pd.DataFrame(rng.normal(size=(251, 2)), columns=["height", "weight"])
+    frame.loc[0, ["height", "weight"]] = [999.123, np.nan]
+    plan = _plan(row_key=None, actions=[])
+
+    result = Anonymizer(seed=1).apply(frame, plan)
+
+    assert not (result.data["height"] == 999.123).any()
 
 
 def test_a_text_column_is_refused():
@@ -126,3 +162,16 @@ def test_a_plan_listing_a_missing_column_for_microaggregation_is_refused():
 def test_one_column_is_not_enough_for_a_joint_step():
     with pytest.raises(ValueError):
         JointMicroaggregation(columns=["height"])
+
+
+def test_the_protection_check_counts_microaggregated_columns_even_with_many_distinct_values():
+    from oblitus.engines import as_working_frame
+    from oblitus.protection import _isolated_records
+
+    rng = np.random.default_rng(5)
+    released = pd.DataFrame(rng.normal(size=(200, 2)), columns=["height", "weight"])
+
+    problems = _isolated_records(_plan(actions=[]), as_working_frame(released))
+
+    assert problems
+    assert "height" in problems[0]
