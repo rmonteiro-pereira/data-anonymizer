@@ -23,7 +23,7 @@ from oblitus.anonymizer import AnonymizationResult, Anonymizer
 from oblitus.differential_privacy import BudgetReport, PrivacyBudget, Statistic
 from oblitus.entropy_sources import sources_by_name
 from oblitus.errors import AnonymizerError, PlanError, SchemaError
-from oblitus.evaluation import AttackRiskReport, assess_attack_risks
+from oblitus.evaluation import AttackRiskReport, SyntheticPrivacyReport, assess_attack_risks
 from oblitus.key_generation import GeneratedKey, SourceStatus, generate_key
 from oblitus.noise_explorer import explore_noise, save_page
 from oblitus.noise_explorer.sweep import DEFAULT_MAX_ROWS
@@ -165,6 +165,20 @@ def _build_parser() -> argparse.ArgumentParser:
     private_synth_parser.add_argument("--rows", type=int, default=None)
     _add_privacy_budget(private_synth_parser)
     private_synth_parser.set_defaults(handler=_dp_synthesize)
+
+    check_parser = commands.add_parser(
+        "check-synthetic",
+        help="check whether a synthetic table memorized the real records it was learned from",
+    )
+    check_parser.add_argument("synthetic", type=Path)
+    check_parser.add_argument("--real", type=Path, required=True, help="the training table")
+    check_parser.add_argument(
+        "--holdout", type=Path, help="real records the generator never saw; enables the DCR share"
+    )
+    check_parser.add_argument(
+        "--report", type=Path, help="also write the measurements and findings as JSON"
+    )
+    check_parser.set_defaults(handler=_check_synthetic)
 
     aggregate_parser = commands.add_parser(
         "dp-aggregate", help="release differentially private counts, sums and means per group"
@@ -477,6 +491,49 @@ def _dp_synthesize(anonymizer: Anonymizer, arguments: argparse.Namespace) -> Non
     print(_budget_line(result.budget))
     pairs = ", ".join(f"({first}, {second})" for first, second in result.tree_edges)
     print(f"column pairs measured: {pairs or 'none'}")
+
+
+def _check_synthetic(anonymizer: Anonymizer, arguments: argparse.Namespace) -> None:
+    holdout = None
+    if arguments.holdout is not None:
+        holdout = read_table(arguments.holdout).to_pandas()
+    report = anonymizer.check_synthetic(
+        read_table(arguments.synthetic).to_pandas(),
+        read_table(arguments.real).to_pandas(),
+        holdout,
+    )
+    for line in _synthetic_privacy_lines(report):
+        print(line)
+    if arguments.report is not None:
+        arguments.report.write_text(json.dumps(asdict(report), indent=2), encoding="utf-8")
+    if not report.passed:
+        raise ProtectionNotReachedError("the synthetic table shows signs of memorization")
+
+
+def _synthetic_privacy_lines(report: SyntheticPrivacyReport) -> list[str]:
+    lines = [
+        f"compared {report.n_synthetic} synthetic rows with {report.n_train} training rows "
+        f"on {len(report.columns)} columns",
+        f"exact copies of training rows: {report.exact_copy_share:.1%}",
+        f"median distance to the closest training row: {report.median_distance_to_train:.3f}",
+        f"median nearest-neighbour distance ratio: {report.median_nndr:.3f}",
+    ]
+    if report.dcr_share is not None and report.membership is not None:
+        attack = report.membership
+        lines.append(
+            f"closer to training than to holdout: {report.dcr_share:.1%} "
+            f"({report.dcr_share_ci_low:.1%} to {report.dcr_share_ci_high:.1%}; 50% is ideal)"
+        )
+        lines.append(
+            f"membership attack: AUC {attack.auc:.3f}, advantage {attack.advantage:.3f} "
+            f"({attack.advantage_ci_low:.3f} to {attack.advantage_ci_high:.3f})"
+        )
+    else:
+        lines.append("no holdout given: skipped the DCR share and the membership attack")
+    verdict = "pass" if report.passed else "FAIL"
+    lines.append(f"verdict: {verdict}")
+    lines.extend(f"  finding: {finding}" for finding in report.findings)
+    return lines
 
 
 def _dp_aggregate(anonymizer: Anonymizer, arguments: argparse.Namespace) -> None:

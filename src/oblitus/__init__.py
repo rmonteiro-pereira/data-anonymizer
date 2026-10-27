@@ -12,7 +12,12 @@ from oblitus.errors import (
     SchemaError,
     TableFormatError,
 )
-from oblitus.evaluation import PrivacyReport, UtilityReport
+from oblitus.evaluation import (
+    PrivacyReport,
+    SyntheticPrivacyReport,
+    SyntheticPrivacyThresholds,
+    UtilityReport,
+)
 from oblitus.generalization_hierarchies import GeneralizationHierarchy
 from oblitus.plan import (
     AnonymizationPlan,
@@ -68,6 +73,8 @@ __all__ = [
     "SqliteVault",
     "Statistic",
     "StatisticalEffect",
+    "SyntheticPrivacyReport",
+    "SyntheticPrivacyThresholds",
     "TableFormatError",
     "Technique",
     "TechniqueContext",

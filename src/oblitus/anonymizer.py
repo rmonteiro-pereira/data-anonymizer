@@ -30,8 +30,11 @@ from oblitus.engines import (
 from oblitus.errors import PlanError, SchemaError
 from oblitus.evaluation import (
     PrivacyReport,
+    SyntheticPrivacyReport,
+    SyntheticPrivacyThresholds,
     UtilityReport,
     assess_privacy,
+    assess_synthetic_privacy,
     compare_tables,
 )
 from oblitus.evaluation.aligned_sample import align_sample
@@ -378,6 +381,26 @@ class Anonymizer:
         """
         rng = np.random.default_rng(self._seed)
         return synthesize_mst(reference, domains, budget, rng, rows)
+
+    def check_synthetic(
+        self,
+        synthetic: pd.DataFrame,
+        train: pd.DataFrame,
+        holdout: pd.DataFrame | None = None,
+        *,
+        thresholds: SyntheticPrivacyThresholds | None = None,
+    ) -> SyntheticPrivacyReport:
+        """Check whether a synthetic table memorized the real records it was learned from.
+
+        `train` is the table the generator saw; `holdout` is real data from the same population
+        that it never saw. The report has the share of exact copies, the distance to the closest
+        real record, and, with a holdout, the DCR share and a membership-inference attack. Its
+        `findings` list what crossed a threshold, and `passed` is true when nothing did. A fixed
+        `seed` makes the sampling and the bootstrap reproducible.
+        """
+        return assess_synthetic_privacy(
+            synthetic, train, holdout, thresholds=thresholds, seed=self._seed
+        )
 
     def aggregate_private(
         self,

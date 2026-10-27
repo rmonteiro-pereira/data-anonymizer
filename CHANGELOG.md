@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Synthetic-data checks.** `Anonymizer.check_synthetic` and `oblitus check-synthetic SYNTHETIC
+  --real TRAIN [--holdout HOLDOUT]` measure the share of exact copies, the distance to the closest
+  real record (Gower-like, for mixed columns) and the nearest-neighbour distance ratio. With a
+  holdout, they add the DCR share and a distance-based membership-inference attack with a
+  bootstrap interval, and give a pass or fail verdict. See `docs/synthesis.md`.
 - **Tokenization with a vault.** The `tokenize` technique replaces values with random tokens
   (optionally keeping length and format, or with a prefix) and keeps the mapping in a vault you
   pass to `apply` and `reveal`. `MemoryVault` and the SQLite-backed `SqliteVault` are built in,

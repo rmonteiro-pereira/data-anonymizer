@@ -215,6 +215,43 @@ differentially private, so it protects every record against any attacker, and th
 accuracy. The domain of every column (its values, or its bounds and bins) must be declared, not
 read from the data. See [differential-privacy.md](differential-privacy.md).
 
+## Checking a synthetic table for memorization
+
+A generator can copy the records it learned from. `Anonymizer.check_synthetic(synthetic, train,
+holdout)` and `oblitus check-synthetic SYNTHETIC --real TRAIN [--holdout HOLDOUT]` measure that.
+`train` is the table the generator saw. `holdout` is real data from the same population that it
+never saw; give one to get the last two tests.
+
+Distances are Gower-like: the mean over the shared columns of a per-column distance between 0 and
+1. A category column counts 0 for equal values and 1 for different ones. A number or date counts
+its gap in robust standard deviations of the training table (interquartile range over 1.349),
+divided by 3 and capped at 1. A blank equals only a blank. Each table is cut to at most 10,000
+random rows (`max_rows`), and train and holdout are cut to the same size, because a larger table
+is closer to everything. The distances are computed in chunks, so memory stays small, but time
+grows with the product of the row counts, which is why there is a cap.
+
+| Measurement | Meaning |
+|---|---|
+| Exact copies | Share of synthetic rows whose distance to a training row is 0 |
+| Distance to closest record (DCR) | Median over synthetic rows of the distance to the nearest training row (and holdout row) |
+| NNDR | Nearest over second-nearest distance; near 0 means a row sits on top of one training record |
+| DCR share | Share of synthetic rows closer to the training table than to the holdout; 50% means no memorization, ties count half |
+| Membership attack | The attacker holds the training rows and the holdout rows, guesses "member" for those closest to the synthetic data. AUC is 0.5 when it learns nothing; advantage is 2 * AUC - 1 |
+
+The verdict fails on any of these findings, and passes when there are none:
+
+- **Exact copies**: the share of synthetic rows equal to a training row exceeds the share equal
+  to a holdout row by more than 1%. Rows that repeat in a low-cardinality population match the
+  holdout too, so they are not counted. Without a holdout, the limit applies to the share itself.
+- **DCR share**: above 55%, and its 95% bootstrap interval excludes 50%.
+- **Membership attack**: the 95% bootstrap interval of the advantage lies entirely above 0.
+
+Change the limits with `SyntheticPrivacyThresholds`. The command prints the measurements, writes
+them as JSON with `--report`, and exits 3 when there is a finding. This is a screening, not a
+guarantee: the bootstrap covers the sampling of the candidate records, not the randomness of the
+generator, so a small advantage (about 0.05) on a leak-free generator can occasionally cross the
+line. Only a differential-privacy mechanism bounds what an attacker can learn.
+
 ## Data-science challenges
 
 Add a `question` to a schema:
