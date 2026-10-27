@@ -173,7 +173,10 @@ def test_anonymized_tables_of_one_call_share_codes_and_differ_from_the_next_call
         "orders": _plan("order_id", actions, Protection.ANONYMIZATION),
     }
     frames = {"customers": _customers(), "orders": _orders()}
-    anonymizer = Anonymizer(secret_key=KEY)
+    # Fixed throwaway keys keep the test deterministic: with four stores, two fresh random
+    # orders of the codes coincide once in 24 runs.
+    throwaway_keys = iter([b"first-call-throwaway-key-000000", b"second-call-throwaway-key-11111"])
+    anonymizer = Anonymizer(secret_key=KEY, throwaway_key_source=lambda: next(throwaway_keys))
 
     first = anonymizer.apply_many(frames, plans)
     second = anonymizer.apply_many(frames, plans)
