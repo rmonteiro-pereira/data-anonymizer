@@ -6,9 +6,10 @@ The checks follow the three criteria of the EDPB's 2026 anonymisation guidelines
   whose spread l-diversity measures;
 - no linkage: no keyed, consistent or reversible technique, and noisy numbers do
   not lead back to their records by nearest value;
-- no inference: each group holds at least l distinct sensitive values, and no
-  sensitive number left in its original units lets one contributor's size be read
-  off a segment it dominates.
+- no inference: each group holds at least l distinct sensitive values, no group's sensitive
+  distribution lies farther than the plan's t-closeness target (when one is set) from the
+  whole table's, and no sensitive number left in its original units lets one contributor's
+  size be read off a segment it dominates.
 Record isolation and fingerprints are counted on the whole released table. The checks that
 compare each released value with its original run on an aligned in-memory sample of at
 most `MAX_SAMPLE_ROWS` rows.
@@ -212,6 +213,13 @@ def _exposures(plan: AnonymizationPlan, privacy: PrivacyReport) -> list[str]:
                 f"some groups hold only {diversity} distinct value(s) of {attribute}, "
                 f"below the l-diversity target of {plan.l_target}"
             )
+    if plan.t_target is not None:
+        for attribute, distance in privacy.t_closeness.items():
+            if distance > plan.t_target:
+                problems.append(
+                    f"some groups differ from the whole table in {attribute} by {distance:.2f}, "
+                    f"above the t-closeness target of {plan.t_target:g}"
+                )
     return problems
 
 

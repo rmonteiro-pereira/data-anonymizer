@@ -6,7 +6,16 @@ from oblitus.anonymizer import AnonymizationResult, Anonymizer
 from oblitus.detection import ColumnFinding
 from oblitus.errors import AnonymizerError, PlanError, SchemaError, TableFormatError
 from oblitus.evaluation import PrivacyReport, UtilityReport
-from oblitus.plan import AnonymizationPlan, ColumnAction, Fidelity, Protection
+from oblitus.generalization_hierarchies import GeneralizationHierarchy
+from oblitus.plan import (
+    AnonymizationPlan,
+    ColumnAction,
+    Fidelity,
+    JointMicroaggregation,
+    KAnonymityMethod,
+    Protection,
+    RangeStyle,
+)
 from oblitus.protection import ProtectionAssessment, ProtectionLevel
 from oblitus.synthesis import ColumnSchema, DatasetSchema, infer_schema
 from oblitus.taxonomy import ColumnKind, DataCategory, Sensitivity
@@ -33,11 +42,15 @@ __all__ = [
     "DataCategory",
     "DatasetSchema",
     "Fidelity",
+    "GeneralizationHierarchy",
+    "JointMicroaggregation",
+    "KAnonymityMethod",
     "PlanError",
     "PrivacyReport",
     "Protection",
     "ProtectionAssessment",
     "ProtectionLevel",
+    "RangeStyle",
     "SchemaError",
     "Sensitivity",
     "StatisticalEffect",

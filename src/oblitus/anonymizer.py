@@ -9,6 +9,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from oblitus.anonymity_enforcement import enforce_plan_targets
 from oblitus.detection import ColumnFinding, scan, scan_column
 from oblitus.engines import (
     Engine,
@@ -26,7 +27,6 @@ from oblitus.evaluation import (
     compare_tables,
 )
 from oblitus.evaluation.aligned_sample import align_sample
-from oblitus.local_suppression import enforce_k_anonymity
 from oblitus.plan import AnonymizationPlan, ColumnAction, Fidelity, Protection
 from oblitus.proposal import propose_plan
 from oblitus.protection import (
@@ -168,22 +168,16 @@ class Anonymizer:
         self._run_actions(table, plan, context)
         released = table.released_frame()
 
-        suppressed_cells = 0
-        suppressed_columns: list[str] = []
-        if plan.enforce_k_anonymity:
-            outcome = enforce_k_anonymity(released, plan.quasi_identifiers, plan.k_target)
-            released = outcome.data
-            suppressed_cells = outcome.suppressed_cells
-            if suppressed_cells:
-                suppressed_columns = list(plan.quasi_identifiers)
+        enforcement = enforce_plan_targets(released, plan)
+        released = enforcement.data
 
         privacy_after = self._privacy(released, plan)
         sample = align_sample(original, released, engine, key=self._sample_key)
         released_table = released.drop(ROW_KEY_COLUMN)
         return AnonymizationResult(
-            data=_user_data(table, released, plan, context, suppressed_columns),
+            data=_user_data(table, released, plan, context, enforcement.changed_columns),
             plan=plan,
-            suppressed_cells=suppressed_cells,
+            suppressed_cells=enforcement.suppressed_cells,
             privacy_before=self._privacy(original, plan),
             privacy_after=privacy_after,
             utility=compare_tables(sample.original, sample.released),
@@ -317,6 +311,7 @@ class Anonymizer:
             plan.quasi_identifiers,
             plan.sensitive_attributes,
             k_target=plan.k_target,
+            t_target=plan.t_target,
         )
 
 
@@ -378,6 +373,10 @@ def _missing_listed_columns(columns: list[str], plan: AnonymizationPlan) -> list
         "sensitive_attributes": plan.sensitive_attributes,
         "entity_column": [plan.entity_column] if plan.entity_column else [],
         "row_key": [plan.row_key] if plan.row_key else [],
+        "hierarchies": list(plan.hierarchies),
+        "joint_microaggregation": [
+            column for step in plan.joint_microaggregation for column in step.columns
+        ],
     }
     return [
         f"{field} names {column!r}, which is not in the table"

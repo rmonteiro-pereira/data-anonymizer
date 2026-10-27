@@ -324,6 +324,15 @@ _BUILTINS = (
         "Keep only the first characters, such as a postal code's region.",
     ),
     Technique(
+        "generalize_hierarchy",
+        _GENERAL,
+        _DISTORTS,
+        _TEXT_LIKE | _CATEGORICAL,
+        generalization.generalize_hierarchy,
+        "Replace values with their stand-in at a level of a hierarchy, such as a postal "
+        "code's region.",
+    ),
+    Technique(
         "top_bottom_code",
         _GENERAL,
         _DISTRIBUTION,

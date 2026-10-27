@@ -58,6 +58,7 @@ EXPRESSION_TECHNIQUES = [
     ("truncate_string", "email", {"keep": 6, "pad_char": "*"}),
     ("top_bottom_code", "amount", {"lower_quantile": 0.1, "upper_quantile": 0.9}),
     ("suppress_rare", "store", {"min_count": 12, "replacement": "OTHER"}),
+    ("generalize_hierarchy", "email", {"hierarchy": {"prefix_lengths": [6, 3]}, "level": 2}),
     ("normalize", "amount", {}),
     (
         "normalize",

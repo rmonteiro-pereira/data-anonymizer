@@ -9,6 +9,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from oblitus.generalization_hierarchies import GeneralizationHierarchy
+
 
 class Fidelity(StrEnum):
     """What the plan protects first when privacy and analytic usefulness conflict.
@@ -35,6 +37,46 @@ class Protection(StrEnum):
 
     PSEUDONYMIZATION = "pseudonymization"
     ANONYMIZATION = "anonymization"
+
+
+class KAnonymityMethod(StrEnum):
+    """How `enforce_k_anonymity` makes every quasi-identifier combination shared by k rows.
+
+    `local_suppression` blanks the quasi-identifier cells of rows in small groups and
+    changes nothing else. `mondrian` cuts the rows into groups of at least k on the
+    quasi-identifiers and replaces every cell with its group's range or set of values, so no
+    cell is blank but every quasi-identifier column becomes coarser.
+    """
+
+    LOCAL_SUPPRESSION = "local_suppression"
+    MONDRIAN = "mondrian"
+
+
+class RangeStyle(StrEnum):
+    """How Mondrian writes the numbers and dates of a group: its `lo-hi` range or its midpoint."""
+
+    RANGE = "range"
+    MIDPOINT = "midpoint"
+
+
+class JointMicroaggregation(BaseModel):
+    """Several numeric columns replaced together, in groups of at least `group_size` records.
+
+    Records are grouped by their distance over all the columns at once (the MDAV method), and
+    each column then holds its group's mean. Every released vector is shared by at least
+    `group_size` records.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    columns: list[str] = Field(min_length=2)
+    group_size: int = Field(default=3, ge=2)
+
+    @model_validator(mode="after")
+    def _columns_are_distinct(self) -> "JointMicroaggregation":
+        if len(set(self.columns)) != len(self.columns):
+            raise ValueError("a column is listed more than once")
+        return self
 
 
 class ColumnAction(BaseModel):
@@ -65,6 +107,18 @@ class AnonymizationPlan(BaseModel):
     `l_target` is the fewest distinct sensitive values each such group must hold for
     the result to count as anonymized.
 
+    `k_anonymity_method` chooses how that is done: local suppression (the default) or
+    Mondrian generalization, which writes each group's range (or midpoint, with
+    `range_style`) in place of the quasi-identifier. `hierarchies` maps a column to a
+    generalization hierarchy that Mondrian uses to describe a group of categories. With
+    `enforce_l_diversity`, groups with fewer than `l_target` distinct values of a sensitive
+    attribute are then blanked and merged. `t_target`, when set, is the largest
+    distance (earth mover's distance, 0 to 1) a group's sensitive values may have from the
+    whole table's for the result to count as anonymized.
+
+    `joint_microaggregation` lists sets of numeric columns replaced together, in groups, after
+    the column actions run and before k-anonymity is enforced.
+
     `shuffle_rows` says whether the released rows come back in a fresh random order, with a
     fresh index for pandas. None, the default, shuffles under anonymization and keeps the
     input order and index under pseudonymization. Without a shuffle, an anonymized release
@@ -86,6 +140,12 @@ class AnonymizationPlan(BaseModel):
     k_target: int = Field(default=5, ge=1)
     l_target: int = Field(default=2, ge=1)
     enforce_k_anonymity: bool = False
+    k_anonymity_method: KAnonymityMethod = KAnonymityMethod.LOCAL_SUPPRESSION
+    range_style: RangeStyle = RangeStyle.RANGE
+    hierarchies: dict[str, GeneralizationHierarchy] = Field(default_factory=dict)
+    enforce_l_diversity: bool = False
+    t_target: float | None = Field(default=None, gt=0, le=1)
+    joint_microaggregation: list[JointMicroaggregation] = Field(default_factory=list)
     shuffle_rows: bool | None = None
 
     @model_validator(mode="after")
