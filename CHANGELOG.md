@@ -27,7 +27,9 @@
 - **Names and cities in prose are redacted without the `ner` extra.** A first name from the
   bundled IBGE list followed by capitalized words, and a municipality name, are found in free
   text. A column of notes that mentions them gets `redact_entities` in the default plan, and the
-  release check reports any that remain. Everyday-noun municipality names and a cell that holds
+  release check reports any that remain. Names separated by several spaces or tabs are found,
+  and so are lowercase names (a listed first name followed by a listed surname) and lowercase
+  municipalities of several words after "em", "para", "na", "no" or "cidade de". Everyday-noun municipality names and a cell that holds
   only a name or address are left alone.
 - **Tagged identifiers and lowercase passport zones are detected.** Identifier patterns no
   longer treat an underscore as part of a word, so `wallet_0x...`, `cpf_5299...` and

@@ -125,3 +125,93 @@ def test_names_left_in_the_text_make_the_release_identifiable():
 
     assert result.protection.level is ProtectionLevel.IDENTIFIABLE
     assert any("still hold recognizable personal data" in p for p in result.protection.problems)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Atendimento de Ana  Silva concluido ontem",
+        "Atendimento de Ana\tSilva concluido ontem",
+        "Atendimento de Ana   da   Silva concluido ontem",
+    ],
+)
+def test_names_are_found_whatever_whitespace_separates_their_words(text):
+    found = _found(text)
+
+    assert [category for _, category in found] == [DataCategory.PERSON_NAME]
+    assert found[0][0].startswith("Ana")
+    assert found[0][0].endswith("Silva")
+
+
+def test_a_city_is_found_whatever_whitespace_separates_its_words():
+    assert _found("Mora no Rio  de   Janeiro") == [
+        ("Rio  de   Janeiro", DataCategory.CITY),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("atendimento de ana silva concluido ontem", "ana silva"),
+        ("atendimento de ana  silva concluido ontem", "ana  silva"),
+        ("ligar para maria da silva hoje", "maria da silva"),
+        ("paciente joao carlos souza chegou cedo", "joao carlos souza"),
+        ("consulta de jose santos marcada", "jose santos"),
+    ],
+)
+def test_lowercase_names_are_found_when_a_listed_first_name_meets_a_listed_surname(text, expected):
+    assert _found(text) == [(expected, DataCategory.PERSON_NAME)]
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("visita para sao paulo hoje", "sao paulo"),
+        ("mora em rio de janeiro desde 2020", "rio de janeiro"),
+        ("mudou para belo horizonte", "belo horizonte"),
+        ("mora na cidade de nova friburgo", "nova friburgo"),
+    ],
+)
+def test_lowercase_cities_of_several_words_are_found_after_a_preposition(text, expected):
+    assert _found(text) == [(expected, DataCategory.CITY)]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "ana ligou ontem",
+        "o cliente ligou para ana hoje",
+        "silva chegou cedo",
+        "reuniao com o time de vendas em santos",
+        "plano de saude para toda a equipe",
+        "o rio de janeiro foi lindo",
+        "casa grande e senzala",
+    ],
+)
+def test_lowercase_text_without_a_full_name_or_a_city_after_a_preposition_is_left_alone(text):
+    assert _found(text) == []
+
+
+@pytest.mark.parametrize(
+    "template",
+    [
+        "atendimento de {first}  {last} concluido ontem",
+        "atendimento de {first} {last} concluido ontem",
+        "Atendimento de {first}   {last} concluido ontem",
+    ],
+)
+def test_notes_with_unusual_name_formats_lose_their_names_in_the_default_release(template):
+    people = [("Ana", "Silva"), ("Maria", "Souza"), ("Pedro", "Santos"), ("Paulo", "Lima")]
+    notes = []
+    for first, last in people:
+        if template[0] == "a":
+            first, last = first.lower(), last.lower()
+        notes += [template.format(first=first, last=last)] * 5
+    frame = pd.DataFrame({"payload": notes, "diagnosis": ["D", "H"] * 10})
+    anonymizer = Anonymizer(seed=1)
+
+    result = anonymizer.apply(frame, anonymizer.propose(frame))
+
+    released = " ".join(result.data["payload"]).lower()
+    for _, last in people:
+        assert last.lower() not in released

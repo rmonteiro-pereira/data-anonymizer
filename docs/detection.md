@@ -51,7 +51,7 @@ person under the LGPD.
 | Passport MRZ | Two lines of 44 characters (TD3), with the ICAO 9303 check digits of the passport number, birth date, expiry date, personal number and the whole line. The lines may be joined or split by a line break, and may be in lowercase |
 | Bitcoin address | Base58check (starts 1 or 3, double SHA-256 checksum) or bech32 and bech32m (`bc1...`, polymod checksum; one case only) |
 | Ethereum address | `0x` and 40 hex digits. Mixed-case addresses must pass the EIP-55 checksum; all-lowercase or all-uppercase ones carry none and pass on shape |
-| City | The value is one of the 5,570 IBGE municipality names (about 5,300 distinct), ignoring case and accents. Not searched for in free text as a bare word. Names of two or more words ("Rio de Janeiro"), and one-word names after "em", "para" or "cidade de", are found in prose and redacted as `<CITY>`; one-word names that are also everyday nouns ("Saúde") are ignored |
+| City | The value is one of the 5,570 IBGE municipality names (about 5,300 distinct), ignoring case and accents. Not searched for in free text as a bare word. Names of two or more words ("Rio de Janeiro"), and one-word names after "em", "para" or "cidade de", are found in prose (lowercase multi-word names too, after "em", "para", "na", "no" or "cidade de") and redacted as `<CITY>`; one-word names that are also everyday nouns ("Saúde") are ignored |
 | Email, URL | Format |
 
 IBAN, DNI/NIE, UK National Insurance, codice fiscale, alphanumeric CNPJ and vehicle plates are matched in upper and lower case.
@@ -157,8 +157,17 @@ Findings below 0.6 confidence get "please review" in the proposed plan.
   in text, and a municipality in prose is a city. A free-text column where at least 10% of the
   texts hold one of these among other words is classed as free text with personal data, so the
   default plan redacts it and the release check flags leftovers. A cell that holds only a name
-  or only an address is still read as a name or an address column. A name outside the lists,
-  or one written in lowercase, is still missed; use the `ner` extra for those.
+  or only an address is still read as a name or an address column. Any run of spaces or tabs
+  may separate the words of a name. A lowercase name is found only when a listed first name
+  is followed by a listed surname ("ana silva", "maria da silva"), and a lowercase municipality
+  only when it has two or more words and follows "em", "para", "na", "no" or "cidade de"
+  ("mora em rio de janeiro"); both lists are needed to keep ordinary lowercase prose out. In
+  20,000 generated lowercase sentences, 10,000 Portuguese and 10,000 English, that mixed
+  ordinary nouns with many words that are also listed names, 33 Portuguese and no English
+  sentences were flagged, almost all of them genuine two-name pairs such as "lucia santos".
+  The lists cover Brazilian names and places only. A foreign name ("Saoirse Murphy"), a
+  Brazilian name outside the lists, a lowercase name with an unlisted surname and a
+  one-word lowercase city are still missed; use the `ner` extra for those.
 - **`ner`** (`pip install "oblitus[ner]"`). Free text can also be read by a named-entity model
   that finds names and addresses, which no pattern can. Set `entity_model` on a
   `redact_entities` action to `"gliner"` (`urchade/gliner_multi_pii-v1`) or `"presidio"`:

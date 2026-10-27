@@ -8,6 +8,10 @@ both the name and the city. These rules read the reference lists instead:
   one-word name after "em" or "para" or after "cidade de" ("em Santos"). One-word names that
   are also everyday nouns ("Saúde", "Esperança") are ignored, so "Plano em Saúde" stays text.
 
+Names written in lowercase are found under stricter rules, because lowercase words are common:
+a first name from the list must be followed by a surname from the surname list ("ana silva"),
+and a municipality of two or more words must follow "em", "para", "na", "no" or "cidade de".
+
 A first name alone is not a person, and a capitalized word alone is not a surname, which keeps
 prose such as "Rose Garden" or "Planejamento Estratégico" from matching much.
 """
@@ -15,7 +19,12 @@ prose such as "Rose Garden" or "Planejamento Estratégico" from matching much.
 import re
 from dataclasses import dataclass
 
-from oblitus.detection.reference_lists import first_names, municipalities, normalize_word
+from oblitus.detection.reference_lists import (
+    first_names,
+    municipalities,
+    normalize_word,
+    surnames,
+)
 from oblitus.taxonomy import DataCategory
 
 TextSpan = tuple[int, int, DataCategory]
@@ -37,6 +46,9 @@ _NOT_FIRST_NAMES = frozenset({"domingo", "março", "santa", "santo", "são"})
 _MIN_WORDS_AROUND_A_NAME = 2
 
 _CITY_PREPOSITIONS = frozenset({"em", "para"})
+
+# Words that may precede a lowercase multi-word municipality, which has no capital to show it.
+_LOWERCASE_CITY_PREPOSITIONS = frozenset({"em", "para", "na", "no"})
 _CITY_NOUNS = frozenset({"cidade", "municipio"})
 
 # Municipality names that are also everyday nouns or names of things, so as one word they
@@ -136,19 +148,36 @@ def _person_spans(text: str, words: list[_Word]) -> list[TextSpan]:
 
 def _last_word_of_name_starting_at(text: str, words: list[_Word], index: int) -> int | None:
     first = words[index]
-    if not first.is_capitalized or first.lowered in _NOT_FIRST_NAMES:
+    if first.lowered in _NOT_FIRST_NAMES or normalize_word(first.text) not in first_names():
         return None
-    if normalize_word(first.text) not in first_names():
-        return None
+    if not first.is_capitalized:
+        return _last_word_of_lowercase_name(text, words, index)
     last = None
     position = index + 1
     while position < len(words) and position - index <= _MAX_SURNAME_WORDS:
-        if not _follows_by_one_space(text, words[position - 1], words[position]):
+        if not _follows_by_whitespace(text, words[position - 1], words[position]):
             break
         word = words[position]
         if word.is_capitalized:
             last = position
         elif word.lowered not in _NAME_PARTICLES:
+            break
+        position += 1
+    return last
+
+
+def _last_word_of_lowercase_name(text: str, words: list[_Word], index: int) -> int | None:
+    """End of a lowercase name: a listed first name, then listed names, ending on a surname."""
+    last = None
+    position = index + 1
+    while position < len(words) and position - index <= _MAX_SURNAME_WORDS:
+        word = words[position]
+        if not _follows_by_whitespace(text, words[position - 1], word) or word.is_capitalized:
+            break
+        normalized = normalize_word(word.text)
+        if normalized in surnames():
+            last = position
+        elif word.lowered not in _NAME_PARTICLES and normalized not in first_names():
             break
         position += 1
     return last
@@ -169,15 +198,38 @@ def _city_spans(text: str, words: list[_Word]) -> list[TextSpan]:
 
 def _last_word_of_city_starting_at(text: str, words: list[_Word], index: int) -> int | None:
     if not words[index].is_capitalized:
-        return None
+        return _last_word_of_lowercase_city(text, words, index)
     longest = min(len(words), index + _MAX_CITY_WORDS) - 1
     for last in range(longest, index - 1, -1):
-        if not words[last].is_capitalized or not _joined_by_single_spaces(text, words, index, last):
+        if not words[last].is_capitalized or not _joined_by_whitespace(text, words, index, last):
             continue
         name = normalize_word(text[words[index].start : words[last].end])
         if name in municipalities() and _may_be_a_city(words, index, last, name):
             return last
     return None
+
+
+def _last_word_of_lowercase_city(text: str, words: list[_Word], index: int) -> int | None:
+    """End of a lowercase municipality of two or more words after a preposition."""
+    if index == 0 or not _follows_a_city_preposition(words, index):
+        return None
+    longest = min(len(words), index + _MAX_CITY_WORDS) - 1
+    for last in range(longest, index, -1):
+        if any(word.is_capitalized for word in words[index : last + 1]):
+            continue
+        if not _joined_by_whitespace(text, words, index, last):
+            continue
+        name = normalize_word(text[words[index].start : words[last].end])
+        if name in municipalities():
+            return last
+    return None
+
+
+def _follows_a_city_preposition(words: list[_Word], index: int) -> bool:
+    previous = words[index - 1].lowered
+    if previous in _LOWERCASE_CITY_PREPOSITIONS:
+        return True
+    return previous == "de" and index >= 2 and normalize_word(words[index - 2].text) in _CITY_NOUNS
 
 
 def _may_be_a_city(words: list[_Word], first: int, last: int, name: str) -> bool:
@@ -191,16 +243,21 @@ def _may_be_a_city(words: list[_Word], first: int, last: int, name: str) -> bool
     return previous == "de" and first >= 2 and normalize_word(words[first - 2].text) in _CITY_NOUNS
 
 
-def _joined_by_single_spaces(text: str, words: list[_Word], first: int, last: int) -> bool:
+def _joined_by_whitespace(text: str, words: list[_Word], first: int, last: int) -> bool:
     for position in range(first, last):
-        if not _follows_by_one_space(text, words[position], words[position + 1]):
+        if not _follows_by_whitespace(text, words[position], words[position + 1]):
             return False
     inner = words[first + 1 : last]
     return all(word.is_capitalized or word.lowered in _CITY_PARTICLES for word in inner)
 
 
-def _follows_by_one_space(text: str, before: _Word, after: _Word) -> bool:
-    return text[before.end : after.start] == " "
+def _follows_by_whitespace(text: str, before: _Word, after: _Word) -> bool:
+    """True when only spaces, tabs or other whitespace separate the two words.
+
+    Exports often double the space between a first name and a surname, so any run counts.
+    """
+    gap = text[before.end : after.start]
+    return bool(gap) and gap.isspace()
 
 
 def _overlaps_any(start: int, end: int, spans: list[TextSpan]) -> bool:
