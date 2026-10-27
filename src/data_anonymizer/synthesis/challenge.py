@@ -15,8 +15,10 @@ from scipy import stats
 
 from data_anonymizer.errors import SchemaError
 from data_anonymizer.surrogates import SurrogateFactory
+from data_anonymizer.synthesis.drift import describe_drift, drift_kind, with_shifted_test_rows
 from data_anonymizer.synthesis.expressions import evaluate, uses_randomness
 from data_anonymizer.synthesis.generator import generate_from_schema
+from data_anonymizer.synthesis.label_noise import corrupt_labels
 from data_anonymizer.synthesis.schema import ColumnSchema, DatasetSchema, Question, Task
 from data_anonymizer.taxonomy import ColumnKind
 
@@ -49,12 +51,27 @@ def build_challenge(
         raise SchemaError("the schema has no question to build a challenge from")
 
     full = generate_from_schema(schema, rows, rng=rng, surrogates=surrogates)
-    truth = _truth(schema, question, full)
     in_test = _split_rows(question, rows, rng)
+    test_schema = schema
+    if question.test_shift:
+        test_schema = schema.shifted(question.test_shift)
+        full, in_test = with_shifted_test_rows(
+            test_schema, full, in_test, rng=rng, surrogates=surrogates
+        )
+    truth = _truth_per_split(schema, test_schema, question, full, in_test)
     published = full.drop(columns=question.hidden_columns)
+    train = published[~in_test].reset_index(drop=True)
     test_rows = published[in_test].reset_index(drop=True)
+    clean_test_labels = test_rows[question.target]
+    changed_labels: dict[str, int] | None = None
+    if question.label_noise is not None:
+        train, test_rows, changed_labels = _with_label_noise(
+            schema, question, train, test_rows, rng
+        )
 
-    answer_key = {
+    best_clean = _best_scores(question, clean_test_labels, truth, in_test)
+    best_published = _best_scores(question, test_rows[question.target], truth, in_test)
+    answer_key: dict[str, Any] = {
         "title": question.title,
         "prompt": question.prompt,
         "task": question.task.value,
@@ -62,14 +79,74 @@ def build_challenge(
         "rows": {"train": int((~in_test).sum()), "test": int(in_test.sum())},
         "features": _feature_roles(schema, question),
         "how_the_target_was_built": _derivation(schema, question.target),
-        "best_achievable": _best_scores(question, full[question.target][in_test], truth, in_test),
+        "best_achievable": best_published,
     }
+    if question.test_shift:
+        kind = drift_kind(question, _ancestors(schema, question.target))
+        answer_key["drift"] = describe_drift(question, kind, best_published)
+    if question.label_noise is not None and changed_labels is not None:
+        answer_key["label_noise"] = _describe_label_noise(question, changed_labels, best_clean)
     return Challenge(
-        train=published[~in_test].reset_index(drop=True),
+        train=train,
         test_features=test_rows.drop(columns=[question.target]),
         test_answers=test_rows[[question.target]],
         answer_key=answer_key,
     )
+
+
+def _truth_per_split(
+    schema: DatasetSchema,
+    test_schema: DatasetSchema,
+    question: Question,
+    full: pd.DataFrame,
+    in_test: np.ndarray,
+) -> pd.Series | str:
+    """Return the truth, taking the test rows' truth from the shifted schema."""
+    if test_schema is schema:
+        return _truth(schema, question, full)
+    train_truth = _truth(schema, question, full[~in_test])
+    test_truth = _truth(test_schema, question, full[in_test])
+    if isinstance(train_truth, str):
+        return train_truth
+    if isinstance(test_truth, str):
+        return test_truth
+    return pd.concat([train_truth, test_truth], ignore_index=True)
+
+
+def _with_label_noise(
+    schema: DatasetSchema,
+    question: Question,
+    train: pd.DataFrame,
+    test_rows: pd.DataFrame,
+    rng: np.random.Generator,
+) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, int]]:
+    """Corrupt the target of each split the noise applies to, and count the changes."""
+    noise = question.label_noise
+    assert noise is not None
+    target = schema.column(question.target)
+    changed = {"train": 0, "test": 0}
+    splits = {"train": train, "test": test_rows}
+    for name, frame in splits.items():
+        if not noise.applies_to(name):
+            continue
+        noisy = corrupt_labels(frame[question.target], question, noise, target, rng)
+        splits[name] = frame.assign(**{question.target: noisy.labels})
+        changed[name] = noisy.changed
+    return splits["train"], splits["test"], changed
+
+
+def _describe_label_noise(
+    question: Question, changed: dict[str, int], best_on_clean_labels: dict[str, float] | str
+) -> dict[str, Any]:
+    noise = question.label_noise
+    assert noise is not None
+    counted = "flipped" if noise.flip_rate is not None else "perturbed"
+    settings = noise.model_dump(mode="json", exclude_none=True)
+    return {
+        **settings,
+        counted: changed,
+        "best_achievable_on_clean_test_labels": best_on_clean_labels,
+    }
 
 
 def _split_rows(question: Question, rows: int, rng: np.random.Generator) -> np.ndarray:

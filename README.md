@@ -35,7 +35,7 @@ A Python library and command-line tool for tables that contain personal data. It
 | Utility | Change in mean and standard deviation, Kolmogorov–Smirnov, Wasserstein / IQR, total variation distance, correlation change, per-record shift in standard deviations |
 | Noise explorer | A self-contained interactive HTML page per column. For every technique and strength it shows before/after distributions, original against released per record with an exposure band, and a risk-utility map. It works offline and follows light and dark themes |
 | Synthesis | Distributions (normal, lognormal, gamma, exponential, Poisson, uniform, quantile curves) truncated to bounds. Spearman correlations imposed through a Gaussian copula. Conditional overrides that keep correlations. Formula columns using a safe expression language with date and random functions. Outlier planting, exact statistics, row constraints, unique keys, null shares and templates. Learned Gaussian copula from a reference table |
-| Challenges | A schema `question` produces train and test files and a private answer key. The key lists the true drivers, the correlated-but-not-causal columns and the distractors, plus the best score any model can reach (RMSE/R², or accuracy/AUC/log loss) |
+| Challenges | A schema `question` produces train and test files and a private answer key. The key lists the true drivers, the correlated-but-not-causal columns and the distractors, plus the best score any model can reach (RMSE/R², or accuracy/AUC/log loss). Optional test-set drift (covariate or concept) and label noise on the train or test labels, both reported in the key |
 | Interfaces | Python API (`Anonymizer`), editable JSON plans and schemas, the `anonymize` CLI, CSV and Parquet, custom techniques |
 
 ### Roadmap
@@ -45,8 +45,7 @@ Planned, not yet implemented:
 - **Richer data-science challenges.**
   - Structural causal models declared as a graph (DAG): confounders, mediators, colliders
     and treatment effects, with the true average and heterogeneous effects in the key.
-  - Concept and covariate drift between train and test, label noise, class imbalance,
-    missing-not-at-random patterns, and planted leakage traps.
+  - Class imbalance, missing-not-at-random patterns, and planted leakage traps.
   - Time series with autocorrelation and regime changes, and multi-table relational data
     with foreign keys.
   - Difficulty knobs and question text generated from the schema.

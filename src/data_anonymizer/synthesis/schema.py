@@ -10,6 +10,7 @@ higher"), derived columns computed by formula, and constraints every row obeys.
 from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -155,6 +156,22 @@ class ColumnSchema(BaseModel):
             for field, value in override.model_dump().items()
             if field not in _NOT_DISTRIBUTION_FIELDS and value is not None
         }
+        return self._with_changes(changes, keeps_patterns=False)
+
+    def with_shift(self, shift: "ShiftedColumn") -> "ColumnSchema":
+        """Return this column with a test-set shift merged in, validated as a whole.
+
+        Unlike an override, a shift keeps the column's formula and conditions unless it
+        names new ones, and it can change the null fraction.
+        """
+        changes = {
+            field: value
+            for field, value in shift.model_dump(exclude={"name", "when"}).items()
+            if value is not None
+        }
+        return self._with_changes(changes, keeps_patterns=True)
+
+    def _with_changes(self, changes: dict[str, Any], *, keeps_patterns: bool) -> "ColumnSchema":
         resets_shape = self._override_replaces_shape(changes)
         if resets_shape:
             # A uniform or quantile shape would ignore the new mean and std.
@@ -164,7 +181,9 @@ class ColumnSchema(BaseModel):
         if "choices" in changes and "weights" not in changes:
             # The base weights belong to the base choices.
             changes["weights"] = None
-        settings = {**self.model_dump(), **changes, "conditions": [], "formula": None}
+        settings = {**self.model_dump(), **changes}
+        if not keeps_patterns:
+            settings.update(conditions=[], formula=None)
         merged = ColumnSchema.model_validate(settings)
         if resets_shape and (merged.mean is None or merged.std is None):
             raise ValueError(
@@ -173,7 +192,7 @@ class ColumnSchema(BaseModel):
             )
         return merged
 
-    def _override_replaces_shape(self, changes: dict[str, object]) -> bool:
+    def _override_replaces_shape(self, changes: dict[str, Any]) -> bool:
         sets_spread = "mean" in changes or "std" in changes
         sets_shape = "distribution" in changes or "quantiles" in changes
         has_fixed_shape = self.quantiles is not None or self.distribution in (
@@ -230,6 +249,73 @@ class Task(StrEnum):
     CLASSIFICATION = "classification"
 
 
+class ShiftedColumn(ColumnOverride):
+    """New settings for one column of the test set, which stays the same in the train set.
+
+    It takes every setting of an override, plus a new `formula`, `noise_std` and `conditions`
+    that replace the column's own. It applies to the whole test set, so it has no `when`:
+    put a `when` in `conditions` to shift only some rows.
+    """
+
+    name: str
+    when: str | None = None  # type: ignore[assignment]
+    formula: str | None = None
+    noise_std: float | None = Field(default=None, ge=0)
+    conditions: list[ColumnOverride] | None = None
+
+    @field_validator("formula")
+    @classmethod
+    def _parseable_formula(cls, text: str | None) -> str | None:
+        if text is not None:
+            parse(text)
+        return text
+
+    @model_validator(mode="after")
+    def _has_no_row_filter(self) -> "ShiftedColumn":
+        if self.when is not None:
+            raise ValueError(
+                f"test_shift {self.name}: a shift applies to the whole test set; "
+                "put the row filter in `conditions`"
+            )
+        return self
+
+    def changes_mechanism(self) -> bool:
+        """Return whether the shift replaces how the column is computed, not just its draw."""
+        return self.formula is not None or self.noise_std is not None or self.conditions is not None
+
+
+class NoiseSplit(StrEnum):
+    """Which published labels receive label noise."""
+
+    TRAIN = "train"
+    TEST = "test"
+    BOTH = "both"
+
+
+class LabelNoise(BaseModel):
+    """Corruption of the published labels, after the truth is known and the rows are split.
+
+    A classification target is flipped with probability `flip_rate`. A regression target
+    gets normal noise of standard deviation `std`. The `split` says where it applies.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    flip_rate: float | None = Field(default=None, gt=0, le=0.5)
+    std: float | None = Field(default=None, gt=0)
+    split: NoiseSplit = NoiseSplit.TRAIN
+
+    @model_validator(mode="after")
+    def _one_kind_of_noise(self) -> "LabelNoise":
+        if (self.flip_rate is None) == (self.std is None):
+            raise ValueError("label_noise needs exactly one of flip_rate and std")
+        return self
+
+    def applies_to(self, split: str) -> bool:
+        """Return whether the named split ("train" or "test") is corrupted."""
+        return self.split is NoiseSplit.BOTH or self.split.value == split
+
+
 class Question(BaseModel):
     """A data-science question posed over the generated table, with a known answer.
 
@@ -239,6 +325,9 @@ class Question(BaseModel):
     the noise-free answer: the expected value for regression, or the probability of
     the positive class for classification. When it is left out for regression, the
     target's formula is evaluated again without its noise.
+
+    `test_shift` changes columns in the test rows only, so the test set drifts away from the
+    train set. `label_noise` corrupts the published labels of the chosen split.
 
     A classification target is boolean or 0/1. Any other target, such as a category with
     choices "no" and "yes", names its positive class in `positive_label`.
@@ -254,6 +343,8 @@ class Question(BaseModel):
     truth_column: str | None = None
     positive_label: str | None = None
     test_share: float = Field(default=0.2, gt=0, lt=1)
+    test_shift: list[ShiftedColumn] = Field(default_factory=list)
+    label_noise: LabelNoise | None = None
 
 
 class DatasetSchema(BaseModel):
@@ -298,6 +389,7 @@ class DatasetSchema(BaseModel):
         self.generation_order()
         if self.question is not None:
             _check_question(self.question, by_name)
+            self.shifted(self.question.test_shift)
         return self
 
     def _checked_expressions(self) -> list[str]:
@@ -310,6 +402,24 @@ class DatasetSchema(BaseModel):
             if column.name == name:
                 return column
         raise KeyError(name)
+
+    def shifted(self, shifts: list[ShiftedColumn]) -> "DatasetSchema":
+        """Return the schema with test-set shifts merged into the named columns.
+
+        The result has no question, and is validated as a whole like any schema.
+        """
+        replacements = {}
+        for shift in shifts:
+            if shift.name in replacements:
+                raise ValueError(f"test_shift names {shift.name!r} twice")
+            try:
+                replacements[shift.name] = self.column(shift.name).with_shift(shift)
+            except KeyError:
+                raise ValueError(f"test_shift names unknown column {shift.name!r}") from None
+        columns = [replacements.get(column.name, column) for column in self.columns]
+        return DatasetSchema(
+            columns=columns, correlations=self.correlations, constraints=self.constraints
+        )
 
     def generation_order(self) -> list[str]:
         """Order columns so each comes after the columns its formula and conditions read."""
@@ -375,6 +485,7 @@ def _check_question(question: Question, by_name: dict[str, ColumnSchema]) -> Non
     if question.target in question.hidden_columns:
         raise ValueError("the question's target cannot be hidden")
     _check_positive_label(question, by_name[question.target])
+    _check_label_noise(question, by_name[question.target])
 
 
 def _check_positive_label(question: Question, target: ColumnSchema) -> None:
@@ -394,4 +505,20 @@ def _check_positive_label(question: Question, target: ColumnSchema) -> None:
     if unknown_label:
         raise ValueError(
             f"positive_label {question.positive_label!r} is not one of the target's choices"
+        )
+
+
+def _check_label_noise(question: Question, target: ColumnSchema) -> None:
+    noise = question.label_noise
+    if noise is None:
+        return
+    if question.task is Task.CLASSIFICATION and noise.flip_rate is None:
+        raise ValueError("label_noise on a classification question needs a flip_rate")
+    if question.task is Task.REGRESSION and noise.std is None:
+        raise ValueError("label_noise on a regression question needs a std")
+    has_choices = target.kind is ColumnKind.CATEGORY or bool(target.choices)
+    needs_two_choices = question.task is Task.CLASSIFICATION and has_choices
+    if needs_two_choices and len(target.choices or []) != 2:
+        raise ValueError(
+            f"label_noise flips the labels of {target.name!r}, which needs exactly two choices"
         )

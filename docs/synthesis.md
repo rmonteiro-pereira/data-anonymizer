@@ -228,3 +228,58 @@ The answer key holds:
 
 A model that scores close to `best_achievable` has found the planted pattern. A model that
 beats it on the test set has overfitted, or found leakage.
+
+### Drift between train and test
+
+`test_shift` changes columns in the test rows only. The train rows use the base schema. The
+test rows are generated again from the schema with each shift merged into the named column,
+and the merged schema is validated like any other. The test size stays `test_share` of `rows`.
+
+```json
+"question": {
+  "target": "churned",
+  "task": "classification",
+  "test_shift": [
+    {"name": "age", "mean": 30, "std": 8},
+    {"name": "churn_probability", "formula": "sigmoid(-1.2 + 1.1 * support_tickets - 0.04 * tenure_months)"}
+  ]
+}
+```
+
+A shift takes the settings of a `conditions` override (distribution, `mean`, `std`, `choices`,
+`weights`, `null_fraction`, ...), plus `formula`, `noise_std` and `conditions`, which replace
+the column's own. It has no `when`: it applies to the whole test set. Put a `when` in its
+`conditions` to shift some rows. Unique keys are unique within each split, not across them.
+
+The key gains a `drift` section:
+- `shifted_columns` and `shifts`: what changed;
+- `kind`: `concept` when the target is shifted, or a column it is computed from gets a new
+  formula, `noise_std` or `conditions`; `covariate` when only distributions change;
+- `best_achievable`: the score of the shifted truth on the shifted test rows. It is also the
+  top-level `best_achievable`.
+
+A model fitted on the train rows scores worse than `best_achievable` under either kind, and
+under a concept shift no amount of training data closes the gap. Examples:
+[churn_drift.json](../examples/churn_drift.json) (younger test customers with more tickets)
+and [churn_concept_drift.json](../examples/churn_concept_drift.json) (the ticket effect
+doubles).
+
+### Label noise
+
+`label_noise` corrupts the published labels after the truth is known and the rows are split.
+
+```json
+"label_noise": {"flip_rate": 0.1, "split": "train"}
+```
+
+- Classification takes `flip_rate` (above 0 and up to 0.5): each present label flips with that
+  probability. The target is boolean, 0/1 or a category with exactly two choices.
+- Regression takes `std`: normal noise is added to each present label. An integer target stays
+  integer.
+- `split` is `train` (the default), `test` or `both`. Test answers are clean unless it includes
+  `test`.
+
+The key gains a `label_noise` section with the settings, the number of labels `flipped` (or
+`perturbed`) per split, and `best_achievable_on_clean_test_labels`. The top-level
+`best_achievable` is measured against the published test answers, so it equals the clean score
+unless the test split is noisy.
