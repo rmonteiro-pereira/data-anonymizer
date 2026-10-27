@@ -1,7 +1,15 @@
 # Changelog
 
-## Unreleased
+## 0.2.0
 
+- **The quick start reaches `anonymized`.** Under anonymization, `propose` generalizes
+  untreated timestamps and numbers that are distinct in nearly every row (day and three
+  significant figures; year and quintile bands with `privacy` fidelity), and lists every
+  column with at most 50 distinct values as a quasi-identifier. The value-based steps live in
+  the new module `untreated_columns.py`.
+- Local suppression reaches k when fully blanked rows are too few, by blanking the smallest
+  complete group as well.
+- CSV files are read with ISO dates parsed as dates.
 - Under anonymization, `propose` indexes business revenue and rent per entity
   (`normalize`, `method: index`, `by` the entity) instead of `robust`, or uses `rank` when no
   entity column is found, so the default mall release reaches `anonymized`. `index` rounds to 6

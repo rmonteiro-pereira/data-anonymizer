@@ -69,7 +69,23 @@ Planned, not yet implemented:
   [docs/adr/0001-dataframe-backends.md](docs/adr/0001-dataframe-backends.md)), and chunked
   processing for files larger than memory.
 
+## Install
+
+Releases are published on GitHub, not on PyPI (the PyPI name `data-anonymizer` belongs to an
+unrelated project). Install a tagged release with pip or uv; Python 3.12 or later:
+
+```bash
+pip install "data-anonymizer @ git+https://github.com/rmonteiro-pereira/data-anonymizer.git@v0.2.0"
+# with DuckDB support:
+pip install "data-anonymizer[duckdb] @ git+https://github.com/rmonteiro-pereira/data-anonymizer.git@v0.2.0"
+```
+
+The wheel is also attached to each [GitHub release](https://github.com/rmonteiro-pereira/data-anonymizer/releases).
+The package imports as `data_anonymizer` and installs the `anonymize` command.
+
 ## Quick start
+
+From a clone of the repository:
 
 ```bash
 git clone https://github.com/rmonteiro-pereira/data-anonymizer.git
@@ -170,3 +186,6 @@ uv run ruff format .
 uv run ruff check .
 uv run mypy src
 ```
+
+GitHub Actions runs the same checks on Python 3.12 and 3.13 for every push to `main` and every
+pull request (`.github/workflows/ci.yml`).
