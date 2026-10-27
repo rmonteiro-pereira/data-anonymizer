@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+- **Names and addresses inside free text.** `redact_entities` takes `entity_model`
+  (`"gliner"` or `"presidio"`, from the new `ner` extra). The model loads only when a text is
+  first read, and the protection check on the released text uses it too.
+- **Names and cities from their values.** The detector knows Brazilian first names and the 5,570
+  municipalities (IBGE public data, bundled), so an unnamed column of people or of cities is
+  recognized. Unnamed columns of person names are no longer called record IDs.
+- **More identifiers.** Passport machine-readable zones (ICAO 9303 check digits) are national
+  IDs. Bitcoin (base58check and bech32) and Ethereum (EIP-55) addresses are the new
+  `crypto_wallet` category, with fake values for them. The new `identifiers` extra adds
+  `python-stdnum` recognizers for ten more national numbers and `phonenumbers` validation of
+  international phones; without it the built-in rules decide as before.
+- **Calibrated confidence.** `scan` reports a confidence fitted on a labelled benchmark, so a
+  finding at 0.9 is right about nine times in ten. Pass `calibrated=False` for the raw score.
+  `uv run python -m benchmarks.calibrate_detection` refits it.
+- CI installs the `duckdb` and `identifiers` extras only; `ner` pulls in PyTorch.
+
 ## 0.3.0
 
 - **Renamed to oblitus.** The package is `oblitus` on PyPI (`pip install oblitus`), the import

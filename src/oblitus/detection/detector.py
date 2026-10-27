@@ -5,6 +5,7 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
+from oblitus.detection.calibration import calibrated_confidence
 from oblitus.detection.column_names import (
     category_from_name,
     has_negative_hint,
@@ -14,7 +15,7 @@ from oblitus.detection.free_text import classify_free_text
 from oblitus.detection.kinds import as_datetime, can_hold, infer_kind
 from oblitus.detection.missing_values import blank_out_placeholders
 from oblitus.detection.patterns import RECOGNIZERS
-from oblitus.detection.person_names import looks_like_person_names
+from oblitus.detection.person_names import looks_like_known_names, looks_like_person_names
 from oblitus.detection.value_evidence import (
     Candidate,
     decide_from_values,
@@ -45,6 +46,7 @@ _NAME_AND_SHAPE_CONFIDENCE = 0.7
 _GENDER_LABELS_CONFIDENCE = 0.7
 _UNIQUENESS_ONLY_CONFIDENCE = 0.5
 _BIRTH_DATE_CONFIDENCE = 0.5
+_KNOWN_NAMES_CONFIDENCE = 0.65
 
 # Birth dates lie in the past, within a human lifetime, and spread over decades. The ages
 # of a group of people are mostly adult, with a typical age below a hundred years.
@@ -61,10 +63,11 @@ _GENDER_VALUES = {"m", "f", "male", "female", "masculino", "feminino", "man", "w
 
 _NESTED_TYPES = (list, tuple, dict, set, frozenset, np.ndarray)
 
-# Postal codes are left out because the recognizer only knows the Brazilian format,
-# so a US zip column would wrongly look contradicted by its own values.
+# Postal codes and cities are left out because the recognizers only know Brazil, so a US zip
+# or a Lisbon column would wrongly look contradicted by its own values.
 _VALUE_CHECKED_CATEGORIES = {recognizer.category for recognizer in RECOGNIZERS} - {
-    DataCategory.POSTAL_CODE
+    DataCategory.POSTAL_CODE,
+    DataCategory.CITY,
 }
 
 
@@ -80,8 +83,13 @@ class ColumnFinding:
     evidence: str
 
 
-def scan(frame: pd.DataFrame, *, sample_size: int = 1000, seed: int = 0) -> list[ColumnFinding]:
+def scan(
+    frame: pd.DataFrame, *, sample_size: int = 1000, seed: int = 0, calibrated: bool = True
+) -> list[ColumnFinding]:
     """Return one finding per column of the table, in column order.
+
+    The confidence is calibrated on a labelled benchmark (see `calibration.py`); pass
+    `calibrated=False` for the raw rule-based score.
 
     Raises `ValueError` when `sample_size` is below 1 and `TableFormatError` when two
     columns share a name.
@@ -90,13 +98,20 @@ def scan(frame: pd.DataFrame, *, sample_size: int = 1000, seed: int = 0) -> list
     names = [str(column) for column in frame.columns]
     _require_unique_names(names)
     return [
-        scan_column(name, frame.iloc[:, position], sample_size=sample_size, seed=seed)
+        scan_column(
+            name, frame.iloc[:, position], sample_size=sample_size, seed=seed, calibrated=calibrated
+        )
         for position, name in enumerate(names)
     ]
 
 
 def scan_column(
-    column: str, values: pd.Series, *, sample_size: int = 1000, seed: int = 0
+    column: str,
+    values: pd.Series,
+    *,
+    sample_size: int = 1000,
+    seed: int = 0,
+    calibrated: bool = True,
 ) -> ColumnFinding:
     """Classify a single column from its name and a sample of its values."""
     _require_valid_sample_size(sample_size)
@@ -106,6 +121,9 @@ def scan_column(
     sample = _sample(present, sample_size, seed)
 
     category, confidence, evidence = _classify(column, kind, present, sample)
+    if calibrated:
+        found_personal_data = sensitivity_of(category) is not Sensitivity.NON_SENSITIVE
+        confidence = calibrated_confidence(confidence, found_personal_data=found_personal_data)
     return ColumnFinding(
         column=column,
         kind=kind,
@@ -209,6 +227,10 @@ def _from_values_alone(
     weak_match = decide_from_weak_match(candidates)
     if weak_match is not None:
         return weak_match
+
+    if kind in (ColumnKind.TEXT, ColumnKind.CATEGORY) and looks_like_known_names(sample):
+        evidence = "most values are Brazilian first names followed by surnames"
+        return DataCategory.PERSON_NAME, _KNOWN_NAMES_CONFIDENCE, evidence
 
     if _looks_like_identifier(kind, present):
         return (

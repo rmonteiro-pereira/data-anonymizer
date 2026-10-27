@@ -50,13 +50,6 @@ Planned, not yet implemented:
   - Class imbalance and missing-not-at-random patterns.
   - Multi-table relational data with foreign keys.
   - Difficulty knobs and question text generated from the schema.
-- **Detection.**
-  - An optional named-entity extra for names and addresses inside text: GLiNER with
-    `urchade/gliner_multi_pii-v1` or a Portuguese PII model, or Presidio.
-  - Names and cities recognized from their values, using IBGE name and municipality lists.
-  - An optional `python-stdnum` extra for more countries, and `phonenumbers` for
-    international phones.
-  - Passport MRZ, crypto wallet addresses, and confidence calibrated on a labelled benchmark.
 - **Tokenization with a vault**: random tokens with the mapping kept in a separate store.
 - **Multi-table consistency**: keep pseudonyms and date offsets consistent across several
   tables in one call.
@@ -81,6 +74,10 @@ Python 3.12 or later:
 pip install oblitus
 # with DuckDB support:
 pip install "oblitus[duckdb]"
+# more countries' identifiers and international phone numbers:
+pip install "oblitus[identifiers]"
+# names and addresses inside free text, with a named-entity model:
+pip install "oblitus[ner]"
 ```
 
 `uv add oblitus` works too. The package imports as `oblitus` and installs the `oblitus`

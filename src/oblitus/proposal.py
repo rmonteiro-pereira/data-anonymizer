@@ -11,13 +11,14 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from oblitus.detection import ColumnFinding
+from oblitus.detection.calibration import REVIEW_CONFIDENCE
 from oblitus.plan import AnonymizationPlan, ColumnAction, Fidelity, Protection
 from oblitus.surrogates import SURROGATE_CATEGORIES
 from oblitus.taxonomy import ColumnKind, DataCategory, Sensitivity, sensitivity_of
 from oblitus.techniques import BUILTIN_TECHNIQUES, Technique
 
 # Findings below this confidence are still proposed, but the reason asks for review.
-_REVIEW_CONFIDENCE = 0.6
+_REVIEW_CONFIDENCE = REVIEW_CONFIDENCE
 
 # Techniques whose random draw is taken once per person when the plan names an entity column.
 _PER_ENTITY_DRAW = ("date_shift", "randomized_response")

@@ -11,7 +11,7 @@ You need Python 3.12 or later and [uv](https://docs.astral.sh/uv/).
 ```bash
 git clone https://github.com/rmonteiro-pereira/oblitus.git
 cd oblitus
-uv sync --all-extras
+uv sync --extra duckdb --extra identifiers
 ```
 
 Every change passes these checks before it is committed:

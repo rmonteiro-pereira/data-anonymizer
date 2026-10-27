@@ -7,6 +7,8 @@ value, ignores separators, and returns True only when the value is well formed.
 
 import ipaddress
 
+from oblitus.detection.international_identifiers import is_valid_international_phone
+
 _BRAZILIAN_AREA_CODES = frozenset(
     {11, 12, 13, 14, 15, 16, 17, 18, 19, 21, 22, 24, 27, 28}
     | set(range(31, 36))
@@ -283,7 +285,8 @@ def is_phone_number(value: str) -> bool:
     """
     digits = digits_of(value)
     if not 10 <= len(digits) <= 13:
-        return False
+        # The `phonenumbers` extra, when installed, knows shorter and longer national plans.
+        return is_valid_international_phone(value)
     if any(character in value for character in "+()- ."):
         return True
     if len(digits) == 13 and digits[:2] == [5, 5]:

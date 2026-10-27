@@ -20,7 +20,13 @@ import re
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 
-from oblitus.detection import checksums
+from oblitus.detection import checksums, crypto_wallets, passport_mrz
+from oblitus.detection.international_identifiers import (
+    STDNUM_IDENTIFIERS,
+    stdnum_is_installed,
+    stdnum_validator,
+)
+from oblitus.detection.place_names import CITY_PATTERN, is_municipality_name
 from oblitus.taxonomy import DataCategory
 
 # Re-exported so callers keep importing the validators from here.
@@ -146,7 +152,7 @@ _EMAIL_PATTERN = r"(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]++@[A-Za-z0-9.-]+\.[A-Za
 _WEAK_CHECK_LOST_ZEROS = 2
 
 # Order breaks exact ties between recognizers: earlier and more specific wins.
-RECOGNIZERS: tuple[ValueRecognizer, ...] = (
+_BUILT_IN_RECOGNIZERS: tuple[ValueRecognizer, ...] = (
     _recognizer(_C.EMAIL, "email", _EMAIL_PATTERN, strong=True),
     _recognizer(
         _C.CNPJ,
@@ -328,7 +334,50 @@ RECOGNIZERS: tuple[ValueRecognizer, ...] = (
         checksums.is_valid_fiscal_code,
         chance_rate=0.04,
     ),
+    _recognizer(
+        _C.NATIONAL_ID,
+        "passport machine-readable zone",
+        passport_mrz.MRZ_PATTERN,
+        passport_mrz.is_valid_passport_mrz,
+        strong=True,
+    ),
+    _recognizer(
+        _C.CRYPTO_WALLET,
+        "Bitcoin address",
+        r"(?i:\bbc1[02-9ac-hj-np-z]{11,71}\b)|\b[13][a-km-zA-HJ-NP-Z1-9]{25,34}\b",
+        crypto_wallets.is_valid_bitcoin_address,
+        strong=True,
+    ),
+    _recognizer(
+        _C.CRYPTO_WALLET,
+        "Ethereum address",
+        r"\b0x[0-9a-fA-F]{40}\b",
+        crypto_wallets.is_valid_ethereum_address,
+        strong=True,
+    ),
+    _recognizer(
+        _C.CITY, "Brazilian municipality", CITY_PATTERN, is_municipality_name, in_text=False
+    ),
 )
+
+
+def _stdnum_recognizers() -> tuple[ValueRecognizer, ...]:
+    """National numbers of more countries; empty unless `python-stdnum` is installed."""
+    if not stdnum_is_installed():
+        return ()
+    return tuple(
+        _recognizer(
+            _C.NATIONAL_ID,
+            identifier.label,
+            identifier.pattern,
+            stdnum_validator(identifier.module),
+            chance_rate=0.01,
+        )
+        for identifier in STDNUM_IDENTIFIERS
+    )
+
+
+RECOGNIZERS = _BUILT_IN_RECOGNIZERS + _stdnum_recognizers()
 
 TEXT_RECOGNIZERS = tuple(recognizer for recognizer in RECOGNIZERS if recognizer.in_text)
 

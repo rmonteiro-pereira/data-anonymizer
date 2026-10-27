@@ -46,6 +46,8 @@ dependencies = [
 
 [project.optional-dependencies]
 duckdb = ["duckdb>=1.3,<2"]
+identifiers = ["python-stdnum>=1.20", "phonenumbers>=8.13"]
+ner = ["gliner>=0.2.13", "presidio-analyzer>=2.2"]
 
 [project.urls]
 Homepage = "https://github.com/rmonteiro-pereira/oblitus"
@@ -73,7 +75,7 @@ package-dir = { "" = "src" }
 where = ["src"]
 
 [tool.setuptools.package-data]
-oblitus = ["noise_explorer/template.html"]
+oblitus = ["noise_explorer/template.html", "detection/data/*.txt"]
 
 [build-system]
 requires = ["setuptools>=61.0"]
@@ -91,3 +93,4 @@ max-complexity = 12
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]
