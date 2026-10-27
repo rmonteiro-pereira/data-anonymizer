@@ -91,7 +91,8 @@ on top. Formulas run after the columns they read, and a cycle is rejected.
   - dates: `year`, `month`, `day`, `hour`, `dayofweek`, `dayofyear`, `days` (days since
     1970);
   - random draws, per row, in formulas only: `bernoulli(p)`, `normal(mean, std)`,
-    `poisson(rate)`, `uniform(low, high)`.
+    `poisson(rate)`, `uniform(low, high)`. Each call turns a stored uniform number into its
+    value by the inverse distribution function (see [Replaying a build](#replaying-a-build)).
 
 Expressions are parsed and evaluated node by node, never with `eval`, so a schema
 file from someone else cannot run code. They also cannot use unbounded time or memory:
@@ -209,6 +210,8 @@ The answer key holds:
   - `hidden_drivers`: drivers that are withheld;
   - `correlated_but_not_causal`: columns correlated with a driver but not used to compute
     the target;
+  - `leaks_target`: published columns computed from the target (see
+    [Leakage traps](#leakage-traps));
   - `distractors`: everything else.
 - **how_the_target_was_built**: every formula, distribution and condition on the path to
   the target.
@@ -225,6 +228,113 @@ The answer key holds:
   - Rows with a missing target or truth are left out of the scores.
   - The table needs at least one training row and one test row, or generation fails with a
     `SchemaError`.
+
+## Leakage traps
+
+A published column that is computed from the target, directly or through other columns, leaks
+the answer. Plant one with a formula that reads the target:
+
+```json
+{"name": "refund_issued", "kind": "boolean", "formula": "churned and bernoulli(0.7)"}
+```
+
+- The answer key lists every such column under `features.leaks_target`.
+- A leaking column is not a `true_driver`, a `correlated_but_not_causal` column or a
+  `distractor`, because the target causes it and not the other way round.
+- A column that reads another leaking column leaks as well, since the dependency runs through
+  the graph.
+- A model that uses a leaking column scores above `best_achievable` on the test set.
+
+## Causal questions
+
+Name a `treatment` in the question to turn the challenge into a causal one. The key then holds
+the true effect of the treatment on the target, which a participant can estimate from the
+published rows and be graded against.
+
+```json
+"question": {
+  "title": "Does the promotion lift next month's revenue?",
+  "prompt": "Estimate how much the promotion raises revenue_next_month, on average and for whom.",
+  "target": "revenue_next_month",
+  "task": "regression",
+  "hidden_columns": ["promo_propensity"],
+  "treatment": "promo",
+  "effect_modifiers": ["segment", "age"]
+}
+```
+
+[examples/promo_uplift.json](../examples/promo_uplift.json) is a complete schema:
+- `promo` is confounded: customers with a high `past_spend` are more likely to get it, and
+  `past_spend` also raises revenue;
+- `app_minutes` is a mediator, which the promo raises and which raises revenue;
+- `satisfaction_score` is a collider, caused by both the promo and revenue;
+- `outreach_wave` is an instrument, which shifts the promo and does nothing else;
+- the effect differs by `segment` and `age`, the effect modifiers;
+- `reward_points_earned` is computed from revenue, so it leaks the target;
+- the hidden `promo_propensity` sits between the causes and the promo.
+
+| Question field | Meaning |
+|---|---|
+| `treatment` | The column whose effect is measured. It must be in the schema, published, not the target, and not caused by the target |
+| `treatment_values` | `[control, treated]`. Optional for a boolean column (`false`, `true`) and for an integer column with `minimum` 0 and `maximum` 1. Any other treatment, such as a category with choices `none` and `promo`, needs it |
+| `effect_modifiers` | Boolean, category or numeric columns, not caused by the treatment, to report conditional effects by |
+
+**The graph.** It is read from the schema:
+- a column is caused by the columns its formula reads and its conditions test;
+- hidden columns are in the graph, and are not published;
+- a schema `correlations` entry is an unobserved common cause of its two columns.
+
+**The answer key's `causal` section**:
+
+| Field | Meaning |
+|---|---|
+| `ate` | Mean of Y(treated) − Y(control) over all generated rows, train and test. Y is the target; a classification target is read as 0 or 1 |
+| `att` | The same mean over the rows that were treated |
+| `effect_on_truth_column` | When the question has a `truth_column`, its `ate` and `att` on that column, such as on the churn probability. It is the effect without the sampling noise of the label |
+| `cate` | The mean effect per level of each effect modifier. A numeric modifier is cut into quartiles. Each entry gives `level`, `rows` and `effect` |
+| `naive_difference` | Mean target of the treated minus the control among the published training rows |
+| `naive_bias` | `naive_difference` − `ate`: what confounding did to the simple comparison |
+| `roles` | Lists of `confounders`, `mediators`, `colliders`, `instruments` and `effect_modifiers` |
+| `adjustment_set` | A set of published columns that blocks every back-door path, or `null` |
+| `adjustment_set_reason` | Why the set is valid, or why none exists, such as a hidden confounder |
+
+The roles follow from the graph:
+- **confounders**: common causes of the treatment and the outcome that the treatment does not
+  cause. A column joined by a correlation to the treatment or to one of its causes counts when
+  it reaches the outcome without passing through the treatment;
+- **mediators**: descendants of the treatment that are ancestors of the outcome;
+- **colliders**: columns the outcome causes and the treatment reaches without passing through
+  the outcome. A column that only reads the outcome is a leak, not a collider;
+- **instruments**: causes of the treatment that reach the outcome only through the treatment,
+  counting correlations and shared causes.
+
+The `adjustment_set` is the confounders when all of them are published and nothing else
+connects the treatment and the outcome. It is `null` when a confounder is hidden, or when a
+correlation links the treatment and the outcome directly. Adjusting for a mediator or a
+collider biases the estimate, which is what the example is for.
+
+A treatment that is a category needs `treatment_values`, and the column's formula can produce
+the choices, such as `where(bernoulli(0.4), 'promo', 'none')`.
+
+## Replaying a build
+
+The effects come from an intervention, `do(treatment = value)`, on the generated rows.
+- Every random number used to build a row is stored with it: the uniform number behind each
+  drawn column, behind each `bernoulli`, `normal`, `poisson` or `uniform` call in a formula,
+  behind `noise_std`, and behind a condition that redraws a formula column.
+- Constraint filtering drops the stored numbers of the rows it drops, so they stay aligned.
+- An intervention keeps every column the treatment does not cause, sets the treatment, and
+  recomputes its descendants in generation order from the stored numbers, conditions included.
+  A row keeps its own noise, so the difference between two interventions is the exact effect
+  on that row.
+- Outliers and blank cells are not applied again, so the effects describe the structural
+  model and not the published table. A descendant that is neither drawn nor computed, such as
+  a fake name, keeps its value, and `exact` statistics are not restored on recomputed columns.
+
+Schemas that use none of the new fields build the same tables as before for the same seed,
+except where a formula calls `normal` or `poisson`, uses `noise_std`, or sits under a
+condition. Those keep their distributions but draw from the stored uniform numbers, so their
+seeded values differ from earlier versions.
 
 A model that scores close to `best_achievable` has found the planted pattern. A model that
 beats it on the test set has overfitted, or found leakage.

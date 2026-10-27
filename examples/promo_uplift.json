@@ -1,0 +1,43 @@
+{
+  "columns": [
+    {"name": "customer_id", "kind": "integer", "minimum": 1, "unique": true},
+    {"name": "age", "kind": "integer", "mean": 42, "std": 12, "minimum": 18, "maximum": 85},
+    {
+      "name": "segment", "kind": "category",
+      "choices": ["new", "returning", "loyal"], "weights": [30, 45, 25]
+    },
+    {"name": "region", "kind": "category", "choices": ["north", "south", "east", "west"]},
+    {"name": "past_spend", "kind": "float", "mean": 100, "std": 30, "minimum": 0},
+    {"name": "outreach_wave", "kind": "boolean", "true_share": 0.5},
+    {
+      "name": "promo_propensity", "kind": "float",
+      "formula": "sigmoid(-0.5 + 0.025 * (past_spend - 100) + 1.2 * where(outreach_wave, 1, 0))"
+    },
+    {"name": "promo", "kind": "boolean", "formula": "bernoulli(promo_propensity)"},
+    {
+      "name": "app_minutes", "kind": "float", "noise_std": 3,
+      "formula": "20 + 6 * promo + 0.05 * past_spend"
+    },
+    {
+      "name": "revenue_next_month", "kind": "float", "noise_std": 8,
+      "formula": "20 + 0.6 * past_spend + 2 * app_minutes + promo * (5 + where(segment == 'loyal', 6, 0) - where(segment == 'new', 2, 0) + 0.2 * (age - 42))"
+    },
+    {
+      "name": "satisfaction_score", "kind": "float", "noise_std": 4,
+      "formula": "50 + 0.15 * revenue_next_month + 8 * promo"
+    },
+    {
+      "name": "reward_points_earned", "kind": "float", "noise_std": 0.5,
+      "formula": "0.1 * revenue_next_month"
+    }
+  ],
+  "question": {
+    "title": "Does the promotion lift next month's revenue?",
+    "prompt": "Customers received a promotion. Estimate how much it raises revenue_next_month on average, and for whom. Score: distance from the true average effect.",
+    "target": "revenue_next_month",
+    "task": "regression",
+    "hidden_columns": ["promo_propensity"],
+    "treatment": "promo",
+    "effect_modifiers": ["segment", "age"]
+  }
+}

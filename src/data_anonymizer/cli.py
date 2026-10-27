@@ -306,7 +306,19 @@ def _question_page(challenge) -> str:
         f"Task: {key['task']}. Target column: `{key['target']}`.\n\n"
         f"Files: `train.csv` ({key['rows']['train']} rows, with the target) and "
         f"`test.csv` ({key['rows']['test']} rows, without it).\n\n"
+        f"{_treatment_note(key)}"
         f"## Columns\n\n{columns}\n"
+    )
+
+
+def _treatment_note(key: dict) -> str:
+    causal = key.get("causal")
+    if causal is None:
+        return ""
+    values = causal["treatment_values"]
+    return (
+        f"Treatment column: `{causal['treatment']}` (control {values['control']!r}, "
+        f"treated {values['treated']!r}).\n\n"
     )
 
 

@@ -9,13 +9,14 @@ from collections.abc import Callable
 import numpy as np
 import pandas as pd
 
+from data_anonymizer.synthesis.draw_replay import ColumnDraws, normal_from_uniform
 from data_anonymizer.synthesis.expressions import evaluate
 from data_anonymizer.synthesis.marginals import (
     evenly_spread,
     match_mean_and_std,
     quantile_function,
 )
-from data_anonymizer.synthesis.schema import ColumnOverride, ColumnSchema
+from data_anonymizer.synthesis.schema import DRAWN_KINDS, ColumnOverride, ColumnSchema
 from data_anonymizer.taxonomy import NUMERIC_KINDS, ColumnKind
 
 RegenerateRows = Callable[[ColumnSchema, int], pd.Series]
@@ -31,25 +32,36 @@ def draw(column: ColumnSchema, uniform: np.ndarray) -> pd.Series:
     return values
 
 
-def compute_formula(
-    column: ColumnSchema, frame: pd.DataFrame, rng: np.random.Generator
-) -> pd.Series:
+def compute_formula(column: ColumnSchema, frame: pd.DataFrame, draws: ColumnDraws) -> pd.Series:
     """Evaluate a column's formula over the columns generated so far, plus its noise."""
     assert column.formula is not None
-    computed = evaluate(column.formula, frame, rng)
+    computed = evaluate(column.formula, frame, uniforms=draws.next_call_site)
     if column.kind is ColumnKind.BOOLEAN:
         return pd.Series(np.asarray(computed).astype(bool))
     if column.kind not in NUMERIC_KINDS:
         return pd.Series(np.asarray(computed, dtype=object))
     values = np.asarray(computed, dtype=float)
     if column.noise_std:
-        values = values + rng.normal(0.0, column.noise_std, size=len(values))
+        values = values + column.noise_std * normal_from_uniform(draws.noise())
     lower = -np.inf if column.minimum is None else column.minimum
     upper = np.inf if column.maximum is None else column.maximum
     values = np.clip(values, lower, upper)
     if column.exact:
         values = match_mean_and_std(values, column)
     return _as_kind(values, column)
+
+
+def conditional_uniform(column: ColumnSchema, draws: ColumnDraws) -> np.ndarray | None:
+    """Return the uniform numbers that rows redrawn by a condition keep their rank from.
+
+    A drawn column reuses the numbers its values came from. A formula column has none, so it
+    gets numbers of its own. Other columns have none and are redrawn from the generator.
+    """
+    if column.formula is None:
+        return draws.base()
+    if column.conditions and column.kind in DRAWN_KINDS:
+        return draws.redraw()
+    return None
 
 
 def apply_conditions(

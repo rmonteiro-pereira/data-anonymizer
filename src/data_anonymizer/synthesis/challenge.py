@@ -15,9 +15,11 @@ from scipy import stats
 
 from data_anonymizer.errors import SchemaError
 from data_anonymizer.surrogates import SurrogateFactory
+from data_anonymizer.synthesis.causal_graph import CausalGraph
 from data_anonymizer.synthesis.expressions import evaluate, uses_randomness
-from data_anonymizer.synthesis.generator import generate_from_schema
+from data_anonymizer.synthesis.generator import generate_with_replay
 from data_anonymizer.synthesis.schema import ColumnSchema, DatasetSchema, Question, Task
+from data_anonymizer.synthesis.treatment_effects import causal_answer
 from data_anonymizer.taxonomy import ColumnKind
 
 # Probabilities are kept away from 0 and 1 so the log loss stays finite.
@@ -48,7 +50,8 @@ def build_challenge(
     if question is None:
         raise SchemaError("the schema has no question to build a challenge from")
 
-    full = generate_from_schema(schema, rows, rng=rng, surrogates=surrogates)
+    built = generate_with_replay(schema, rows, rng=rng, surrogates=surrogates)
+    full = built.table
     truth = _truth(schema, question, full)
     in_test = _split_rows(question, rows, rng)
     published = full.drop(columns=question.hidden_columns)
@@ -64,8 +67,15 @@ def build_challenge(
         "how_the_target_was_built": _derivation(schema, question.target),
         "best_achievable": _best_scores(question, full[question.target][in_test], truth, in_test),
     }
+    train = published[~in_test].reset_index(drop=True)
+    if question.treatment is not None:
+
+        def outcome_as_numbers(answers: pd.Series) -> np.ndarray:
+            return _numeric_answers(question, answers)
+
+        answer_key["causal"] = causal_answer(schema, question, built, train, outcome_as_numbers)
     return Challenge(
-        train=published[~in_test].reset_index(drop=True),
+        train=train,
         test_features=test_rows.drop(columns=[question.target]),
         test_answers=test_rows[[question.target]],
         answer_key=answer_key,
@@ -121,7 +131,11 @@ def _with_float_nulls(frame: pd.DataFrame) -> pd.DataFrame:
     # Nullable integer and boolean columns hold NA objects that arithmetic cannot use.
     plain = frame.copy()
     for name in plain.columns:
-        if isinstance(plain[name].dtype, pd.api.extensions.ExtensionDtype):
+        dtype = plain[name].dtype
+        is_nullable_number = isinstance(dtype, pd.api.extensions.ExtensionDtype) and (
+            pd.api.types.is_numeric_dtype(dtype) or pd.api.types.is_bool_dtype(dtype)
+        )
+        if is_nullable_number:
             plain[name] = plain[name].astype("float64")
     return plain
 
@@ -147,11 +161,13 @@ def _feature_roles(schema: DatasetSchema, question: Question) -> dict[str, list[
         if first in drivers and other not in drivers
     }
     visible = [column.name for column in schema.columns if column.name not in hidden]
-    candidates = [name for name in visible if name != question.target]
+    leaks = CausalGraph.of(schema).descendants(question.target)
+    candidates = [name for name in visible if name != question.target and name not in leaks]
     return {
         "true_drivers": [name for name in candidates if name in drivers],
         "hidden_drivers": sorted(drivers & hidden),
         "correlated_but_not_causal": [name for name in candidates if name in correlated],
+        "leaks_target": [name for name in visible if name in leaks],
         "distractors": [
             name for name in candidates if name not in drivers and name not in correlated
         ],

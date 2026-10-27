@@ -6,7 +6,9 @@ parsed with `ast` and evaluated node by node, never with `eval`, so a schema fil
 from someone else cannot run code.
 
 Formulas may also call `bernoulli(p)`, `normal(mean, std)`, `poisson(rate)` and
-`uniform(low, high)`, which draw one random value per row.
+`uniform(low, high)`, which draw one random value per row. Each call turns a stored uniform
+number into its value through the inverse distribution function, so a build can be replayed
+(see `draw_replay`).
 
 Examples:
     50 + 2.5 * age
@@ -23,6 +25,8 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+
+from data_anonymizer.synthesis.draw_replay import normal_from_uniform, poisson_from_uniform
 
 _NANOSECONDS_PER_DAY = 86_400 * 10**9
 
@@ -76,16 +80,34 @@ FUNCTIONS: dict[str, Callable[..., Any]] = {
 RANDOM_FUNCTIONS = frozenset({"bernoulli", "normal", "poisson", "uniform"})
 
 
-def _random_functions(rng: np.random.Generator, rows: int) -> dict[str, Callable[..., Any]]:
+# Returns the stored uniform numbers for the next random function call of a formula.
+UniformSource = Callable[[], np.ndarray]
+
+
+def _fresh_uniforms(rng: np.random.Generator, rows: int) -> UniformSource:
+    return lambda: rng.random(rows)
+
+
+def _random_functions(next_uniform: UniformSource, rows: int) -> dict[str, Callable[..., Any]]:
     def sized(values: Any) -> np.ndarray:
         return np.broadcast_to(np.asarray(values, dtype=float), (rows,))
 
-    return {
-        "bernoulli": lambda probability: rng.random(rows) < sized(probability),
-        "normal": lambda mean, std: rng.normal(sized(mean), sized(std)),
-        "poisson": lambda rate: rng.poisson(sized(rate)),
-        "uniform": lambda low, high: rng.uniform(sized(low), sized(high)),
-    }
+    def bernoulli(probability: Any) -> np.ndarray:
+        return next_uniform() < sized(probability)
+
+    def normal(mean: Any, std: Any) -> np.ndarray:
+        spread = sized(std)
+        if np.any(spread < 0):
+            raise ValueError("normal needs a std that is not negative")
+        return sized(mean) + spread * normal_from_uniform(next_uniform())
+
+    def poisson(rate: Any) -> np.ndarray:
+        return poisson_from_uniform(next_uniform(), sized(rate))
+
+    def uniform(low: Any, high: Any) -> np.ndarray:
+        return sized(low) + (sized(high) - sized(low)) * next_uniform()
+
+    return {"bernoulli": bernoulli, "normal": normal, "poisson": poisson, "uniform": uniform}
 
 
 CONSTANTS = {"pi": np.pi, "e": np.e}
@@ -206,15 +228,24 @@ def uses_randomness(text: str) -> bool:
     )
 
 
-def evaluate(text: str, frame: pd.DataFrame, rng: np.random.Generator | None = None) -> np.ndarray:
+def evaluate(
+    text: str,
+    frame: pd.DataFrame,
+    rng: np.random.Generator | None = None,
+    *,
+    uniforms: UniformSource | None = None,
+) -> np.ndarray:
     """Evaluate an expression over every row of a table and return one value per row.
 
-    `rng` is needed only by expressions that call the random functions.
+    The random functions need either `rng`, which draws new numbers, or `uniforms`, which
+    returns the stored numbers of the next call site, one per row.
     """
     tree = parse(text)
     functions = dict(FUNCTIONS)
-    if rng is not None:
-        functions.update(_random_functions(rng, len(frame)))
+    if uniforms is None and rng is not None:
+        uniforms = _fresh_uniforms(rng, len(frame))
+    if uniforms is not None:
+        functions.update(_random_functions(uniforms, len(frame)))
     try:
         result = _evaluate(tree.body, frame, functions)
     except ExpressionError:
