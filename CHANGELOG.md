@@ -35,6 +35,9 @@
     acceptance rate;
   - `unique: true` on a template retries until distinct and fails when the template is too
     small, and schemas reject it on boolean, datetime and `choices` columns;
+  - challenge answer keys say "not computable" when the target has bounds, exact statistics,
+    conditions or outliers and no `truth_column`, leave out rows with a missing label or
+    truth, fail on empty splits, and take a `positive_label` for text classification targets;
   - conditional overrides are validated after merging with the column: a mean and std
     replace a uniform or quantile base shape, and new choices reset the weights;
 - Data-science challenges, from `challenge`: train and test files, plus an answer key

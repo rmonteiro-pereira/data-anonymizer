@@ -17,10 +17,13 @@ from data_anonymizer.errors import SchemaError
 from data_anonymizer.surrogates import SurrogateFactory
 from data_anonymizer.synthesis.expressions import evaluate, uses_randomness
 from data_anonymizer.synthesis.generator import generate_from_schema
-from data_anonymizer.synthesis.schema import DatasetSchema, Question, Task
+from data_anonymizer.synthesis.schema import ColumnSchema, DatasetSchema, Question, Task
+from data_anonymizer.taxonomy import ColumnKind
 
 # Probabilities are kept away from 0 and 1 so the log loss stays finite.
 _PROBABILITY_EDGE = 1e-12
+
+_NAME_A_TRUTH_COLUMN = "name a truth_column to measure the noise-free optimum"
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,7 +50,7 @@ def build_challenge(
 
     full = generate_from_schema(schema, rows, rng=rng, surrogates=surrogates)
     truth = _truth(schema, question, full)
-    in_test = rng.random(rows) < question.test_share
+    in_test = _split_rows(question, rows, rng)
     published = full.drop(columns=question.hidden_columns)
     test_rows = published[in_test].reset_index(drop=True)
 
@@ -69,19 +72,58 @@ def build_challenge(
     )
 
 
-def _truth(schema: DatasetSchema, question: Question, full: pd.DataFrame) -> pd.Series | None:
+def _split_rows(question: Question, rows: int, rng: np.random.Generator) -> np.ndarray:
+    in_test = rng.random(rows) < question.test_share
+    test_rows = int(in_test.sum())
+    train_rows = rows - test_rows
+    if train_rows == 0 or test_rows == 0:
+        raise SchemaError(
+            f"{rows} rows leave {train_rows} training rows and {test_rows} test rows; "
+            "ask for more rows or change the question's test_share"
+        )
+    return in_test
+
+
+def _truth(schema: DatasetSchema, question: Question, full: pd.DataFrame) -> pd.Series | str:
+    """Return the noise-free answer per row, or the reason it cannot be computed."""
     if question.truth_column is not None:
         return full[question.truth_column]
     target = schema.column(question.target)
-    computable = (
-        question.task is Task.REGRESSION
-        and target.formula is not None
-        and not uses_randomness(target.formula)
-    )
-    if computable:
-        assert target.formula is not None
-        return pd.Series(evaluate(target.formula, full).astype(float))
-    return None
+    no_formula = target.formula is None or uses_randomness(target.formula)
+    if question.task is not Task.REGRESSION or no_formula:
+        return f"not computable: {_NAME_A_TRUTH_COLUMN}"
+    assert target.formula is not None
+    changes = _changes_after_formula(target)
+    if changes:
+        return (
+            f"not computable: {', '.join(changes)} change the target after its formula, "
+            f"so the formula is not its noise-free truth; {_NAME_A_TRUTH_COLUMN}"
+        )
+    return pd.Series(evaluate(target.formula, _with_float_nulls(full)).astype(float))
+
+
+def _changes_after_formula(target: ColumnSchema) -> list[str]:
+    changes = []
+    if target.minimum is not None or target.maximum is not None:
+        changes.append("bounds")
+    if target.exact:
+        changes.append("exact statistics")
+    if target.conditions:
+        changes.append("conditions")
+    if target.outlier_fraction > 0:
+        changes.append("outliers")
+    if target.kind is ColumnKind.INTEGER:
+        changes.append("integer rounding")
+    return changes
+
+
+def _with_float_nulls(frame: pd.DataFrame) -> pd.DataFrame:
+    # Nullable integer and boolean columns hold NA objects that arithmetic cannot use.
+    plain = frame.copy()
+    for name in plain.columns:
+        if isinstance(plain[name].dtype, pd.api.extensions.ExtensionDtype):
+            plain[name] = plain[name].astype("float64")
+    return plain
 
 
 def _ancestors(schema: DatasetSchema, name: str) -> set[str]:
@@ -141,12 +183,18 @@ def _derivation(schema: DatasetSchema, target: str) -> list[dict[str, Any]]:
 
 
 def _best_scores(
-    question: Question, answers: pd.Series, truth: pd.Series | None, in_test: np.ndarray
+    question: Question, answers: pd.Series, truth: pd.Series | str, in_test: np.ndarray
 ) -> dict[str, float] | str:
-    if truth is None:
-        return "not computable: name a truth_column to measure the noise-free optimum"
-    best = truth[in_test].to_numpy(dtype=float)
-    actual = answers.to_numpy(dtype=float)
+    if isinstance(truth, str):
+        return truth
+    actual = _numeric_answers(question, answers)
+    best = truth[in_test].to_numpy(dtype=float, na_value=np.nan)
+    # A row with no label or no truth cannot be scored.
+    scored = ~np.isnan(actual) & ~np.isnan(best)
+    if not scored.any():
+        return "not computable: no test row has both a target value and a truth value"
+    actual = actual[scored]
+    best = best[scored]
     if question.task is Task.REGRESSION:
         residual = actual - best
         return {
@@ -155,6 +203,28 @@ def _best_scores(
             "r2": float(1 - np.sum(residual**2) / np.sum((actual - actual.mean()) ** 2)),
         }
     return _classification_scores(actual, best)
+
+
+def _numeric_answers(question: Question, answers: pd.Series) -> np.ndarray:
+    """Return the target as numbers, with NaN for missing cells."""
+    if question.task is Task.CLASSIFICATION and question.positive_label is not None:
+        labels = (answers.astype(str) == question.positive_label).to_numpy(dtype=float)
+        labels[answers.isna().to_numpy()] = np.nan
+        return labels
+    try:
+        numbers = answers.to_numpy(dtype=float, na_value=np.nan)
+    except (TypeError, ValueError) as error:
+        raise SchemaError(
+            f"the target {question.target!r} is not numeric; "
+            "a classification question can name a positive_label instead"
+        ) from error
+    present = numbers[~np.isnan(numbers)]
+    if question.task is Task.CLASSIFICATION and not np.isin(present, [0.0, 1.0]).all():
+        raise SchemaError(
+            f"the classification target {question.target!r} is not boolean or 0/1; "
+            "name its positive class in the question's positive_label"
+        )
+    return numbers
 
 
 def _classification_scores(labels: np.ndarray, probabilities: np.ndarray) -> dict[str, float]:

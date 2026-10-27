@@ -189,9 +189,16 @@ The answer key holds:
 - **best_achievable**: the best score any model can reach, measured against the noise-free
   truth on the test rows.
   - Regression: RMSE, MAE and R². The truth is the `truth_column`, or the target's formula
-    evaluated again without its noise.
+    evaluated again without its noise. Without a `truth_column`, the key says "not
+    computable" when the target has `minimum` or `maximum`, `exact`, `conditions`,
+    `outlier_fraction` or integer rounding, because those change the target after its
+    formula and the formula is then not the best prediction.
   - Classification: accuracy, ROC AUC and log loss of the true probability in
-    `truth_column`, plus the positive rate.
+    `truth_column`, plus the positive rate. The target is boolean or 0/1. For any other
+    target, such as the choices `no` and `yes`, set `positive_label` in the question.
+  - Rows with a missing target or truth are left out of the scores.
+  - The table needs at least one training row and one test row, or generation fails with a
+    `SchemaError`.
 
 A model that scores close to `best_achievable` has found the planted pattern. A model that
 beats it on the test set has overfitted, or found leakage.

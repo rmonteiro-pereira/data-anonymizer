@@ -163,6 +163,106 @@ def test_regression_challenge_optimum_matches_the_planted_noise():
     assert key["features"]["distractors"] == ["noise_col"]
 
 
+def _regression_schema(target_settings: dict, driver_settings: dict | None = None) -> dict:
+    return {
+        "columns": [
+            {"name": "x", "kind": "float", "mean": 0, "std": 1, **(driver_settings or {})},
+            {"name": "y", "kind": "float", "formula": "2 * x", "noise_std": 2, **target_settings},
+        ],
+        "question": {"title": "Fit y", "prompt": "Predict y.", "target": "y", "task": "regression"},
+    }
+
+
+@pytest.mark.parametrize(
+    "target_settings",
+    [
+        {"minimum": 0},
+        {"exact": True, "mean": 5, "std": 3},
+        {"conditions": [{"when": "x > 0", "mean": 50, "std": 1}]},
+        {"outlier_fraction": 0.05},
+    ],
+)
+def test_best_achievable_is_not_computable_when_the_target_is_changed_after_its_formula(
+    target_settings,
+):
+    schema = DatasetSchema.model_validate(_regression_schema(target_settings))
+
+    key = Anonymizer(seed=1).challenge(schema, 2000).answer_key
+
+    assert key["best_achievable"].startswith("not computable")
+
+
+def test_best_achievable_skips_rows_with_a_missing_target_or_driver():
+    schema = DatasetSchema.model_validate(
+        _regression_schema({"null_fraction": 0.1}, {"null_fraction": 0.1})
+    )
+
+    scores = Anonymizer(seed=1).challenge(schema, 4000).answer_key["best_achievable"]
+
+    assert scores["rmse"] == pytest.approx(2.0, rel=0.1)
+    assert scores["r2"] == pytest.approx(0.5, abs=0.1)
+
+
+def _label_schema(target: dict, question: dict | None = None) -> dict:
+    return {
+        "columns": [
+            {"name": "x", "kind": "float", "mean": 0, "std": 1},
+            {"name": "p", "kind": "float", "formula": "sigmoid(2 * x)"},
+            {"name": "label", "formula": "bernoulli(p)", **target},
+        ],
+        "question": {
+            "title": "Label",
+            "prompt": "Predict the label.",
+            "target": "label",
+            "task": "classification",
+            "hidden_columns": ["p"],
+            "truth_column": "p",
+            **(question or {}),
+        },
+    }
+
+
+def test_classification_scores_ignore_rows_without_a_label():
+    schema = DatasetSchema.model_validate(_label_schema({"kind": "boolean", "null_fraction": 0.2}))
+
+    scores = Anonymizer(seed=1).challenge(schema, 4000).answer_key["best_achievable"]
+
+    assert 0.7 < scores["accuracy"] < 0.9
+    assert 0.35 < scores["log_loss"] < 0.55
+    assert 0.4 < scores["positive_rate"] < 0.6
+
+
+def test_classification_with_text_labels_needs_and_uses_a_positive_label():
+    labels = {
+        "kind": "category",
+        "choices": ["no", "yes"],
+        "formula": "where(bernoulli(p), 'yes', 'no')",
+    }
+
+    with pytest.raises(ValueError, match="positive_label"):
+        DatasetSchema.model_validate(_label_schema(labels))
+    schema = DatasetSchema.model_validate(_label_schema(labels, {"positive_label": "yes"}))
+    scores = Anonymizer(seed=1).challenge(schema, 4000).answer_key["best_achievable"]
+
+    assert 0.7 < scores["roc_auc"] < 0.9
+    assert 0.4 < scores["positive_rate"] < 0.6
+
+
+def test_classification_rejects_numeric_labels_that_are_not_zero_or_one():
+    target = {"kind": "integer", "formula": "1 + bernoulli(p)"}
+    schema = DatasetSchema.model_validate(_label_schema(target))
+
+    with pytest.raises(SchemaError, match="positive_label"):
+        Anonymizer(seed=1).challenge(schema, 500)
+
+
+def test_a_challenge_with_too_few_rows_fails_clearly():
+    schema = DatasetSchema.model_validate(_regression_schema({}))
+
+    with pytest.raises(SchemaError, match="test rows"):
+        Anonymizer(seed=1).challenge(schema, 1)
+
+
 def test_constraints_do_not_remove_the_requested_nulls():
     schema = DatasetSchema(
         columns=[

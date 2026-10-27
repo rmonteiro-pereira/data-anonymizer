@@ -239,6 +239,9 @@ class Question(BaseModel):
     the noise-free answer: the expected value for regression, or the probability of
     the positive class for classification. When it is left out for regression, the
     target's formula is evaluated again without its noise.
+
+    A classification target is boolean or 0/1. Any other target, such as a category with
+    choices "no" and "yes", names its positive class in `positive_label`.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -249,6 +252,7 @@ class Question(BaseModel):
     task: Task
     hidden_columns: list[str] = Field(default_factory=list)
     truth_column: str | None = None
+    positive_label: str | None = None
     test_share: float = Field(default=0.2, gt=0, lt=1)
 
 
@@ -293,7 +297,7 @@ class DatasetSchema(BaseModel):
                 raise ValueError(f"constraint {constraint!r}: unknown columns {sorted(unknown)}")
         self.generation_order()
         if self.question is not None:
-            _check_question(self.question, set(by_name))
+            _check_question(self.question, by_name)
         return self
 
     def _checked_expressions(self) -> list[str]:
@@ -358,7 +362,8 @@ def _check_correlatable(column: ColumnSchema | None, name: str) -> None:
         )
 
 
-def _check_question(question: Question, names: set[str]) -> None:
+def _check_question(question: Question, by_name: dict[str, ColumnSchema]) -> None:
+    names = set(by_name)
     mentioned = {question.target, *question.hidden_columns}
     if question.truth_column is not None:
         mentioned.add(question.truth_column)
@@ -369,3 +374,24 @@ def _check_question(question: Question, names: set[str]) -> None:
         raise ValueError(f"the question names unknown columns {', '.join(sorted(unknown))}")
     if question.target in question.hidden_columns:
         raise ValueError("the question's target cannot be hidden")
+    _check_positive_label(question, by_name[question.target])
+
+
+def _check_positive_label(question: Question, target: ColumnSchema) -> None:
+    if question.task is not Task.CLASSIFICATION:
+        return
+    is_binary_kind = target.kind in (ColumnKind.BOOLEAN, ColumnKind.INTEGER, ColumnKind.FLOAT)
+    if question.positive_label is None and not is_binary_kind:
+        raise ValueError(
+            f"the classification target {target.name!r} is not boolean or 0/1, "
+            "so the question needs a positive_label"
+        )
+    unknown_label = (
+        question.positive_label is not None
+        and bool(target.choices)
+        and question.positive_label not in (target.choices or [])
+    )
+    if unknown_label:
+        raise ValueError(
+            f"positive_label {question.positive_label!r} is not one of the target's choices"
+        )
