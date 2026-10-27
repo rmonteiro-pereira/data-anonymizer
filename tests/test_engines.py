@@ -17,6 +17,25 @@ MAPPING_TECHNIQUES = [
 EXPRESSION_TECHNIQUES = [
     ("gaussian_noise", "amount", {"relative_scale": 0.2}),
     ("microaggregate", "amount", {"group_size": 4}),
+    ("laplace_noise", "amount", {"epsilon": 2.0, "lower": 0, "upper": 500}),
+    ("multiplicative_noise", "amount", {"relative_scale": 0.2}),
+    ("date_shift", "when", {"max_days": 10}),
+    ("date_shift", "when", {"max_days": 10, "by": "store"}),
+    ("shuffle", "amount", {}),
+    ("rank_swap", "amount", {"max_distance_percent": 10.0}),
+    ("randomized_response", "store", {"keep_probability": 0.5}),
+    ("bin_numeric", "amount", {"bins": 4}),
+    ("bin_numeric", "amount", {"bins": 4, "strategy": "equal_width"}),
+    ("bin_numeric", "amount", {"width": 100}),
+    ("round_numeric", "amount", {"decimals": -1}),
+    ("round_numeric", "amount", {"base": 50}),
+    ("truncate_date", "when", {"unit": "year"}),
+    ("truncate_date", "when", {"unit": "week"}),
+    ("truncate_date", "when_text", {"unit": "month"}),
+    ("truncate_string", "email", {"keep": 6}),
+    ("truncate_string", "email", {"keep": 6, "pad_char": "*"}),
+    ("top_bottom_code", "amount", {"lower_quantile": 0.1, "upper_quantile": 0.9}),
+    ("suppress_rare", "store", {"min_count": 12, "replacement": "OTHER"}),
     ("normalize", "amount", {}),
     (
         "normalize",
@@ -35,14 +54,17 @@ ENGINE_TECHNIQUES = MAPPING_TECHNIQUES + EXPRESSION_TECHNIQUES
 
 def _sample() -> pd.DataFrame:
     rng = np.random.default_rng(1)
-    return pd.DataFrame(
+    frame = pd.DataFrame(
         {
             "id": np.arange(1, 41),
             "store": rng.choice(["a", "b", "c"], 40),
             "email": [f"person{index % 25}@example.com" for index in range(40)],
             "amount": rng.lognormal(5, 1, 40).round(2),
+            "when": pd.Timestamp("2021-03-01") + pd.to_timedelta(rng.integers(0, 400, 40), "D"),
         }
     )
+    frame["when_text"] = frame["when"].dt.strftime("%Y-%m-%d")
+    return frame
 
 
 def _native(frame: pd.DataFrame, engine: Engine):
@@ -90,7 +112,7 @@ def test_the_table_comes_back_as_the_kind_it_was_given(context):
         native = table.to_native()
 
         assert isinstance(native, kind)
-        assert list(native.columns) == ["id", "store", "email", "amount"]
+        assert list(native.columns) == list(_sample().columns)
 
 
 def test_noise_depends_on_the_randomness_key(context):

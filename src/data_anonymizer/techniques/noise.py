@@ -1,15 +1,14 @@
 """Techniques that add random noise to numbers and dates."""
 
 import narwhals as nw
-import numpy as np
-import pandas as pd
 
-from data_anonymizer.detection.kinds import as_datetime
 from data_anonymizer.table import Table
 from data_anonymizer.techniques.context import TechniqueContext
+from data_anonymizer.techniques.date_expressions import as_datetime_expression, shift_days
 from data_anonymizer.techniques.numeric_expressions import (
     as_number,
     in_original_type,
+    laplace,
     standard_normal,
 )
 
@@ -47,13 +46,14 @@ def gaussian_noise(
 
 
 def laplace_noise(
-    values: pd.Series,
+    table: Table,
+    column: str,
     context: TechniqueContext,
     *,
     epsilon: float = 1.0,
     lower: float | None = None,
     upper: float | None = None,
-) -> pd.Series:
+) -> nw.Expr:
     """Clip each value to [lower, upper] and add Laplace noise of scale (upper - lower) / epsilon.
 
     With `lower` and `upper` fixed in advance rather than read from the data, each
@@ -67,62 +67,41 @@ def laplace_noise(
         raise ValueError(
             "laplace_noise needs lower and upper bounds chosen without looking at the data"
         )
-    numbers = pd.to_numeric(values, errors="coerce").astype(float)
-    present = numbers.notna()
-    original = numbers[present].to_numpy()
-    if len(original) == 0:
-        return values.copy()
-
-    clipped = np.clip(original, lower, upper)
-    sensitivity = upper - lower
-    noisy = clipped + context.rng.laplace(0.0, sensitivity / epsilon, size=len(clipped))
-    return _write_back(values, numbers, present, noisy)
+    (uniform,) = table.uniforms(context.stream_key(column, "laplace_noise"))
+    noise_scale = (upper - lower) / epsilon
+    clipped = as_number(column).clip(lower_bound=lower, upper_bound=upper)
+    return in_original_type(clipped + laplace(uniform) * noise_scale, table.dtype(column))
 
 
 def multiplicative_noise(
-    values: pd.Series, context: TechniqueContext, *, relative_scale: float = 0.1
-) -> pd.Series:
+    table: Table, column: str, context: TechniqueContext, *, relative_scale: float = 0.1
+) -> nw.Expr:
     """Multiply each value by a factor drawn around 1, so large values move more.
 
     Suits amounts such as salaries, where an absolute noise level would swamp small
     values and barely touch large ones. Signs never flip for factors above zero.
     """
-    numbers = pd.to_numeric(values, errors="coerce").astype(float)
-    present = numbers.notna()
-    original = numbers[present].to_numpy()
-    factors = context.rng.normal(1.0, relative_scale, size=len(original))
-    factors = np.clip(factors, 0.01, None)
-    return _write_back(values, numbers, present, original * factors)
+    first, second = table.uniforms(context.stream_key(column, "multiplicative_noise"), 2)
+    factor = (standard_normal(first, second) * relative_scale + 1.0).clip(lower_bound=0.01)
+    return in_original_type(as_number(column) * factor, table.dtype(column))
 
 
 def date_shift(
-    values: pd.Series,
+    table: Table,
+    column: str,
     context: TechniqueContext,
     *,
     max_days: int = 30,
     by: str | None = None,
-) -> pd.Series:
+) -> nw.Expr:
     """Move each date by a random whole number of days between -max_days and +max_days.
 
     With `by`, every row of the same entity (a person, a store) moves by the same
     offset. Without it, each row gets its own offset, and averaging the many rows of
     one person recovers their true date within days.
     """
-    dates = as_datetime(values)
-    if by is None:
-        offsets = context.rng.integers(-max_days, max_days + 1, size=len(dates))
-        return dates + pd.to_timedelta(offsets, unit="D")
-    entities = context.group_keys(by).reindex(values.index)
-    codes, uniques = pd.factorize(entities, use_na_sentinel=False)
-    per_entity = context.rng.integers(-max_days, max_days + 1, size=len(uniques))
-    return dates + pd.to_timedelta(per_entity[codes], unit="D")
-
-
-def _write_back(
-    values: pd.Series, numbers: pd.Series, present: pd.Series, noisy: np.ndarray
-) -> pd.Series:
-    result = numbers.copy()
-    result[present] = noisy
-    if pd.api.types.is_integer_dtype(values):
-        return result.round().astype(values.dtype)
-    return result
+    dates = as_datetime_expression(table, column)
+    (uniform,) = table.uniforms(context.stream_key(column, "date_shift"), by=by)
+    offsets_possible = 2 * max_days + 1
+    offset = (uniform * offsets_possible).floor().cast(nw.Int64) - max_days
+    return shift_days(dates, offset, range(-max_days, max_days + 1))

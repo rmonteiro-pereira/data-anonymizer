@@ -149,9 +149,9 @@ def test_pseudonyms_ignore_the_float_storage_of_integer_ids(run, context):
     assert first.iloc[2] == second.iloc[2]
 
 
-def test_laplace_noise_needs_bounds_chosen_in_advance(context):
+def test_laplace_noise_needs_bounds_chosen_in_advance(run, context):
     with pytest.raises(ValueError, match="lower and upper"):
-        laplace_noise(pd.Series([1.0, 2.0]), context, epsilon=1)
+        run(laplace_noise, pd.Series([1.0, 2.0]), context, epsilon=1)
 
 
 def test_date_shift_by_entity_moves_every_row_of_a_person_alike(people):

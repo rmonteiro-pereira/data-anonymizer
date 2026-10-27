@@ -299,7 +299,7 @@ _BUILTINS = (
         _GENERAL,
         _DISTORTS,
         _NUMERIC,
-        pandas_column(generalization.bin_numeric),
+        generalization.bin_numeric,
         "Replace numbers with interval labels.",
     ),
     Technique(
@@ -307,7 +307,7 @@ _BUILTINS = (
         _GENERAL,
         _DISTRIBUTION,
         _NUMERIC,
-        pandas_column(generalization.round_numeric),
+        generalization.round_numeric,
         "Round to decimals or to a multiple of a base.",
     ),
     Technique(
@@ -315,7 +315,7 @@ _BUILTINS = (
         _GENERAL,
         _DISTORTS,
         _DATES,
-        pandas_column(generalization.truncate_date),
+        generalization.truncate_date,
         "Cut dates to the start of their year, month, week or day.",
     ),
     Technique(
@@ -323,7 +323,7 @@ _BUILTINS = (
         _GENERAL,
         _DISTORTS,
         _TEXT_LIKE,
-        pandas_column(generalization.truncate_string),
+        generalization.truncate_string,
         "Keep only the first characters, such as a postal code's region.",
     ),
     Technique(
@@ -331,7 +331,7 @@ _BUILTINS = (
         _GENERAL,
         _DISTRIBUTION,
         _NUMERIC,
-        pandas_column(generalization.top_bottom_code),
+        generalization.top_bottom_code,
         "Clip outliers to quantile or fixed limits.",
     ),
     Technique(
@@ -339,7 +339,7 @@ _BUILTINS = (
         _GENERAL,
         _DISTORTS,
         _TEXT_LIKE | _CATEGORICAL,
-        pandas_column(generalization.suppress_rare),
+        generalization.suppress_rare,
         "Replace categories seen fewer than a minimum number of times.",
     ),
     Technique(
@@ -355,7 +355,7 @@ _BUILTINS = (
         _NOISE,
         _DISTORTS,
         _NUMERIC,
-        pandas_column(noise.laplace_noise),
+        noise.laplace_noise,
         "Clip and add Laplace noise; local differential privacy with fixed bounds.",
     ),
     Technique(
@@ -363,7 +363,7 @@ _BUILTINS = (
         _NOISE,
         _DISTRIBUTION,
         _NUMERIC,
-        pandas_column(noise.multiplicative_noise),
+        noise.multiplicative_noise,
         "Multiply by a random factor near 1; suits amounts.",
     ),
     Technique(
@@ -371,7 +371,7 @@ _BUILTINS = (
         _NOISE,
         _DISTRIBUTION,
         _DATES,
-        pandas_column(noise.date_shift),
+        noise.date_shift,
         "Move each date by a random number of days.",
     ),
     Technique(
@@ -379,7 +379,7 @@ _BUILTINS = (
         _PERTURB,
         _DISTRIBUTION,
         _ALL_KINDS,
-        pandas_column(perturbation.shuffle),
+        perturbation.shuffle,
         "Reorder values among rows; exact distribution, no link to other columns.",
     ),
     Technique(
@@ -387,7 +387,7 @@ _BUILTINS = (
         _PERTURB,
         _DISTRIBUTION,
         _NUMERIC | _DATES,
-        pandas_column(perturbation.rank_swap),
+        perturbation.rank_swap,
         "Swap values with near neighbours in rank; exact distribution.",
     ),
     Technique(
@@ -403,7 +403,7 @@ _BUILTINS = (
         _PERTURB,
         _DISTORTS,
         _CATEGORICAL,
-        pandas_column(perturbation.randomized_response),
+        perturbation.randomized_response,
         "Randomly replace some categories; deniable, local differential privacy.",
     ),
 )
