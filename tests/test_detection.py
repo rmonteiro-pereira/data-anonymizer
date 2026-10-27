@@ -813,3 +813,13 @@ def test_wide_spread_dates_of_adults_only_are_birth_dates_but_release_dates_are_
 
     assert scan_column("col_a", releases).category is DataCategory.GENERIC_DATETIME
     assert scan_column("col_a", people).category is DataCategory.DATE_OF_BIRTH
+
+
+def test_a_mixed_column_named_for_one_type_still_names_the_mix_in_its_evidence():
+    documents = _cpfs(170) + _cnpjs(30)
+    shuffled = pd.Series(documents).sample(frac=1, random_state=3).reset_index(drop=True)
+
+    finding = scan_column("cpf_cnpj", shuffled)
+
+    assert finding.category is DataCategory.CPF
+    assert "CNPJ" in finding.evidence

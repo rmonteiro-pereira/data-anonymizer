@@ -105,7 +105,8 @@ def value_candidates(
     candidates = _best_per_category(matches, name_category)
     mixed = _mixed_candidate(matches, name_category)
     if mixed is not None:
-        candidates.append(mixed)
+        # A mixed column outranks a single type that ties with it, so the evidence names the mix.
+        candidates.insert(0, mixed)
     # The sort is stable, so recognizer order breaks exact ties.
     return sorted(candidates, key=lambda item: (item.confidence, item.name_agrees), reverse=True)
 
