@@ -4,7 +4,7 @@ This document is the map of the code. Read it before your first change.
 
 ## Bird's-eye view
 
-A pandas DataFrame comes in, and the main path runs in four steps:
+A pandas, Polars or DuckDB table comes in, and the main path runs in four steps:
 1. The detector classifies each column.
 2. The proposal turns the findings into an editable plan, for a protection target
    (pseudonymization or anonymization) and a fidelity (statistical or privacy).
@@ -18,7 +18,7 @@ Beside that path:
 - The synthesis package generates tables from a schema with planted patterns, or learned
   from a reference table, and can wrap a schema's question into a data-science challenge.
 
-Everything is in-process and pure pandas/numpy. The only file I/O is in `table_files.py`,
+Everything is in-process. The only file I/O is in `table_files.py`,
 `noise_explorer/page.py` and `cli.py`.
 
 ## Code map
@@ -32,12 +32,12 @@ Everything is in-process and pure pandas/numpy. The only file I/O is in `table_f
 | `plan.py` | `Fidelity`, `Protection`, `ColumnAction`, `AnonymizationPlan` (pydantic, JSON round-trip) | Rules for choosing techniques |
 | `proposal.py` | `_direct_identifier_rule`, the attribute rule table with its anonymization overrides, and `propose_plan` | Applying techniques |
 | `protection.py` | `assess_protection`: the level an applied plan reached (anonymized, at_risk, pseudonymized, identifiable), from the record isolation, linkage and inference checks, run on the released data | Changing data |
-| `local_suppression.py` | `enforce_k_anonymity`: blanks quasi-identifiers in rows of small groups | Measuring privacy |
-| `evaluation/` | `privacy.py` (k-anonymity, l-diversity), `utility.py` (mean/std change, KS, total variation, correlation change), `disclosure.py` (record linkage, interval disclosure and per-record shift for a noisy column), `dominance.py` (whether a released number still reveals a segment's dominant contributor) | Changing data |
+| `local_suppression.py` | `enforce_k_anonymity`: blanks quasi-identifiers in rows of small groups, on the whole table in its engine | Measuring privacy |
+| `evaluation/` | `privacy.py` (k-anonymity, l-diversity, on the whole table), `aligned_sample.py` (the same at most 200,000 rows of the original and released table, as pandas, for the checks below), `utility.py` (mean/std change, KS, total variation, correlation change), `disclosure.py` (record linkage, interval disclosure and per-record shift for a noisy column), `dominance.py` (whether a released number still reveals a segment's dominant contributor) | Changing data |
 | `noise_explorer/` | `sweep.py` (runs noise techniques at increasing strengths and measures each), `page.py` and `template.html` (the self-contained interactive page) | Noise algorithms; they come from `techniques/` |
 | `synthesis/` | `schema.py` (`DatasetSchema`, columns, overrides, correlations, constraints, `Question`), `expressions.py` (the safe expression language), `marginals.py` (inverse distribution functions), `patterns.py` (conditions, formulas, outliers, exact statistics, gaps), `generator.py` (the four-step build and constraint filtering), `unique_values.py` (unique integer keys and templates), `copula.py` (Gaussian copula learned from a reference, optionally per level), `latent_correlation.py` (correlation of the hidden normal variables behind categories and numbers), `inference.py` (schema from a table), `challenge.py` (train/test split and answer key) | Detection rules; it calls `detection.scan` |
 | `anonymizer.py` | `Anonymizer`, the facade that wires the above together (`scan`, `propose`, `apply`, `reveal`, `synthesize`, `challenge`), and `AnonymizationResult` | Rules; it only orchestrates |
-| `table_files.py` | Read and write CSV or Parquet by extension | Anything else |
+| `table_files.py` | Read and write CSV or Parquet by extension, with Polars | Anything else |
 | `cli.py` | The `anonymize` command; reads `ANONYMIZER_SECRET_KEY` | Logic beyond parsing arguments and printing |
 
 ## Data flow

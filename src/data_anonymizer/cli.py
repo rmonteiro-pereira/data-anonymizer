@@ -97,12 +97,14 @@ def _build_parser() -> argparse.ArgumentParser:
     _add_fidelity(apply_parser)
     _add_protection(apply_parser)
     apply_parser.add_argument("--report", type=Path, help="write privacy and utility metrics")
+    _add_row_key(apply_parser)
     apply_parser.set_defaults(handler=_apply)
 
     reveal_parser = commands.add_parser("reveal", help="undo reversible techniques")
     reveal_parser.add_argument("input", type=Path)
     reveal_parser.add_argument("--plan", type=Path, required=True)
     reveal_parser.add_argument("-o", "--output", type=Path, required=True)
+    _add_row_key(reveal_parser)
     reveal_parser.set_defaults(handler=_reveal)
 
     schema_parser = commands.add_parser("infer-schema", help="learn a schema from a table")
@@ -169,6 +171,20 @@ def _add_protection(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_row_key(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--row-key",
+        metavar="COLUMN",
+        help="column that identifies each row; overrides the plan's row_key",
+    )
+
+
+def _with_row_key(plan: AnonymizationPlan, row_key: str | None) -> AnonymizationPlan:
+    if row_key is None:
+        return plan
+    return plan.model_copy(update={"row_key": row_key})
+
+
 def _scan(anonymizer: Anonymizer, arguments: argparse.Namespace) -> None:
     findings = anonymizer.scan(read_table(arguments.input), sample_size=arguments.sample_size)
     print(f"{'column':<24} {'category':<20} {'sensitivity':<18} {'conf':>5}  evidence")
@@ -197,7 +213,7 @@ def _apply(anonymizer: Anonymizer, arguments: argparse.Namespace) -> None:
             frame, fidelity=arguments.fidelity, protection=arguments.protection
         )
 
-    result = anonymizer.apply(frame, plan)
+    result = anonymizer.apply(frame, _with_row_key(plan, arguments.row_key))
     write_table(result.data, arguments.output)
     if arguments.report is not None:
         arguments.report.write_text(_report_json(result) + "\n", encoding="utf-8")
@@ -225,21 +241,25 @@ def _report_json(result: AnonymizationResult) -> str:
 
 def _reveal(anonymizer: Anonymizer, arguments: argparse.Namespace) -> None:
     frame = read_table(arguments.input)
-    revealed = anonymizer.reveal(frame, AnonymizationPlan.load(arguments.plan))
+    plan = _with_row_key(AnonymizationPlan.load(arguments.plan), arguments.row_key)
+    revealed = anonymizer.reveal(frame, plan)
     write_table(revealed, arguments.output)
     print(f"wrote {len(revealed)} rows to {arguments.output}")
 
 
 def _infer_schema(anonymizer: Anonymizer, arguments: argparse.Namespace) -> None:
     frame = read_table(arguments.input)
+    findings = anonymizer.scan(frame)
     min_count = 5 if arguments.fidelity is Fidelity.PRIVACY else 1
-    schema = infer_schema(frame, anonymizer.scan(frame), min_category_count=min_count)
+    schema = infer_schema(frame.to_pandas(), findings, min_category_count=min_count)
     _emit(schema.to_json(), arguments.output)
 
 
 def _synthesize(anonymizer: Anonymizer, arguments: argparse.Namespace) -> None:
     schema = None if arguments.schema is None else DatasetSchema.load(arguments.schema)
-    reference = None if arguments.reference is None else read_table(arguments.reference)
+    reference = None
+    if arguments.reference is not None:
+        reference = read_table(arguments.reference).to_pandas()
     frame = anonymizer.synthesize(
         arguments.rows, schema=schema, reference=reference, fidelity=arguments.fidelity
     )

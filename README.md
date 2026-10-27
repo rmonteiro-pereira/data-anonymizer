@@ -86,7 +86,9 @@ uv run anonymize apply customers.csv --plan plan.json -o customers_anon.csv --re
 uv run anonymize explore-noise customers.csv --column salary -o salary_noise.html
 ```
 
-The same flow in Python:
+The same flow in Python. `scan`, `propose`, `validate`, `apply` and `reveal` take pandas,
+Polars and DuckDB tables and return the same kind. A DuckDB table needs the plan's
+`row_key` (see [docs/protection.md](docs/protection.md)).
 
 ```python
 import pandas as pd
@@ -102,7 +104,7 @@ plan = anonymizer.propose(
     customers, protection=Protection.ANONYMIZATION, fidelity=Fidelity.STATISTICAL
 )
 result = anonymizer.apply(customers, plan)
-result.data  # the anonymized DataFrame
+result.data  # the anonymized DataFrame, of the kind you passed in
 result.protection.level  # anonymized, at_risk, pseudonymized or identifiable
 result.protection.problems  # why a level was not reached
 result.utility.max_correlation_change
@@ -122,14 +124,15 @@ and can test whether a guessed real value produces a given pseudonym.
 
 All commands take `--seed N` (reproducible noise and synthesis) and `--locale` (Faker
 locale for fake values, such as `pt_BR`; default `en_US`). Tables can be `.csv` or
-`.parquet`. Parquet needs `uv sync --extra parquet`.
+`.parquet`, read and written with Polars. The commands hand pandas only the pieces
+that need it, and that conversion needs `uv sync --extra parquet`.
 
 | Command | What it does |
 |---|---|
 | `anonymize scan INPUT [--sample-size N]` | Prints each column's category, sensitivity, confidence and evidence |
 | `anonymize propose INPUT [--protection P] [--fidelity F] [-o PLAN]` | Writes a plan as JSON (stdout without `-o`) |
-| `anonymize apply INPUT -o OUTPUT [--plan PLAN] [--protection P] [--fidelity F] [--report REPORT]` | Applies a plan, or proposes one first. Prints the protection level reached. `--report` writes privacy, utility and protection results as JSON |
-| `anonymize reveal INPUT --plan PLAN -o OUTPUT` | Decrypts the columns the plan encrypted and leaves one-way columns as they are |
+| `anonymize apply INPUT -o OUTPUT [--plan PLAN] [--protection P] [--fidelity F] [--report REPORT] [--row-key COLUMN]` | Applies a plan, or proposes one first. Prints the protection level reached. `--report` writes privacy, utility and protection results as JSON. `--row-key` overrides the plan's `row_key` |
+| `anonymize reveal INPUT --plan PLAN -o OUTPUT [--row-key COLUMN]` | Decrypts the columns the plan encrypted and leaves one-way columns as they are |
 | `anonymize explore-noise INPUT --column NAME -o PAGE.html [--band SD] [--max-rows N]` | Writes the interactive noise explorer for one numeric column. Columns longer than `N` values (default 200,000) are explored on a random sample |
 | `anonymize infer-schema INPUT [--fidelity F] [-o SCHEMA]` | Learns a generation schema from a table |
 | `anonymize synthesize -o OUTPUT --rows N [--schema SCHEMA] [--reference INPUT] [--fidelity F]` | Generates a synthetic table |

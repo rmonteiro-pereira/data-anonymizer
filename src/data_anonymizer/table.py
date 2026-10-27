@@ -19,6 +19,7 @@ from data_anonymizer.engines import (
     Engine,
     WorkingFrame,
     add_keyed_uniforms,
+    collect,
     lookup_frame,
     to_native,
     to_working_frame,
@@ -26,6 +27,7 @@ from data_anonymizer.engines import (
 
 HELPER_PREFIX = "__da_"
 _ROW_POSITION = f"{HELPER_PREFIX}row"
+ROW_KEY_COLUMN = f"{HELPER_PREFIX}row_key"
 _ORIGINAL_PREFIX = f"{HELPER_PREFIX}original_"
 
 
@@ -44,9 +46,10 @@ class Table:
         self._engine = engine
         self._original_columns = list(frame.columns)
         self._names = count()
-        if row_key is None and isinstance(frame, nw.DataFrame):
+        if isinstance(frame, nw.DataFrame):
+            # Joins may reorder rows, so in-memory tables remember their order.
             frame = frame.with_row_index(_ROW_POSITION)
-            row_key = _ROW_POSITION
+            row_key = _ROW_POSITION if row_key is None else row_key
         self._frame = frame
         self._row_key = row_key
 
@@ -86,17 +89,17 @@ class Table:
     def statistics(self, **aggregations: nw.Expr) -> dict[str, Any]:
         """Compute one-row aggregates, such as a mean or a quantile, as Python values."""
         selected = self._frame.select(**aggregations)
-        row = _eager(selected).row(0)
+        row = collect(selected).row(0)
         return dict(zip(aggregations, row, strict=True))
 
     def distinct_values(self, column: str) -> list[Any]:
         """The column's distinct present values."""
         distinct = self._frame.select(nw.col(column)).unique().drop_nulls()
-        return _eager(distinct).get_column(column).to_list()
+        return collect(distinct).get_column(column).to_list()
 
     def column_values(self, column: str) -> list[Any]:
         """Every value of a column, in row order for in-memory tables."""
-        return _eager(self._ordered().select(nw.col(column))).get_column(column).to_list()
+        return collect(self._ordered().select(nw.col(column))).get_column(column).to_list()
 
     def uniforms(self, key: bytes, how_many: int = 1, *, by: str | None = None) -> list[nw.Expr]:
         """Keyed uniform numbers in (0, 1): one set per row, or per value of `by`.
@@ -145,7 +148,7 @@ class Table:
         if self._engine.is_lazy:
             raise ValueError("this technique runs on in-memory tables only")
         name = self._helper_name()
-        ordered = _eager(self._ordered())
+        ordered = collect(self._ordered())
         self._frame = ordered.with_columns(values.alias(name))
         return nw.col(name)
 
@@ -154,7 +157,7 @@ class Table:
 
         For techniques still written for pandas columns, which group by other columns.
         """
-        ordered = _eager(self._ordered())
+        ordered = collect(self._ordered())
         selected = ordered.select(
             [nw.col(self._original_name(column)).alias(column) for column in self.columns]
         )
@@ -202,7 +205,29 @@ class Table:
 
     def to_native(self) -> Any:
         """Hand the table back in the user's form, without helper columns."""
-        return to_native(self._ordered().select(self._original_columns), self._engine)
+        return to_native(self.released_frame(keep_row_key=False), self._engine)
+
+    def original_frame(self) -> WorkingFrame:
+        """The user's columns as they were before any replacement, plus `ROW_KEY_COLUMN`.
+
+        The key column holds each row's key, so this table and `released_frame` can be
+        lined up row by row even when the key column itself was replaced.
+        """
+        columns = [nw.col(self._original_name(name)).alias(name) for name in self.columns]
+        key = nw.col(self._original_name(self._key_column())).alias(ROW_KEY_COLUMN)
+        return self._ordered().select(*columns, key)
+
+    def released_frame(self, *, keep_row_key: bool = True) -> WorkingFrame:
+        """The user's columns as they are now, in the engine's working form.
+
+        With `keep_row_key`, `ROW_KEY_COLUMN` holds each row's original key, so the
+        result can be lined up with `original_frame`.
+        """
+        ordered = self._ordered()
+        if not keep_row_key:
+            return ordered.select(self._original_columns)
+        key = nw.col(self._original_name(self._key_column())).alias(ROW_KEY_COLUMN)
+        return ordered.select(*self._original_columns, key)
 
     def _join_left(self, right: WorkingFrame, left_on: str, right_on: str) -> None:
         # Narwhals joins a lazy frame only with a lazy one, and an eager with an eager.
@@ -211,12 +236,13 @@ class Table:
             lazy_right = right if isinstance(right, nw.LazyFrame) else right.lazy()
             joined = self._frame.join(lazy_right, how="left", left_on=left_on, right_on=right_on)
         else:
-            joined = self._frame.join(_eager(right), how="left", left_on=left_on, right_on=right_on)
+            joined = self._frame.join(
+                collect(right), how="left", left_on=left_on, right_on=right_on
+            )
         self._frame = joined.drop(right_on, strict=False)
 
     def _ordered(self) -> WorkingFrame:
-        # Joins may reorder rows, so in-memory tables are put back in their original order.
-        if self._row_key == _ROW_POSITION:
+        if _ROW_POSITION in self._frame.columns:
             return self._frame.sort(_ROW_POSITION)
         return self._frame
 
@@ -236,9 +262,3 @@ class Table:
 
     def _helper_name(self) -> str:
         return f"{HELPER_PREFIX}{next(self._names)}"
-
-
-def _eager(frame: WorkingFrame) -> nw.DataFrame[Any]:
-    if isinstance(frame, nw.LazyFrame):
-        return frame.collect()
-    return frame

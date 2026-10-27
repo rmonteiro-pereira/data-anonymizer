@@ -1,8 +1,8 @@
 """What differs between the dataframe engines a table can live in.
 
 Techniques are written once, as Narwhals expressions, and run on every engine.
-Three things cannot be written that way, and live here instead:
-- converting the user's frame in and out;
+Four things cannot be written that way, and live here instead:
+- converting the user's frame in and out, and reading samples or single columns as pandas;
 - turning a key column into keyed random numbers, which needs SHA-256;
 - building a small lookup table on the same engine, and the same connection, as the data.
 
@@ -11,7 +11,7 @@ lazy: the work becomes SQL that DuckDB runs.
 """
 
 import hashlib
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from enum import StrEnum
 from typing import Any
 
@@ -62,6 +62,63 @@ def to_working_frame(native: Any) -> tuple[WorkingFrame, Engine]:
     if engine is Engine.POLARS and isinstance(native, pl.LazyFrame):
         return nw.from_native(native.collect(), eager_only=True), engine
     return nw.from_native(native), engine
+
+
+def as_working_frame(frame: Any) -> WorkingFrame:
+    """Return a Narwhals frame as it is, and wrap a user's frame for processing."""
+    if isinstance(frame, (nw.DataFrame, nw.LazyFrame)):
+        return frame
+    return to_working_frame(frame)[0]
+
+
+def collect(frame: WorkingFrame) -> "nw.DataFrame[Any]":
+    """Run a lazy frame and return its rows in memory; an in-memory frame is returned as is."""
+    if isinstance(frame, nw.LazyFrame):
+        return frame.collect()
+    return frame
+
+
+def first_row(frame: WorkingFrame) -> dict[str, Any]:
+    """Run a one-row aggregate and return it as a dict of Python values."""
+    eager = collect(frame)
+    return dict(zip(eager.columns, eager.row(0), strict=True))
+
+
+def column_names(native: Any) -> list[str]:
+    """The column names of a pandas, Polars or DuckDB frame, without loading any rows."""
+    return list(nw.from_native(native).collect_schema().names())
+
+
+def pandas_columns(native: Any) -> Iterator[tuple[str, Any]]:
+    """Yield each column of a user's frame as a pandas Series, one at a time.
+
+    Only one column is in pandas memory at once, so a large Polars or DuckDB table can be
+    scanned without converting all of it.
+    """
+    engine = engine_of(native)
+    for name in column_names(native):
+        if engine is Engine.PANDAS:
+            yield name, native[name]
+        elif engine is Engine.POLARS:
+            yield name, _collected_polars(native).get_column(name).to_pandas()
+        else:
+            yield name, native.project(_quoted(name)).df()[name]
+
+
+def sample_to_pandas(frame: WorkingFrame, columns: Sequence[str], size: int, seed: int) -> Any:
+    """Collect at most `size` random rows of the given columns as a pandas frame."""
+    selected = frame.select(*columns)
+    if isinstance(selected, nw.LazyFrame):
+        relation = selected.to_native()
+        reservoir = f"select * from __base using sample reservoir({size} rows) repeatable ({seed})"
+        return relation.query("__base", reservoir).df()
+    if len(selected) > size:
+        return selected.sample(n=size, seed=seed).to_pandas()
+    return selected.to_pandas()
+
+
+def _collected_polars(native: Any) -> pl.DataFrame:
+    return native.collect() if isinstance(native, pl.LazyFrame) else native
 
 
 def to_native(frame: WorkingFrame, engine: Engine) -> Any:

@@ -9,6 +9,9 @@ The checks follow the three criteria of the EDPB's 2026 anonymisation guidelines
 - no inference: each group holds at least l distinct sensitive values, and no
   sensitive number left in its original units lets one contributor's size be read
   off a segment it dominates.
+Record isolation and fingerprints are counted on the whole released table. The checks that
+compare each released value with its original run on an aligned in-memory sample of at
+most `MAX_SAMPLE_ROWS` rows.
 They are necessary, not sufficient. Whether outside data an attacker holds allows
 linkage, and who will receive the output, can only be judged in context; the
 caveats say so.
@@ -18,12 +21,16 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
 
+import narwhals as nw
 import pandas as pd
 
 from data_anonymizer.detection.patterns import TEXT_RECOGNIZERS
+from data_anonymizer.engines import WorkingFrame, first_row
 from data_anonymizer.evaluation import PrivacyReport
+from data_anonymizer.evaluation.aligned_sample import AlignedSample
 from data_anonymizer.evaluation.disclosure import linkage_rate
 from data_anonymizer.evaluation.dominance import dominant_segments, keeps_original_units
+from data_anonymizer.evaluation.privacy import GROUP_SIZE, distinct_present, group_sizes
 from data_anonymizer.plan import AnonymizationPlan, ColumnAction, Protection
 from data_anonymizer.techniques import Technique, TechniqueFamily
 
@@ -94,16 +101,23 @@ def assess_protection(
     plan: AnonymizationPlan,
     techniques: Mapping[str, Technique],
     privacy: PrivacyReport,
-    original: pd.DataFrame,
-    released: pd.DataFrame,
+    sample: AlignedSample,
+    released_table: WorkingFrame,
 ) -> ProtectionAssessment:
-    """Return the protection level an applied plan reached."""
+    """Return the protection level an applied plan reached.
+
+    `released_table` is the whole released table, for the checks that count rows.
+    `sample` holds the same rows of the original and the released table, for the checks
+    that compare values.
+    """
+    original = sample.original
+    released = sample.released
     untreated = _untreated_identifiers(plan, techniques, original, released)
     links = linking_actions(plan, techniques)
     exposures = (
         _exposures(plan, privacy)
-        + _isolated_records(plan, released)
-        + _fingerprint_columns(plan, released)
+        + _isolated_records(plan, released_table)
+        + _fingerprint_columns(plan, released_table)
         + _relinkable_columns(plan, techniques, original, released)
         + _magnitude_disclosures(plan, original, released)
     )
@@ -199,19 +213,22 @@ def _exposures(plan: AnonymizationPlan, privacy: PrivacyReport) -> list[str]:
     return problems
 
 
-def _fingerprint_columns(plan: AnonymizationPlan, released: pd.DataFrame) -> list[str]:
+def _fingerprint_columns(plan: AnonymizationPlan, released: WorkingFrame) -> list[str]:
     # A column released as it was, with a different value in nearly every row, is a
     # fingerprint: anyone holding that value elsewhere finds the row.
     treated = {action.column for action in plan.actions if action.technique != "keep"}
     removed = set(plan.direct_identifiers)
+    names = released.collect_schema().names()
+    candidates = [column for column in names if column not in treated and column not in removed]
+    if not candidates:
+        return []
+    present = first_row(released.select(*[nw.col(c).count().alias(c) for c in candidates]))
+    distinct = first_row(released.select(*[distinct_present(c).alias(c) for c in candidates]))
     problems = []
-    for column in released.columns:
-        if column in treated or column in removed:
+    for column in candidates:
+        if present[column] < _FINGERPRINT_MIN_ROWS:
             continue
-        present = released[column].dropna()
-        if len(present) < _FINGERPRINT_MIN_ROWS:
-            continue
-        unique_share = present.astype(str).nunique() / len(present)
+        unique_share = distinct[column] / present[column]
         if unique_share >= _FINGERPRINT_SHARE:
             problems.append(
                 f"{column} is released unchanged and {unique_share:.0%} of its values are "
@@ -271,20 +288,22 @@ def _rescaling_caveats(plan: AnonymizationPlan) -> list[str]:
     ]
 
 
-def _isolated_records(plan: AnonymizationPlan, released: pd.DataFrame) -> list[str]:
+def _isolated_records(plan: AnonymizationPlan, released: WorkingFrame) -> list[str]:
+    names = released.collect_schema().names()
     removed = set(plan.direct_identifiers) | set(plan.sensitive_attributes)
-    discrete = [
-        column
-        for column in released.columns
-        if column not in removed and released[column].nunique(dropna=False) <= _DISCRETE_LIMIT
-    ]
-    columns = list(dict.fromkeys([*plan.quasi_identifiers, *discrete]))
-    columns = [column for column in columns if column in released.columns]
-    if not columns or released.empty:
+    candidates = [column for column in names if column not in removed]
+    row_count = first_row(released.select(nw.len().alias("rows")))["rows"]
+    if not names or row_count == 0:
         return []
-    keys = released[columns].astype(str).assign(_row=1)
-    sizes = keys.groupby(columns, dropna=False)["_row"].transform("size")
-    unique_rows = int((sizes == 1).sum())
+    distinct = first_row(released.select(*[nw.col(c).n_unique().alias(c) for c in candidates]))
+    discrete = [column for column in candidates if distinct[column] <= _DISCRETE_LIMIT]
+    columns = list(dict.fromkeys([*plan.quasi_identifiers, *discrete]))
+    columns = [column for column in columns if column in names]
+    if not columns:
+        return []
+    sizes = nw.col(GROUP_SIZE)
+    singles = nw.when(sizes == 1).then(1).otherwise(0).sum().alias("unique_rows")
+    unique_rows = int(first_row(group_sizes(released, columns).select(singles))["unique_rows"])
     if unique_rows == 0:
         return []
     return [

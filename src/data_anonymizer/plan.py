@@ -54,6 +54,12 @@ class AnonymizationPlan(BaseModel):
     `entity_column` names the column that identifies whose row it is (a person, a
     store), for techniques that treat all rows of one entity alike.
 
+    `row_key` names a column that identifies each row, such as a record ID. Random
+    numbers per row are keyed on it, so the same row gets the same noise on every engine
+    and every run, and a DuckDB table can be lined up with its released version. In-memory
+    tables without one use the row position; DuckDB tables must name one, and it must be
+    unique.
+
     With `enforce_k_anonymity`, after the column actions run, quasi-identifier cells
     are blanked in rows whose combination is shared by fewer than `k_target` rows.
     `l_target` is the fewest distinct sensitive values each such group must hold for
@@ -69,6 +75,7 @@ class AnonymizationPlan(BaseModel):
     actions: list[ColumnAction]
     direct_identifiers: list[str] = Field(default_factory=list)
     entity_column: str | None = None
+    row_key: str | None = None
     quasi_identifiers: list[str] = Field(default_factory=list)
     sensitive_attributes: list[str] = Field(default_factory=list)
     k_target: int = Field(default=5, ge=1)

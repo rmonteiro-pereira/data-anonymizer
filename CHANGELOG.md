@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **pandas, Polars and DuckDB tables.**
+  - `scan`, `propose`, `validate`, `apply` and `reveal` accept all three and return the same kind.
+  - Plans have an optional `row_key`, set by `propose`; `apply` and `reveal` take `--row-key`.
+  - k-anonymity, l-diversity and local suppression run on the whole table in its engine.
+  - Utility and the value-by-value protection checks compare the same at most 200,000 rows of
+    both tables, picked by a keyed hash of the row key.
+  - The noise explorer accepts any of them, and files are read and written with Polars.
 - **Secure defaults.**
   - `anonymization` is the default protection target.
   - Secret keys must be at least 16 bytes.
