@@ -188,6 +188,24 @@ can subtract it. These limits are not reported per release:
   or profile. It reveals that column's noise, not the secret key. Do not run releases on a
   connection whose query log others can read.
 
+## What the checks cannot catch
+
+The protection report checks the released table against fixed rules. A release can pass them
+and still let someone who knows their own records follow those records:
+
+- **Small keys and combinations.** The report flags an untreated text or whole-number column
+  with at least 20 distinct values that group rows, and pairs of such columns. A key with fewer
+  values, a key made of three or more columns, a pair of columns that each have fewer than 20
+  values, or a decimal key with a few fractional cells passes. List every column in the plan,
+  and drop the ones the recipient does not need.
+- **Group sizes and own values survive fresh codes.** Replacing an account with a fresh code
+  hides the value, not the group. Someone who knows how many rows they have, or a few of their
+  own amounts, can find their code and read the rest of their rows. Perturb or generalize the
+  numeric columns as well when that matters.
+- **Business figures need an entity.** Customer counts per merchant, revenue shares and trends
+  are computed from released rows. The dominance check only sees them when the plan names the
+  `entity_column`; see [business-confidentiality.md](business-confidentiality.md).
+
 ## Large tables
 
 `Anonymizer` takes pandas, Polars and DuckDB tables and returns the kind it was given.

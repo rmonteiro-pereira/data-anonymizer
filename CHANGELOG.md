@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- `normalize` with `robust`, `zscore` or `minmax` and no `by` is reported as a shift and scale
+  under anonymization even with `allow_shape_change`, since that flag only permits a shape
+  change. `docs/protection.md` gains "What the checks cannot catch": small or multi-column
+  keys, group sizes that survive fresh codes, and business figures without an entity column.
 - **Collusion in a small `OTHER` bucket is documented.** `min_entities` protects against one
   member; two of three members can pool their records, so use privacy fidelity (5) when members
   might collude.

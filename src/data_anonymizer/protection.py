@@ -35,6 +35,7 @@ from data_anonymizer.evaluation.privacy import GROUP_SIZE, group_sizes
 from data_anonymizer.identifying_columns import entity_key_columns, fingerprint_columns
 from data_anonymizer.plan import AnonymizationPlan, ColumnAction, Protection
 from data_anonymizer.techniques import Technique, TechniqueFamily
+from data_anonymizer.techniques.rescaling import SHAPE_KEEPING_METHODS
 
 # A column with at most this many distinct values counts as discrete for the
 # whole-record uniqueness check; continuous columns make every row unique trivially.
@@ -251,10 +252,13 @@ def _contributors(plan: AnonymizationPlan, original: pd.DataFrame) -> pd.Series:
 
 
 def _affinely_rescaled_columns(plan: AnonymizationPlan) -> list[str]:
+    # The method and the grouping decide the arithmetic; allow_shape_change only permits it.
     return [
         action.column
         for action in plan.actions
-        if action.technique == "normalize" and not action.params.get("allow_shape_change")
+        if action.technique == "normalize"
+        and action.params.get("method", "robust") in SHAPE_KEEPING_METHODS
+        and action.params.get("by") is None
     ]
 
 

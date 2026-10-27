@@ -89,8 +89,10 @@ Under pseudonymization it stays a caveat.
 `min_entities` is the standard threshold rule. With the default fidelity it is 3, so a segment
 or an `OTHER` bucket holds at least three stores, and one member cannot read another member's
 figures from it. The rule assumes no collusion: with exactly three stores in a bucket, two of
-them can pool their own records and identify the third. Privacy fidelity sets the minimum to 5.
-Use it, or raise `min_entities` in the plan, when the members of a segment might collude.
+them can pool their own records and identify the third. One member alone can do the same when a
+public fact, such as which store is the largest, tells the other two apart. Privacy fidelity
+sets the minimum to 5. Use it, or raise `min_entities` in the plan, when the members of a
+segment might collude or one of them is publicly known.
 
 ## What remains, and the stronger options
 

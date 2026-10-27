@@ -98,6 +98,17 @@ def test_an_affine_rescale_under_anonymization_names_the_inversion_and_the_fix(m
     assert "allow_shape_change" in problem
 
 
+@pytest.mark.parametrize("method", ["robust", "zscore", "minmax"])
+def test_allowing_a_shape_change_does_not_hide_an_ungrouped_affine_rescale(mall, method):
+    params = {"method": method, "allow_shape_change": True}
+    plan = _normalize_plan(Protection.ANONYMIZATION, params)
+
+    protection = Anonymizer().apply(mall, plan).protection
+
+    assert protection.level is ProtectionLevel.AT_RISK
+    assert any("shifted and scaled" in problem for problem in protection.problems)
+
+
 def test_rank_and_grouped_normalization_are_not_affine_rescalings(mall):
     rank = {"method": "rank", "allow_shape_change": True}
     grouped = {"method": "index", "by": "store_name", "allow_shape_change": True}

@@ -17,7 +17,7 @@ from data_anonymizer.table import Table
 from data_anonymizer.techniques.context import TechniqueContext
 from data_anonymizer.techniques.numeric_expressions import as_number, per_group
 
-_SHAPE_KEEPING_METHODS = ("robust", "zscore", "minmax")
+SHAPE_KEEPING_METHODS = ("robust", "zscore", "minmax")
 _SHAPE_CHANGING_METHODS = ("index", "rank", "log_ratio", "growth")
 
 
@@ -57,7 +57,7 @@ def normalize(
 
 
 def _check_method(method: str, by: str | None, allow_shape_change: bool) -> None:
-    known = _SHAPE_KEEPING_METHODS + _SHAPE_CHANGING_METHODS
+    known = SHAPE_KEEPING_METHODS + _SHAPE_CHANGING_METHODS
     if method not in known:
         raise ValueError(f"method must be one of {', '.join(known)}")
     changes_shape = method in _SHAPE_CHANGING_METHODS or by is not None
