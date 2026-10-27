@@ -48,7 +48,7 @@ person under the LGPD.
 | German tax ID (Steuer-IdNr) | Digit repetition rule and ISO 7064 MOD 11,10 |
 | UK National Insurance number | Allowed prefixes and an A–D suffix |
 | Italian codice fiscale | Check letter |
-| Passport MRZ | Two lines of 44 characters (TD3), with the ICAO 9303 check digits of the passport number, birth date, expiry date, personal number and the whole line. The lines may be joined or split by a line break |
+| Passport MRZ | Two lines of 44 characters (TD3), with the ICAO 9303 check digits of the passport number, birth date, expiry date, personal number and the whole line. The lines may be joined or split by a line break, and may be in lowercase |
 | Bitcoin address | Base58check (starts 1 or 3, double SHA-256 checksum) or bech32 and bech32m (`bc1...`, polymod checksum; one case only) |
 | Ethereum address | `0x` and 40 hex digits. Mixed-case addresses must pass the EIP-55 checksum; all-lowercase or all-uppercase ones carry none and pass on shape |
 | City | The value is one of the 5,570 IBGE municipality names (about 5,300 distinct), ignoring case and accents. Not searched for in free text |

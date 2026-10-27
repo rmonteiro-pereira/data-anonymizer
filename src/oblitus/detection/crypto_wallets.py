@@ -68,7 +68,7 @@ def is_valid_bitcoin_address(value: str) -> bool:
 def is_valid_ethereum_address(value: str) -> bool:
     """An Ethereum address: `0x` and 40 hex digits, with the EIP-55 check when mixed case."""
     digits = value[2:]
-    if not value.startswith("0x") or len(digits) != _ETHEREUM_HEX_DIGITS:
+    if value[:2].lower() != "0x" or len(digits) != _ETHEREUM_HEX_DIGITS:
         return False
     if not _is_hexadecimal(digits):
         return False

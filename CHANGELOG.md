@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Tagged identifiers and lowercase passport zones are detected.** Identifier patterns no
+  longer treat an underscore as part of a word, so `wallet_0x...`, `cpf_5299...` and
+  `0x..._backup` are found in text and redacted. Letters or digits touching an identifier
+  still stop a match. A passport machine-readable zone is matched and checked in any case.
+
 - **Synthetic-data checks.** `Anonymizer.check_synthetic` and `oblitus check-synthetic SYNTHETIC
   --real TRAIN [--holdout HOLDOUT]` measure the share of exact copies, the distance to the closest
   real record (Gower-like, for mixed columns) and the nearest-neighbour distance ratio. With a
