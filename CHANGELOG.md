@@ -25,6 +25,29 @@
   - Spearman correlations, conditional overrides and formula columns, with a safe
     expression language that includes date and random functions;
   - outliers, exact statistics and row constraints.
+- Synthesis fixes:
+  - the expression language rejects huge powers, text repetition and over-long or deeply
+    nested expressions, and reports evaluation errors as `ExpressionError`;
+  - a discrete distribution (Poisson) keeps its `minimum` value when truncated, and the
+    end values of an integer column's bounds are as likely as the rest;
+  - constraints are checked before nulls are applied, unique keys are no longer redrawn
+    after filtering, and rules with low acceptance (about 1%) succeed; the error states the
+    acceptance rate;
+  - `unique: true` on a template retries until distinct and fails when the template is too
+    small, and schemas reject it on boolean, datetime and `choices` columns;
+  - challenge answer keys say "not computable" when the target has bounds, exact statistics,
+    conditions or outliers and no `truth_column`, leave out rows with a missing label or
+    truth, fail on empty splits, and take a `positive_label` for text classification targets;
+  - `infer-schema` describes numeric columns by quantile points instead of a normal mean
+    and std, so zero-inflated and heavy-tailed columns keep their mean and sign under
+    privacy fidelity;
+  - the copula learned from a reference keeps strong associations between booleans and
+    categories, by estimating the hidden correlation by maximum likelihood instead of from
+    jittered scores;
+  - `stratify_by` on `synthesize` and `generate_from_reference` fits one copula per level
+    of category columns that have enough rows;
+  - conditional overrides are validated after merging with the column: a mean and std
+    replace a uniform or quantile base shape, and new choices reset the weights.
 - Data-science challenges, from `challenge`: train and test files, plus an answer key
   with the true drivers and the best achievable scores.
 

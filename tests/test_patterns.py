@@ -49,6 +49,52 @@ def test_distributions_hit_the_requested_mean_and_std(distribution, mean, std):
     assert values.std() == pytest.approx(std, rel=0.1)
 
 
+def test_a_discrete_distribution_keeps_its_minimum_when_truncated():
+    schema = DatasetSchema(
+        columns=[
+            ColumnSchema(
+                name="visits",
+                kind=ColumnKind.INTEGER,
+                distribution=Distribution.POISSON,
+                mean=3,
+                minimum=2,
+                maximum=5,
+            ),
+            ColumnSchema(
+                name="zeros",
+                kind=ColumnKind.INTEGER,
+                distribution=Distribution.POISSON,
+                mean=1,
+                minimum=0,
+            ),
+        ]
+    )
+
+    frame = _generate(schema, rows=40_000)
+    shares = frame["visits"].value_counts(normalize=True)
+
+    assert shares[2] == pytest.approx(0.312, abs=0.015)
+    assert shares[5] == pytest.approx(0.141, abs=0.015)
+    assert (frame["zeros"] == 0).mean() == pytest.approx(0.368, abs=0.015)
+
+
+@pytest.mark.parametrize(
+    "settings",
+    [
+        {"distribution": Distribution.UNIFORM, "minimum": 1, "maximum": 6},
+        {"mean": 3.5, "std": 10, "minimum": 1, "maximum": 6},
+        {"quantiles": {0.5: 3.5}, "minimum": 1, "maximum": 6},
+    ],
+)
+def test_integer_bounds_are_as_likely_as_the_values_between_them(settings):
+    schema = DatasetSchema(columns=[ColumnSchema(name="roll", kind=ColumnKind.INTEGER, **settings)])
+
+    shares = _generate(schema, rows=60_000)["roll"].value_counts(normalize=True)
+
+    assert shares[1] > 0.8 * shares[3]
+    assert shares[6] > 0.8 * shares[4]
+
+
 def test_exact_statistics_are_matched_exactly():
     schema = DatasetSchema(
         columns=[
@@ -139,6 +185,69 @@ def test_conditions_change_a_segment_and_keep_its_correlation():
     assert pro["age"].corr(pro["spend"], method="spearman") > 0.6
 
 
+def _group_schema(base_settings: dict, override_settings: dict, kind=ColumnKind.FLOAT):
+    return DatasetSchema(
+        columns=[
+            ColumnSchema(name="group", kind=ColumnKind.CATEGORY, choices=["a", "b"]),
+            ColumnSchema(
+                name="value",
+                kind=kind,
+                conditions=[ColumnOverride(when="group == 'b'", **override_settings)],
+                **base_settings,
+            ),
+        ]
+    )
+
+
+def test_a_mean_and_std_override_replaces_a_quantile_base_shape():
+    base = {"quantiles": {0: 0, 0.5: 50, 1: 100}}
+
+    frame = _generate(_group_schema(base, {"mean": 1000, "std": 5}), rows=8000)
+    group_b = frame[frame["group"] == "b"]["value"]
+
+    assert group_b.mean() == pytest.approx(1000, abs=1)
+    assert group_b.std() == pytest.approx(5, rel=0.1)
+
+
+def test_a_mean_and_std_override_replaces_a_uniform_base_shape():
+    base = {"distribution": Distribution.UNIFORM, "minimum": 0, "maximum": 100}
+
+    frame = _generate(_group_schema(base, {"mean": 50, "std": 1}), rows=8000)
+    group_b = frame[frame["group"] == "b"]["value"]
+
+    assert group_b.std() == pytest.approx(1, rel=0.1)
+    assert frame[frame["group"] == "a"]["value"].std() == pytest.approx(28.9, rel=0.1)
+
+
+def test_an_override_of_choices_without_weights_resets_the_weights():
+    base = {"choices": ["x", "y", "z"], "weights": [1, 1, 8]}
+
+    frame = _generate(
+        _group_schema(base, {"choices": ["p", "q"]}, kind=ColumnKind.CATEGORY), rows=8000
+    )
+    shares = frame[frame["group"] == "b"]["value"].value_counts(normalize=True)
+
+    assert shares["p"] == pytest.approx(0.5, abs=0.04)
+
+
+@pytest.mark.parametrize(
+    ("override", "message"),
+    [
+        ({"choices": ["p", "q"], "weights": [1, 2, 3]}, "one entry per choice"),
+        ({"minimum": 10, "maximum": 1}, "minimum is greater than maximum"),
+        ({"std": 3}, "needs both mean and std"),
+    ],
+)
+def test_overrides_are_validated_after_merging_with_the_column(override, message):
+    base = {"quantiles": {0: 0, 1: 100}}
+    kind = ColumnKind.CATEGORY if "choices" in override else ColumnKind.FLOAT
+    if kind is ColumnKind.CATEGORY:
+        base = {"choices": ["x", "y"]}
+
+    with pytest.raises(ValueError, match=message):
+        _group_schema(base, override, kind=kind)
+
+
 def test_formulas_plant_trends_and_seasonality():
     schema = DatasetSchema(
         columns=[
@@ -226,3 +335,46 @@ def test_outliers_are_planted_far_from_the_mean():
 def test_inconsistent_pattern_schemas_are_rejected(schema, message):
     with pytest.raises(ValueError, match=message):
         DatasetSchema.model_validate(schema)
+
+
+@pytest.mark.parametrize(
+    "expression",
+    [
+        "a + 9 ** 9 ** 9",
+        "10 ** 10 ** 8",
+        "'a' * 1000000000",
+        "[1, 2] * 1000000000",
+        "('9' * 4000) ** 5000",
+        "'%1000000000d' % 1",
+        "-" * 1500 + "1",
+        "+".join(["1"] * 3000),
+        "1 // 0",
+        "1 / 0",
+        "1 % 0",
+        "sin(1, 2, 3, 4)",
+        "round(a, 10 ** 12)",
+        "normal(0, -1)",
+        "clip(a, 'x', 'y')",
+        "days('notadate')",
+    ],
+)
+def test_hostile_expressions_fail_with_an_expression_error(expression):
+    frame = pd.DataFrame({"a": [1.0, 2.0]})
+
+    with pytest.raises(ExpressionError):
+        evaluate(expression, frame, np.random.default_rng(0))
+
+
+def test_deeply_nested_schema_expressions_are_rejected_when_the_schema_loads():
+    deep = "-" * 150 + "a"
+
+    with pytest.raises(ValueError, match="nested"):
+        ColumnSchema(name="b", kind=ColumnKind.FLOAT, formula=deep)
+
+
+def test_ordinary_arithmetic_still_works_in_the_sandbox():
+    frame = pd.DataFrame({"a": [1.0, 2.0], "n": [2, 3]})
+
+    assert evaluate("2 ** 10 + a ** 2", frame).tolist() == [1025.0, 1028.0]
+    assert evaluate("n ** 2", frame).tolist() == [4, 9]
+    assert evaluate("round(a, 1) * 3 % 2", frame).tolist() == [1.0, 0.0]

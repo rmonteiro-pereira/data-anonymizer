@@ -63,13 +63,23 @@ def _distribution_of(column: ColumnSchema) -> Distribution:
     )
 
 
+def _integer_margin(column: ColumnSchema) -> float:
+    # Rounding gives each integer the half-unit on either side of it, so a bound on an
+    # integer column reaches half a unit further out for its end values to be as likely.
+    is_whole = column.kind is ColumnKind.INTEGER
+    if is_whole and _distribution_of(column) is not Distribution.POISSON:
+        return 0.5
+    return 0.0
+
+
 def _scipy_distribution(column: ColumnSchema):
     distribution = _distribution_of(column)
     mean = column.mean
     std = column.std
     if distribution is Distribution.UNIFORM:
         low, high = _required(column, "minimum", "maximum")
-        return stats.uniform(loc=low, scale=high - low)
+        margin = _integer_margin(column)
+        return stats.uniform(loc=low - margin, scale=high - low + 2 * margin)
     if distribution is Distribution.EXPONENTIAL:
         (mean,) = _required(column, "mean")
         start = column.minimum or 0.0
@@ -101,9 +111,15 @@ def _required(column: ColumnSchema, *fields: str) -> list[float]:
 
 
 def _truncated(column: ColumnSchema, distribution) -> Callable[[np.ndarray], np.ndarray]:
-    # Squeezing u into [F(min), F(max)] truncates any shape without redrawing.
-    low = 0.0 if column.minimum is None else float(distribution.cdf(column.minimum))
-    high = 1.0 if column.maximum is None else float(distribution.cdf(column.maximum))
+    # Squeezing u into [F(min), F(max)] truncates any shape without redrawing. A discrete
+    # shape keeps its minimum, so the lower edge is the probability below it.
+    margin = _integer_margin(column)
+    lowest = None if column.minimum is None else column.minimum - margin
+    highest = None if column.maximum is None else column.maximum + margin
+    if lowest is not None and isinstance(distribution.dist, stats.rv_discrete):
+        lowest -= 1
+    low = 0.0 if lowest is None else float(distribution.cdf(lowest))
+    high = 1.0 if highest is None else float(distribution.cdf(highest))
     if high <= low:
         raise SchemaError(f"{column.name}: the bounds leave no room for this distribution")
     return lambda uniform: distribution.ppf(low + uniform * (high - low))
@@ -111,10 +127,11 @@ def _truncated(column: ColumnSchema, distribution) -> Callable[[np.ndarray], np.
 
 def _piecewise_quantiles(column: ColumnSchema) -> Callable[[np.ndarray], np.ndarray]:
     points = dict(column.quantiles or {})
+    margin = _integer_margin(column)
     if column.minimum is not None:
-        points.setdefault(0.0, column.minimum)
+        points.setdefault(0.0, column.minimum - margin)
     if column.maximum is not None:
-        points.setdefault(1.0, column.maximum)
+        points.setdefault(1.0, column.maximum + margin)
     if 0.0 not in points or 1.0 not in points:
         raise SchemaError(
             f"{column.name}: quantiles need the 0 and 1 points, or minimum and maximum"

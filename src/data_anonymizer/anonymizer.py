@@ -1,7 +1,7 @@
 """The entry point: scan a table, propose a plan, apply it, or synthesize a new table."""
 
 import secrets
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 
 import numpy as np
@@ -201,18 +201,22 @@ class Anonymizer:
         schema: DatasetSchema | None = None,
         reference: pd.DataFrame | None = None,
         fidelity: Fidelity = Fidelity.STATISTICAL,
+        stratify_by: Sequence[str] = (),
     ) -> pd.DataFrame:
         """Generate a new table of `rows` rows.
 
         From a schema alone, each column follows its description. With a reference
         table, the schema is inferred when not given, and statistical fidelity also
-        keeps the correlations between the reference's columns.
+        keeps the correlations between the reference's columns. `stratify_by` names
+        category columns whose levels each get their own distributions and correlations.
         """
         if rows < 0:
             raise SchemaError("rows must not be negative")
         rng = np.random.default_rng(self._seed)
         surrogates = SurrogateFactory(self._locale)
         if reference is None:
+            if stratify_by:
+                raise SchemaError("stratify_by needs a reference table")
             if schema is None:
                 raise SchemaError("give a schema, a reference table, or both")
             return generate_from_schema(schema, rows, rng=rng, surrogates=surrogates)
@@ -221,7 +225,13 @@ class Anonymizer:
             min_count = _PRIVACY_MIN_CATEGORY_COUNT if fidelity is Fidelity.PRIVACY else 1
             schema = infer_schema(reference, self.scan(reference), min_category_count=min_count)
         return generate_from_reference(
-            reference, schema, rows, fidelity=fidelity, rng=rng, surrogates=surrogates
+            reference,
+            schema,
+            rows,
+            fidelity=fidelity,
+            rng=rng,
+            surrogates=surrogates,
+            stratify_by=stratify_by,
         )
 
     def challenge(self, schema: DatasetSchema, rows: int) -> Challenge:

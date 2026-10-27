@@ -25,7 +25,7 @@ synthetic = Anonymizer(seed=1, locale="pt_BR").synthesize(10_000, schema=schema)
 | `category` | `choices`, optional `weights` |
 | `datetime` | `start`, `end` |
 | `text` | `category` for realistic fakes (`email`, `person_name`, `cpf`, `cnpj`, `phone`, ...), a `template` where `#` is a digit and `?` an uppercase letter, or `choices` |
-| any | `null_fraction`, `unique` (fresh unique keys or fakes) |
+| any | `null_fraction`, and `unique` for integer keys, fake-value categories and templates. A unique template with fewer possible values than rows is a `SchemaError`. `unique` is rejected on boolean, datetime and `choices` columns |
 
 | `distribution` | Parameters |
 |---|---|
@@ -35,6 +35,11 @@ synthetic = Anonymizer(seed=1, locale="pt_BR").synthesize(10_000, schema=schema)
 | `poisson` | `mean` |
 | `uniform` | `minimum`, `maximum` |
 | `quantiles` | `quantiles`: probability → value, such as `{"0": 1000, "0.5": 3000, "0.9": 9000, "1": 50000}`, joined by straight lines. `minimum` and `maximum` can stand in for the 0 and 1 points |
+
+`minimum` and `maximum` truncate a discrete shape such as `poisson` without losing the
+minimum itself. On an `integer` column they are inclusive: a `uniform` 1 to 6 gives every
+face the same share, because the continuous draw is widened by half a unit at each end
+before it is rounded.
 
 ## Planted patterns
 
@@ -53,7 +58,15 @@ dates, booleans and categories.
 
 **Conditional rules.** `conditions` override a column's settings where `when` is true.
 - Any distribution field can change, and so can `null_fraction`.
-- Overridden rows keep their rank in the distribution, so correlations survive.
+- An override is merged with the column and validated as a whole when the schema loads.
+- An override that gives `mean` or `std` and no `distribution` replaces a base `uniform` or
+  `quantiles` shape with a normal one, so it must give both `mean` and `std`.
+- An override that gives `choices` and no `weights` resets the weights to equal shares.
+- Overridden rows keep their rank in the distribution, so the rank order of rows survives
+  inside the overridden group. The correlation over the whole table is lower than the
+  declared value, because the groups sit at different levels: with Spearman 0.6 between
+  `age` and `income`, and `income` raised for 40% of rows, each group still shows about 0.6
+  but the whole table shows about 0.3. Set the correlation higher, or check it per group.
 
 ```json
 {"name": "spend", "kind": "float", "mean": 100, "std": 20,
@@ -81,7 +94,12 @@ on top. Formulas run after the columns they read, and a cycle is rejected.
     `poisson(rate)`, `uniform(low, high)`.
 
 Expressions are parsed and evaluated node by node, never with `eval`, so a schema
-file from someone else cannot run code.
+file from someone else cannot run code. They also cannot use unbounded time or memory:
+- an expression is at most 2000 characters long and 100 levels deep;
+- powers of plain numbers run in floating point, and one that overflows is an error;
+- `*` does not repeat text or lists, and `%` does not format text;
+- any arithmetic or type error during evaluation is reported as an `ExpressionError` that
+  names the expression.
 
 **Outliers.** `outlier_fraction` pushes that share of rows `outlier_scale` standard
 deviations (default 6) into either tail, ignoring the bounds.
@@ -91,9 +109,24 @@ rather than on average:
 - numbers: exactly `mean` and `std`;
 - categories and booleans: exactly the `weights` shares.
 
+Exactness is lost, without an error, when something moves values after the rescale or
+makes the target unreachable:
+- `minimum` and `maximum` clip the rescaled values, so bounds that do not leave room for
+  the target mean and std give a different mean and std;
+- an integer column rounds, so its std is off by a small rounding error;
+- `outlier_fraction` replaces values afterwards;
+- `constraints` drop rows afterwards, and a condition can redraw rows with its own settings.
+
 **Constraints.** `constraints` are row rules such as `end_date >= start_date`. Rows that
-break one are dropped and redrawn, and unique keys are drawn again over the final rows.
-Statistics marked `exact` are exact before this filtering, and approximate after it.
+break one are dropped and more rows are drawn.
+- Constraints are checked before `null_fraction` blanks cells, so a null never removes a
+  row and the null share stays as asked.
+- Unique keys are never redrawn. A row that repeats a key already kept is dropped as well,
+  so formulas, conditions and constraints that read a key stay true.
+- Batches are sized from the share of rows that passed so far. Generation stops after about
+  200 draws per requested row, at most 20 million, and the error states the acceptance
+  rate it measured. A rule that holds for 1% of rows is fine.
+- Statistics marked `exact` are exact before this filtering, and approximate after it.
 
 ## From a reference table
 
@@ -105,8 +138,34 @@ synthetic = anonymizer.synthesize(5_000, reference=customers, fidelity=Fidelity.
   correlations between numeric, date, boolean and category columns. Numbers are
   interpolated between observed quantiles, so rows are new rather than copied.
   Identifiers are always regenerated as fakes, never sampled from the reference.
+  - The correlation behind a boolean or category column is estimated by maximum
+    likelihood (polyserial against a number, polychoric against another category), so a
+    strong association between two yes/no columns survives: on a reference with phi 0.79,
+    the synthetic table shows 0.79.
+  - A category is one ordered scale, ranked by how common each value is. A nominal
+    category whose effect is not monotone along that scale, such as group means `a` 0,
+    `b` 10, `c` 1, is blurred. Fit one copula per level with `stratify_by` for that.
 - **`privacy`**: every column is drawn independently from an inferred schema, so no
   row-level structure survives. Categories seen fewer than 5 times become `OTHER`.
+  Numeric columns are inferred as `quantiles`: the deciles, the 5% and 95% points, finer
+  points in each tail while the sample is large enough, and the minimum and maximum. They
+  follow zero-inflated and heavy-tailed shapes, such as a capital gain that is zero for 92%
+  of people, where a normal distribution with the same mean and std would invent negative
+  values and a wrong mean. The mean of a heavy tail still varies by some percent.
+
+`stratify_by` names category or boolean columns of the reference, such as `["sex"]`:
+
+```python
+synthetic = anonymizer.synthesize(5_000, reference=customers, stratify_by=["segment"])
+```
+
+- Each level with at least 200 reference rows gets its own copula, so it keeps its own
+  distributions and correlations, and appears at its share of the reference.
+- Smaller levels, and rows with a missing level, share one pooled copula.
+- It needs a reference table and has no effect with `privacy` fidelity. A name that is not a
+  category or boolean column learned from the reference is a `SchemaError`.
+- Only the levels are separated. Associations between a stratifying column and the rest
+  come from the levels, not from the copula.
 
 Patterns in a schema you pass along, such as formulas, conditions and constraints, apply
 in both modes. `anonymize infer-schema` writes the inferred schema so you can edit it and
@@ -156,9 +215,16 @@ The answer key holds:
 - **best_achievable**: the best score any model can reach, measured against the noise-free
   truth on the test rows.
   - Regression: RMSE, MAE and R². The truth is the `truth_column`, or the target's formula
-    evaluated again without its noise.
+    evaluated again without its noise. Without a `truth_column`, the key says "not
+    computable" when the target has `minimum` or `maximum`, `exact`, `conditions`,
+    `outlier_fraction` or integer rounding, because those change the target after its
+    formula and the formula is then not the best prediction.
   - Classification: accuracy, ROC AUC and log loss of the true probability in
-    `truth_column`, plus the positive rate.
+    `truth_column`, plus the positive rate. The target is boolean or 0/1. For any other
+    target, such as the choices `no` and `yes`, set `positive_label` in the question.
+  - Rows with a missing target or truth are left out of the scores.
+  - The table needs at least one training row and one test row, or generation fails with a
+    `SchemaError`.
 
 A model that scores close to `best_achievable` has found the planted pattern. A model that
 beats it on the test set has overfitted, or found leakage.

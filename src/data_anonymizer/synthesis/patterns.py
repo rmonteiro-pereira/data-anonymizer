@@ -18,9 +18,6 @@ from data_anonymizer.synthesis.marginals import (
 from data_anonymizer.synthesis.schema import ColumnOverride, ColumnSchema
 from data_anonymizer.taxonomy import NUMERIC_KINDS, ColumnKind
 
-# Fields of an override that change the distribution rather than the row selection or gaps.
-_NOT_DISTRIBUTION_FIELDS = {"when", "null_fraction"}
-
 RegenerateRows = Callable[[ColumnSchema, int], pd.Series]
 
 
@@ -72,7 +69,7 @@ def apply_conditions(
         selected = _selected(override, frame)
         if not selected.any():
             continue
-        settings = _merged(column, override)
+        settings = column.with_override(override)
         if uniform is not None:
             redrawn = draw(settings, uniform[selected])
         else:
@@ -124,18 +121,6 @@ def apply_gaps(
 
 def _selected(override: ColumnOverride, frame: pd.DataFrame) -> np.ndarray:
     return np.asarray(evaluate(override.when, frame), dtype=bool)
-
-
-def _merged(column: ColumnSchema, override: ColumnOverride) -> ColumnSchema:
-    changes = {
-        field: value
-        for field, value in override.model_dump().items()
-        if field not in _NOT_DISTRIBUTION_FIELDS and value is not None
-    }
-    if "mean" in changes or "std" in changes or "quantiles" in changes:
-        # A new mean or spread replaces the shape inferred from the base settings.
-        changes.setdefault("distribution", column.distribution)
-    return column.model_copy(update={**changes, "conditions": [], "formula": None})
 
 
 def _assign(values: pd.Series, selected: np.ndarray, redrawn: pd.Series) -> pd.Series:

@@ -47,6 +47,10 @@ class Distribution(StrEnum):
     QUANTILES = "quantiles"
 
 
+# Fields of an override that select rows or blank cells rather than change the distribution.
+_NOT_DISTRIBUTION_FIELDS = {"when", "null_fraction"}
+
+
 class ColumnOverride(BaseModel):
     """Different distribution settings for the rows where `when` is true.
 
@@ -144,6 +148,40 @@ class ColumnSchema(BaseModel):
             names |= referenced_columns(override.when)
         return names - {self.name}
 
+    def with_override(self, override: ColumnOverride) -> "ColumnSchema":
+        """Return this column with an override's settings applied, validated as a whole."""
+        changes = {
+            field: value
+            for field, value in override.model_dump().items()
+            if field not in _NOT_DISTRIBUTION_FIELDS and value is not None
+        }
+        resets_shape = self._override_replaces_shape(changes)
+        if resets_shape:
+            # A uniform or quantile shape would ignore the new mean and std.
+            changes.update(distribution=None, quantiles=None)
+        if "quantiles" in changes and "distribution" not in changes:
+            changes["distribution"] = Distribution.QUANTILES
+        if "choices" in changes and "weights" not in changes:
+            # The base weights belong to the base choices.
+            changes["weights"] = None
+        settings = {**self.model_dump(), **changes, "conditions": [], "formula": None}
+        merged = ColumnSchema.model_validate(settings)
+        if resets_shape and (merged.mean is None or merged.std is None):
+            raise ValueError(
+                f"{self.name}: an override of mean or std on a uniform or quantile column "
+                "needs both mean and std"
+            )
+        return merged
+
+    def _override_replaces_shape(self, changes: dict[str, object]) -> bool:
+        sets_spread = "mean" in changes or "std" in changes
+        sets_shape = "distribution" in changes or "quantiles" in changes
+        has_fixed_shape = self.quantiles is not None or self.distribution in (
+            Distribution.UNIFORM,
+            Distribution.QUANTILES,
+        )
+        return sets_spread and not sets_shape and has_fixed_shape
+
     @model_validator(mode="after")
     def _consistent_fields(self) -> "ColumnSchema":
         if self.weights is not None:
@@ -155,7 +193,21 @@ class ColumnSchema(BaseModel):
             raise ValueError(f"{self.name}: minimum is greater than maximum")
         if self.start is not None and self.end is not None and self.start > self.end:
             raise ValueError(f"{self.name}: start is after end")
+        self._check_unique_is_possible()
+        for override in self.conditions:
+            self.with_override(override)
         return self
+
+    def _check_unique_is_possible(self) -> None:
+        if not self.unique:
+            return
+        # Booleans and dates have no room for many distinct values, and a list of choices
+        # runs out. Keys, fake values, templates and numbers can make fresh ones.
+        if self.kind in (ColumnKind.BOOLEAN, ColumnKind.DATETIME) or self.choices:
+            raise ValueError(
+                f"{self.name}: unique is not possible for {self.kind.value} columns or "
+                "columns with choices; use an integer key, a fake-value category or a template"
+            )
 
 
 class Correlation(BaseModel):
@@ -187,6 +239,9 @@ class Question(BaseModel):
     the noise-free answer: the expected value for regression, or the probability of
     the positive class for classification. When it is left out for regression, the
     target's formula is evaluated again without its noise.
+
+    A classification target is boolean or 0/1. Any other target, such as a category with
+    choices "no" and "yes", names its positive class in `positive_label`.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -197,6 +252,7 @@ class Question(BaseModel):
     task: Task
     hidden_columns: list[str] = Field(default_factory=list)
     truth_column: str | None = None
+    positive_label: str | None = None
     test_share: float = Field(default=0.2, gt=0, lt=1)
 
 
@@ -241,7 +297,7 @@ class DatasetSchema(BaseModel):
                 raise ValueError(f"constraint {constraint!r}: unknown columns {sorted(unknown)}")
         self.generation_order()
         if self.question is not None:
-            _check_question(self.question, set(by_name))
+            _check_question(self.question, by_name)
         return self
 
     def _checked_expressions(self) -> list[str]:
@@ -306,7 +362,8 @@ def _check_correlatable(column: ColumnSchema | None, name: str) -> None:
         )
 
 
-def _check_question(question: Question, names: set[str]) -> None:
+def _check_question(question: Question, by_name: dict[str, ColumnSchema]) -> None:
+    names = set(by_name)
     mentioned = {question.target, *question.hidden_columns}
     if question.truth_column is not None:
         mentioned.add(question.truth_column)
@@ -317,3 +374,24 @@ def _check_question(question: Question, names: set[str]) -> None:
         raise ValueError(f"the question names unknown columns {', '.join(sorted(unknown))}")
     if question.target in question.hidden_columns:
         raise ValueError("the question's target cannot be hidden")
+    _check_positive_label(question, by_name[question.target])
+
+
+def _check_positive_label(question: Question, target: ColumnSchema) -> None:
+    if question.task is not Task.CLASSIFICATION:
+        return
+    is_binary_kind = target.kind in (ColumnKind.BOOLEAN, ColumnKind.INTEGER, ColumnKind.FLOAT)
+    if question.positive_label is None and not is_binary_kind:
+        raise ValueError(
+            f"the classification target {target.name!r} is not boolean or 0/1, "
+            "so the question needs a positive_label"
+        )
+    unknown_label = (
+        question.positive_label is not None
+        and bool(target.choices)
+        and question.positive_label not in (target.choices or [])
+    )
+    if unknown_label:
+        raise ValueError(
+            f"positive_label {question.positive_label!r} is not one of the target's choices"
+        )
