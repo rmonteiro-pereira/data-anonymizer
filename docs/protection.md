@@ -60,7 +60,7 @@ plan.
 Two more steps read the whole table under anonymization:
 - A timestamp or number left untreated with a different value in nearly every row (90% or
   more distinct) is generalized, since it would single out rows. Statistical fidelity cuts
-  timestamps to the day and rounds numbers to three significant figures, which keeps their
+  timestamps to the month and rounds numbers to three significant figures, which keeps their
   distribution. Privacy fidelity cuts to the year and uses quintile bands, and adds both
   columns to the quasi-identifiers.
 - Every other column with at most 50 distinct values joins the quasi-identifiers, so local
@@ -536,11 +536,13 @@ and still let someone who knows their own records follow those records:
   of different columns of one table can be joined on them; in a measured test, a rounded
   amount and an age in groups of five joined 48% of the rows of a 1,500-row table correctly.
   Release one table, or give the releases no generalized column in common.
-- **Numeric codes are found by their spread.** Unique whole numbers spread evenly within each
-  digit length, or nearly all of one length with at least 6 digits, are taken for codes and
-  replaced. A code with a pattern (leading digits that encode a branch, say) and fewer than 6
-  digits passes as a number. The other way round, an unnamed measure whose values all have the
-  same number of digits is replaced too, which costs utility, not privacy. Naming the column
+- **Numeric codes are found by their spread.** Unique whole numbers spread evenly over the
+  range they cover within each digit length, or nearly all of one length with at least 6
+  digits, are taken for codes and replaced. Codes from a few narrow ranges (one per branch,
+  say) with fewer than 6 digits pass as numbers. The other way round, an unnamed measure whose
+  values all have the same number of digits, or any unnamed unique measure in a table of about
+  100 rows, where the test cannot tell them apart, is replaced too, which costs utility, not
+  privacy. Naming the column
   after a quantity (`amount`, `valor`, `saldo`, `population` and similar) keeps it a number.
 - **Group sizes and own values survive fresh codes.** Replacing an account with a fresh code
   hides the value, not the group. Someone who knows how many rows they have, or a few of their

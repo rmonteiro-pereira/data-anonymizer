@@ -159,6 +159,11 @@ def _random_codes(shape: str, rows: int = 400) -> pd.Series:
         drawn = -(rng.choice(9 * 10**8, rows, replace=False) + 10**8)
     elif shape == "five_digits":
         drawn = rng.choice(9 * 10**4, rows, replace=False) + 10**4
+    elif shape == "sequence_stopping_short_of_a_power_of_ten":
+        drawn = rng.choice(90_000, rows, replace=False) + 1
+    elif shape == "codes_mixed_with_small_numbers":
+        codes = rng.choice(9 * 10**7, rows * 4 // 5, replace=False) + 10**7
+        drawn = np.concatenate([codes, rng.choice(99, rows - len(codes)) + 1])
     else:
         unique = rng.choice(9 * 10**8, int(rows * 0.92), replace=False) + 10**8
         drawn = np.concatenate([unique, rng.choice(unique, rows - len(unique))])
@@ -173,6 +178,8 @@ def _random_codes(shape: str, rows: int = 400) -> pd.Series:
         "negative",
         "five_digits",
         "a_few_repeats",
+        "sequence_stopping_short_of_a_power_of_ten",
+        "codes_mixed_with_small_numbers",
     ],
 )
 def test_random_codes_are_identifiers_whatever_their_shape(shape):
@@ -908,7 +915,7 @@ def test_unique_integers_in_a_dense_range_are_record_ids(values):
     assert scan_column("customer_ref", pd.Series(values)).category is DataCategory.RECORD_ID
 
 
-def test_negative_integers_are_not_record_ids():
+def test_integers_on_both_sides_of_zero_are_not_record_ids():
     finding = scan_column("delta", pd.Series(np.arange(-150, 150)))
 
     assert finding.category is not DataCategory.RECORD_ID

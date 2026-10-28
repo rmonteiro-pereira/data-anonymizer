@@ -51,7 +51,7 @@ _SAME_LENGTH_SHARE = 0.95
 # test, and the tested lengths must hold nearly all the column.
 _CODE_UNIQUE_SHARE = 0.85
 _MIN_ROWS_PER_LENGTH = 30
-_TESTED_SHARE = 0.85
+_TESTED_SHARE = 0.75
 _EVENNESS_BINS = 10
 _EVENNESS_P_VALUE = 0.001
 # Epoch times also have one length, and are times, not codes.
@@ -366,11 +366,16 @@ def _looks_like_random_codes(integers: pd.Series) -> bool:
     """Numbers handed out at random: spread evenly within each number of digits.
 
     A code drawn at random is as likely to be 3,141,592 as 8,271,828, so within each digit
-    length its values fill the range evenly, whatever the lengths, the sign or a few repeats.
+    length its values fill the range they cover evenly, whatever the lengths, the sign or a few
+    repeats. A few short values mixed in (placeholders, test rows) are not tested.
     Measurements such as amounts, ages or populations crowd around typical values instead.
     Rounding a code still leaves a value that points to one row for anyone who knows it.
     """
     if _looks_like_epoch_times(integers):
+        return False
+    # Codes are all positive or, rarely, all negative. Values on both sides of zero are
+    # differences or changes.
+    if integers.min() < 0 < integers.max():
         return False
     magnitudes = integers.astype("int64").abs()
     lengths = magnitudes.astype(str).str.len()
@@ -378,17 +383,19 @@ def _looks_like_random_codes(integers: pd.Series) -> bool:
     for length, members in magnitudes.groupby(lengths):
         if len(members) < _MIN_ROWS_PER_LENGTH or int(length) < 2:
             continue
-        if not _fills_range_evenly(members.to_numpy(), int(length)):
+        if not _fills_range_evenly(members.to_numpy()):
             return False
         tested += len(members)
     return tested >= _TESTED_SHARE * len(integers)
 
 
-def _fills_range_evenly(values: np.ndarray, length: int) -> bool:
-    """A chi-square test of the values against an even spread over their digit range."""
-    lowest = 10 ** (length - 1)
-    highest = 10**length
-    counts, _edges = np.histogram(values, bins=_EVENNESS_BINS, range=(lowest, highest))
+def _fills_range_evenly(values: np.ndarray) -> bool:
+    """A chi-square test of the values against an even spread from their lowest to highest.
+
+    The range is the one the values cover, not the whole digit length, because a sequence of
+    codes often stops short of the next power of ten (1 to 90,000, say).
+    """
+    counts, _edges = np.histogram(values, bins=_EVENNESS_BINS)
     return bool(scipy_stats.chisquare(counts).pvalue >= _EVENNESS_P_VALUE)
 
 

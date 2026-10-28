@@ -122,8 +122,9 @@ like names. The checks are in `src/oblitus/detection/checksums.py`.
    7. Nearly unique short values are a record ID (0.5). Integers count when they look like
       keys or codes: non-negative and in a range under ten times the row count; at least 6
       digits with 95% of one length (account, phone or record numbers); or, at least 85%
-      unique, spread evenly within each digit length, as codes drawn at random are (a
-      chi-square test per length, whatever the sign). Epoch timestamps stay numeric, and so
+      unique, all of one sign and spread evenly over the range they cover within each
+      digit length, as codes drawn at random are (a chi-square test per length; lengths
+      tested must hold three quarters of the values). Epoch timestamps stay numeric, and so
       does a column whose name says it is a quantity (`amount`, `valor`, `saldo`,
       `population` and similar), because a measure drawn evenly looks like random codes.
 

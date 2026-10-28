@@ -10,8 +10,10 @@
 - **Random numeric codes are record IDs whatever their shape.** Unique whole numbers spread
   evenly within each digit length are codes, which covers codes of mixed lengths, negative
   codes, short codes and codes with a few repeats. 1.0.2 only caught codes of one length, and
-  such columns were still rounded and linked for about 60% of people. A column named after a
-  quantity stays a number.
+  such columns were still rounded and linked for about 60% of people. The spread is tested
+  over the range the codes cover, so a sequence that stops short of a power of ten (1 to
+  90,000) counts, and a few short placeholder values do not hide the codes. A column named
+  after a quantity, or with values on both sides of zero, stays a number.
 - The protection guide lists three more limits: consistent pseudonyms follow the value's
   frequency, rounded columns can join two releases, and deterministic `encrypt` leaks length.
 

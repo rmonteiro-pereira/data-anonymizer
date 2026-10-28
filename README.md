@@ -109,14 +109,16 @@ shortened here:
 | | customer_id | full_name | email | signup_date | age | monthly_spend |
 |---|---|---|---|---|---|---|
 | Before | 6242 | Barbara Sanchez | alexandererica@example.net | 2024-07-01 15:20:42 | 33 | 100.98131 |
-| After | ID-0498 | Steven Edwards | rvasquez@example.net | 2024-11-18 | 47 | 136.0 |
+| After | ID-0832 | Wendy Taylor | chase53@example.net | 2023-09-01 | | 140.0 |
 
 - The identifiers are replaced: fresh codes for the ID and voucher, random fakes for name,
   email and CPF.
-- Timestamps are cut to the day and amounts rounded to three significant figures, because a
-  value distinct in every row would single the row out.
-- Ages are averaged in groups of five, and local suppression blanks the rare cells that would
-  still make a row unique.
+- The signup date keeps only its month, because an event date singles people out together
+  with their other details. Amounts are rounded to three significant figures, because a value
+  distinct in every row would single the row out.
+- Ages are averaged in groups of five, and local suppression blanks the cells that would still
+  make a row unique. On this table that blanks nearly every age: month, age, plan and
+  newsletter together leave few rows alike, so age is the cost of keeping the month.
 - The rows come back in a fresh random order, so the "after" row is a different customer:
   nothing in the release lines it up with the original.
 
