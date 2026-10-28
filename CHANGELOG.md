@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.1.1
+
+- The README's quick start names `signup_date` and `age` as the sample table's
+  quasi-identifiers, matching what `scan` prints since 1.1.0. No code changes.
+
 ## 1.1.0
 
 - **Readable output.** `oblitus propose -o plan.json` prints each column's technique and the
