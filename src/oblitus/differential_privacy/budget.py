@@ -142,9 +142,11 @@ def _compose_zcdp(budget: PrivacyBudget, spends: Sequence[Spend]) -> BudgetRepor
 
 
 def rho_from_epsilon_delta(epsilon: float, delta: float) -> float:
-    """The largest rho whose rho-zCDP implies (epsilon, delta)-DP.
+    """A rho whose rho-zCDP implies (epsilon, delta)-DP.
 
-    It inverts epsilon = rho + 2 * sqrt(rho * ln(1 / delta)), the standard conversion.
+    It inverts epsilon = rho + 2 * sqrt(rho * ln(1 / delta)), the conversion of Bun and
+    Steinke (2016). It is safe but not the tightest: the conversion of Canonne, Kamath and
+    Steinke (2020) allows a larger rho, so this one adds 15 to 45% more noise than needed.
     """
     log_inverse_delta = math.log(1 / delta)
     return (math.sqrt(log_inverse_delta + epsilon) - math.sqrt(log_inverse_delta)) ** 2

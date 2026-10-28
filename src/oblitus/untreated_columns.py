@@ -123,7 +123,10 @@ def _generalizing_action(
         column=column,
         technique="round_numeric",
         params={"decimals": decimals},
-        reason=f"distinct in nearly every row: {figures} significant figures kept",
+        reason=(
+            f"distinct in nearly every row: rounded to {figures} significant figures of a "
+            "typical value, so much smaller values may round to zero"
+        ),
     )
 
 

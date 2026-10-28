@@ -5,7 +5,7 @@ Every plan has a **protection** target and a **fidelity**.
 | | `statistical` fidelity | `privacy` fidelity |
 |---|---|---|
 | **`pseudonymization`** | Realistic fakes, consistent per person. Light perturbation. Joins and distributions survive | Keyed hashes for identifiers, generalized quasi-identifiers, k-anonymity enforced |
-| **`anonymization`** | Random fakes per cell. Quasi-identifiers generalized only as far as k-anonymity needs. Means kept | Identifiers suppressed. Quasi-identifiers generalized. Sensitive values randomized |
+| **`anonymization`** | Random fakes per cell. Quasi-identifiers generalized only as far as k-anonymity needs. Means of the other columns kept; the quasi-identifiers' filled cells shift (see [Choosing how k-anonymity is enforced](#choosing-how-k-anonymity-is-enforced)) | Identifiers suppressed. Quasi-identifiers generalized. Sensitive values randomized |
 
 **Pseudonymization** replaces identifiers with stand-ins that the key holder can re-link
 or reveal. Under GDPR Article 4(5) and the LGPD, the output is still personal data. Its
@@ -163,8 +163,8 @@ With `enforce_k_anonymity: true`, the plan's `k_anonymity_method` picks the way:
 
 | `k_anonymity_method` | What it does | Costs |
 |---|---|---|
-| `local_suppression` (the default) | Blanks quasi-identifier cells in rows of small groups, and nothing else | Blank cells, but the other rows keep their exact values |
-| `mondrian` | Cuts the rows into groups of at least `k_target` and replaces every quasi-identifier cell with its group's description | No blank cells, but every quasi-identifier column becomes coarser |
+| `local_suppression` (the default) | Blanks quasi-identifier cells in rows of small groups, and nothing else | Blank cells, but the other rows keep their exact values. The blanks fall on rare combinations, not at random, so the filled cells are biased toward common people: in a measured test with exact ages, the mean age of the filled cells fell by 6% and the age-income correlation rose from 0.54 to 0.70. The utility report's `added_blank_share` shows how many cells each column lost |
+| `mondrian` | Cuts the rows into groups of at least `k_target` and replaces every quasi-identifier cell with its group's description | No blank cells, and means survive with the midpoint style, but every quasi-identifier column becomes coarser, so statistics within a group (the mean income of people over 80, say) blur |
 
 Both run on the released table after the column actions, so they also cover columns the
 actions left alone. Either way, the table is then measured and the protection checks run on it.

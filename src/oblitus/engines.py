@@ -267,6 +267,10 @@ def to_native(frame: WorkingFrame, engine: Engine) -> Any:
     return native
 
 
+# Above 2**53 a float no longer holds every integer, and casting it to an integer may fail.
+_LARGEST_EXACT_FLOAT_INTEGER = 2**53
+
+
 def add_keyed_uniforms(
     frame: WorkingFrame,
     engine: Engine,
@@ -285,10 +289,19 @@ def add_keyed_uniforms(
     if len(names) > UNIFORMS_PER_DIGEST:
         raise ValueError(f"at most {UNIFORMS_PER_DIGEST} uniform columns per call")
     prefix = key.hex() + "|"
+    frame, hashed = _with_whole_floats_as_integers(frame, source)
     if engine is Engine.DUCKDB:
-        return _duckdb_uniforms(frame, prefix, source, names)
-    if engine is Engine.SPARK:
-        return _spark_uniforms(frame, prefix, source, names)
+        drawn = _duckdb_uniforms(frame, prefix, hashed, names)
+    elif engine is Engine.SPARK:
+        drawn = _spark_uniforms(frame, prefix, hashed, names)
+    else:
+        drawn = _polars_uniforms(frame, prefix, hashed, names)
+    return drawn if hashed == source else drawn.drop(hashed)
+
+
+def _polars_uniforms(
+    frame: WorkingFrame, prefix: str, source: str, names: Sequence[str]
+) -> WorkingFrame:
     eager = frame.lazy().collect() if isinstance(frame, nw.LazyFrame) else frame
     texts = eager.get_column(source).cast(nw.String).to_list()
     digests = [_digest(prefix, text) for text in texts]
@@ -298,6 +311,25 @@ def add_keyed_uniforms(
     }
     added = nw.from_dict(columns, backend=nw.Implementation.POLARS)
     return nw.concat([eager, added], how="horizontal")
+
+
+def _with_whole_floats_as_integers(frame: WorkingFrame, source: str) -> tuple[WorkingFrame, str]:
+    """Hash a whole-number float as its integer text, so 7.0 and 7 draw the same numbers.
+
+    pandas stores an integer ID as float once one value is missing, so one person's ID can
+    be 7 in one table and 7.0 in another; their shared offsets must still agree.
+    """
+    if not frame.collect_schema()[source].is_float():
+        return frame, source
+    hashed = f"{source}__whole"
+    value = nw.col(source)
+    is_whole_integer = (value == value.round(0)) & (value.abs() < _LARGEST_EXACT_FLOAT_INTEGER)
+    as_text = (
+        nw.when(is_whole_integer)
+        .then(value.cast(nw.Int64).cast(nw.String))
+        .otherwise(value.cast(nw.String))
+    )
+    return frame.with_columns(as_text.alias(hashed)), hashed
 
 
 def _digest(prefix: str, text: str | None) -> str:

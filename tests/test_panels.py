@@ -298,8 +298,8 @@ def test_a_column_reading_the_current_target_is_still_a_leak():
     features = Anonymizer(seed=1).challenge(schema).answer_key["features"]
 
     assert features["leaks_target"] == ["echo"]
-    assert features["lags_target"] == ["previous"]
-    assert "echo_of_previous" in features["distractors"]
+    # An earlier period of a column built from the target tells as much as the target's own.
+    assert features["lags_target"] == ["previous", "echo_of_previous"]
 
 
 def test_a_treatment_on_a_panel_is_refused_with_a_clear_error():

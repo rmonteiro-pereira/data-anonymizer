@@ -1,4 +1,5 @@
 import pandas as pd
+import pytest
 
 from oblitus.evaluation import assess_privacy, compare_tables
 from oblitus.local_suppression import enforce_k_anonymity
@@ -57,3 +58,23 @@ def test_compare_tables_reports_zero_drift_for_identical_tables():
     assert report.for_column("a").ks_statistic == 0
     assert report.for_column("c").total_variation == 0
     assert report.max_correlation_change == 0
+
+
+def test_the_utility_report_counts_the_cells_a_release_blanked():
+    original = pd.DataFrame({"age": [30.0, 41.0, 52.0, 63.0], "city": ["a", "b", "c", "d"]})
+    released = original.assign(age=[30.0, None, None, 63.0], city=["a", "b", None, "d"])
+
+    report = compare_tables(original, released)
+
+    assert report.for_column("age").added_blank_share == 0.5
+    assert report.for_column("city").added_blank_share == 0.25
+
+
+def test_a_date_shift_is_measured_in_standard_deviations_not_against_1970():
+    original = pd.DataFrame({"day": pd.date_range("2024-01-01", periods=365, freq="D")})
+    released = original.assign(day=original["day"] + pd.Timedelta(days=182))
+
+    report = compare_tables(original, released)
+
+    # Half a year on a one-year spread of about 105 days is close to 1.7 deviations.
+    assert report.for_column("day").mean_change == pytest.approx(182 / 105.5, rel=0.02)

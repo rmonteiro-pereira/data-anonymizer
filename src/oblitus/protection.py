@@ -414,8 +414,9 @@ def _relinkable_columns(
         limit = 1 / plan.k_target
         if rate > limit + _LINKAGE_TOLERANCE:
             problems.append(
-                f"{action.column}: {rate:.0%} of noisy values lead back to their record by "
-                f"nearest value, more than 1 in {plan.k_target}; add noise or generalize"
+                f"{action.column}: {rate:.0%} of {int(both.sum()):,} compared noisy values "
+                f"lead back to their record by nearest value, more than 1 in {plan.k_target}; "
+                "add noise or generalize"
             )
     return problems
 

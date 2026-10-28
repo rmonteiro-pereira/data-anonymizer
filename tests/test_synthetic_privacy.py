@@ -345,3 +345,30 @@ def test_a_large_jitter_is_a_known_limit_of_the_isolated_record_test():
 
     assert report.isolated_records is not None
     assert not report.isolated_records.is_excessive
+
+
+def _discrete_population(rows: int, seed: int) -> pd.DataFrame:
+    rng = np.random.default_rng(seed)
+    letters = {name: rng.choice(list("abc"), rows) for name in ("p", "q", "r", "s")}
+    return pd.DataFrame({**letters, "n": rng.integers(0, 5, rows)})
+
+
+def test_fresh_draws_of_a_small_discrete_table_are_not_taken_for_copies():
+    alarms = 0
+    for trial in range(30):
+        tables = [_discrete_population(100, trial * 3 + offset) for offset in range(3)]
+        report = Anonymizer(seed=1).check_synthetic(*tables)
+        alarms += any("exact copies" in finding for finding in report.findings)
+
+    # The plain 1% limit failed about half of these; the sign test fails about one in a hundred.
+    assert alarms <= 3
+
+
+def test_copies_of_unique_training_rows_are_still_found():
+    train = _population(1000, seed=31)
+    fresh = _population(1000, seed=32)
+    synthetic = pd.concat([train.sample(30, random_state=1), fresh.head(970)], ignore_index=True)
+
+    report = Anonymizer(seed=1).check_synthetic(synthetic, train, _population(1000, seed=33))
+
+    assert any("exact copies" in finding for finding in report.findings)

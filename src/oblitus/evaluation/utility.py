@@ -1,6 +1,6 @@
 """Measure how far an anonymized or synthetic table drifts from the original statistically."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import numpy as np
 import pandas as pd
@@ -17,8 +17,13 @@ class ColumnUtility:
 
     For numeric columns: relative change of mean and standard deviation, and the
     Kolmogorov-Smirnov statistic (0 means identical distributions, 1 disjoint ones).
+    For date columns the mean change is the shift of the mean in standard deviations of the
+    original dates, since a ratio to days since 1970 would read every shift as tiny.
     For categorical columns: total variation distance between category shares
     (0 identical, 1 disjoint).
+    The statistics compare the cells that are filled in each table. `added_blank_share` is
+    the share of rows blank in the release but not in the original, because local suppression
+    blanks rare cells rather than random ones, and the filled cells alone can look unchanged.
     """
 
     column: str
@@ -27,11 +32,16 @@ class ColumnUtility:
     std_change: float | None = None
     ks_statistic: float | None = None
     total_variation: float | None = None
+    added_blank_share: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class UtilityReport:
-    """Per-column drift plus the largest change in any pairwise numeric correlation."""
+    """Per-column drift plus the largest change in any pairwise numeric correlation.
+
+    The correlation change covers only columns numeric in both tables: a column binned into
+    labels drops out, so its lost correlations do not show here.
+    """
 
     columns: list[ColumnUtility]
     max_correlation_change: float | None
@@ -64,17 +74,32 @@ def _is_numeric(values: pd.Series) -> bool:
 
 
 def _compare_column(column: str, before: pd.Series, after: pd.Series) -> ColumnUtility:
+    measured = _compare_filled_cells(column, before, after)
+    blanked = after.isna().to_numpy() & ~before.isna().to_numpy()
+    return replace(measured, added_blank_share=float(blanked.mean()) if len(blanked) else None)
+
+
+def _compare_filled_cells(column: str, before: pd.Series, after: pd.Series) -> ColumnUtility:
     if _is_numeric(before) and _is_numeric(after):
         return _compare_numeric(column, before.dropna(), after.dropna())
     if pd.api.types.is_datetime64_any_dtype(before) and pd.api.types.is_datetime64_any_dtype(after):
         before_days = as_nanoseconds(before.dropna()) / _NANOSECONDS_PER_DAY
         after_days = as_nanoseconds(after.dropna()) / _NANOSECONDS_PER_DAY
-        return _compare_numeric(column, before_days, after_days)
+        compared = _compare_numeric(column, before_days, after_days)
+        return replace(compared, mean_change=_mean_shift_in_std(before_days, after_days))
     return ColumnUtility(
         column=column,
         comparison="categorical",
         total_variation=_total_variation(before, after),
     )
+
+
+def _mean_shift_in_std(before: pd.Series, after: pd.Series) -> float | None:
+    if before.empty or after.empty:
+        return None
+    spread = float(before.std())
+    shift = abs(float(after.mean()) - float(before.mean()))
+    return shift if not spread else shift / spread
 
 
 def _compare_numeric(column: str, before: pd.Series, after: pd.Series) -> ColumnUtility:

@@ -307,3 +307,14 @@ def test_an_overlong_integer_in_an_unused_column_does_not_stop_the_release(tmp_p
     with_long = _cli_release(tmp_path, "long", rows + "9" * 39 + ",a\n", domains)
 
     assert without == with_long == 0
+
+
+@pytest.mark.parametrize(("lower", "upper", "bins"), [(0, 100, 10), (0, 100, 7), (0, 9, 4)])
+def test_decoded_integers_fall_back_into_the_bin_they_came_from(lower, upper, bins):
+    domain = NumericDomain(lower=lower, upper=upper, bins=bins, integer=True)
+    codes = np.repeat(np.arange(bins), 500)
+
+    decoded = domain.decode(codes, np.random.default_rng(1))
+
+    assert decoded.between(lower, upper).all()
+    assert (domain.encode("x", decoded) == codes).all()

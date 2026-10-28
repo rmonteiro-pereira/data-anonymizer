@@ -101,10 +101,20 @@ class NumericDomain(BaseModel):
     def decode(self, codes: np.ndarray, rng: np.random.Generator) -> pd.Series:
         """Draw a value uniformly inside each code's bin."""
         width = self._span() / self.bins
-        values = self.lower + (codes + rng.random(len(codes))) * width
         if self.integer:
-            return pd.Series(np.minimum(np.floor(values), self.upper).astype(np.int64))
-        return pd.Series(values)
+            return pd.Series(self._integers_in_bins(codes, width, rng))
+        return pd.Series(self.lower + (codes + rng.random(len(codes))) * width)
+
+    def _integers_in_bins(
+        self, codes: np.ndarray, width: float, rng: np.random.Generator
+    ) -> np.ndarray:
+        # Draw among the integers that `encode` puts in the bin, so decoding and encoding
+        # again gives the same bin even when the bins do not split the integers evenly.
+        lowest = np.ceil(self.lower + codes * width)
+        highest = np.minimum(np.ceil(self.lower + (codes + 1) * width) - 1, self.upper)
+        highest = np.maximum(highest, lowest)
+        drawn = lowest + np.floor(rng.random(len(codes)) * (highest - lowest + 1))
+        return drawn.astype(np.int64)
 
     def _span(self) -> float:
         # Integers occupy unit cells, so the top integer needs a whole cell of its own.

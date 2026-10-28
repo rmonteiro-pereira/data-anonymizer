@@ -377,10 +377,10 @@ _BUILTINS = (
     Technique(
         "top_bottom_code",
         _GENERAL,
-        _DISTRIBUTION,
+        _DISTORTS,
         _NUMERIC,
         generalization.top_bottom_code,
-        "Clip outliers to quantile or fixed limits.",
+        "Clip outliers to quantile or fixed limits; the mean and spread shrink with the tails.",
         whole_column_reason="clips at the column's quantiles",
         chunkable_with=_has_fixed_limits,
     ),
@@ -413,10 +413,10 @@ _BUILTINS = (
     Technique(
         "multiplicative_noise",
         _NOISE,
-        _DISTRIBUTION,
+        _DISTORTS,
         _NUMERIC,
         noise.multiplicative_noise,
-        "Multiply by a random factor near 1; suits amounts.",
+        "Multiply by a random factor near 1; suits amounts, but widens the spread.",
     ),
     Technique(
         "date_shift",

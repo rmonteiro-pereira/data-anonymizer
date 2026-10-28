@@ -270,12 +270,14 @@ def _action_for(
         params["by"] = entity_column
     if rule.technique == "scramble_categories" and "min_entities" in params:
         _count_entities_or_drop(params, entity_column)
+    note = rule.note
     if rule.technique == "normalize" and protection is Protection.ANONYMIZATION:
         _scale_without_inversion(params, entity_column)
+        note = _SCALE_WITHOUT_INVERSION_NOTES[params["method"]]
 
     reason = f"{finding.category.value} ({finding.sensitivity.value})"
-    if rule.note:
-        reason += f": {rule.note}"
+    if note:
+        reason += f": {note}"
     if finding.confidence < _REVIEW_CONFIDENCE:
         reason += f"; low confidence {finding.confidence:.0%}, please review"
     return ColumnAction(
@@ -284,6 +286,12 @@ def _action_for(
         params=params,
         reason=reason,
     )
+
+
+_SCALE_WITHOUT_INVERSION_NOTES = {
+    "index": "units removed; each entity against its own mean, so its pattern over time is kept",
+    "rank": "units removed; only the order is kept",
+}
 
 
 def _scale_without_inversion(params: dict[str, Any], entity_column: str | None) -> None:

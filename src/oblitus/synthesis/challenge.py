@@ -135,6 +135,9 @@ def finish_challenge(
         "how_the_target_was_built": _derivation(schema, question.target),
         "best_achievable": best_published,
     }
+    caveats = _best_score_caveats(schema, question, answer_key["features"])
+    if caveats:
+        answer_key["best_achievable_assumes"] = caveats
     if question.test_shift:
         kind = drift_kind(question, _ancestors(schema, question.target))
         answer_key["drift"] = describe_drift(question, kind, best_published)
@@ -363,6 +366,63 @@ def _describe_label_noise(
     }
 
 
+def _best_score_caveats(
+    schema: DatasetSchema, question: Question, roles: dict[str, list[str]]
+) -> list[str]:
+    """What the best score has that a model trained on the published files does not.
+
+    The score is the truth's own score on the test rows, so it can only be reached when the
+    files hold everything the truth uses.
+    """
+    caveats = []
+    hidden = set(question.hidden_columns)
+    unrecoverable = [
+        name for name in roles["hidden_drivers"] if not _recoverable(schema, name, hidden)
+    ]
+    if unrecoverable:
+        names = ", ".join(unrecoverable)
+        caveats.append(
+            f"the hidden drivers {names}: the score uses them, so a model trained on the "
+            "published files cannot reach it"
+        )
+    blank_drivers = [
+        name
+        for name in roles["true_drivers"]
+        if schema.column(name).missingness is not None or schema.column(name).null_fraction
+    ]
+    if blank_drivers:
+        caveats.append(
+            f"complete values of {', '.join(blank_drivers)}: the published files leave some "
+            "of them blank"
+        )
+    if schema.panel is not None and question.split is Split.RANDOM:
+        caveats.append(
+            "nothing from neighbouring periods: a random split of a panel puts the labels of "
+            "the periods around a test row in training, and a model that reads them can beat "
+            "this score; use the time split for a fair ceiling"
+        )
+    return caveats
+
+
+def _recoverable(schema: DatasetSchema, name: str, hidden: set[str]) -> bool:
+    """Whether a hidden column is a noise-free function of columns a model can see.
+
+    Such a column, a probability computed from published drivers say, hides nothing: a model
+    can learn it back. A related table's aggregate is not a column of this schema; it is
+    computed from the published child rows, so it can be learned back too.
+    """
+    if name not in {column.name for column in schema.columns}:
+        return True
+    column = schema.column(name)
+    if column.formula is None or uses_randomness(column.formula) or column.noise_std:
+        return False
+    return all(
+        parent not in hidden or _recoverable(schema, parent, hidden)
+        for parent in column.dependencies() | column.lagged_dependencies()
+        if parent != name
+    )
+
+
 def split_rows(question: Question, rows: int, rng: np.random.Generator) -> np.ndarray:
     in_test = rng.random(rows) < question.test_share
     test_rows = int(in_test.sum())
@@ -439,19 +499,17 @@ def _ancestors(schema: DatasetSchema, name: str) -> set[str]:
 def _feature_roles(schema: DatasetSchema, question: Question) -> dict[str, list[str]]:
     hidden = set(question.hidden_columns)
     drivers = _ancestors(schema, question.target)
-    correlated = {
-        other
-        for correlation in schema.correlations
-        for first, other in (correlation.columns, correlation.columns[::-1])
-        if first in drivers and other not in drivers
-    }
+    graph = CausalGraph.of(schema)
+    leaks = _leaking_columns(schema, graph, question.target)
+    correlated = _correlated_with_drivers(schema, graph, drivers | {question.target}) - leaks
     visible = [column.name for column in schema.columns if column.name not in hidden]
-    leaks = CausalGraph.of(schema).descendants(question.target)
     candidates = [name for name in visible if name != question.target and name not in leaks]
     others = [name for name in candidates if name not in drivers and name not in correlated]
-    # Reading the target of an earlier period is allowed: the value is known when predicting.
+    # Reading an earlier period of the target, or of a column built from it, is allowed: the
+    # value is known when predicting, and the test periods after the first withhold it.
+    earlier_periods = leaks | {question.target}
     reads_past_target = [
-        name for name in others if question.target in schema.column(name).lagged_dependencies()
+        name for name in others if schema.column(name).lagged_dependencies() & earlier_periods
     ]
     roles = {
         "true_drivers": [name for name in candidates if name in drivers],
@@ -463,6 +521,39 @@ def _feature_roles(schema: DatasetSchema, question: Question) -> dict[str, list[
     if reads_past_target:
         roles["lags_target"] = reads_past_target
     return roles
+
+
+def _leaking_columns(schema: DatasetSchema, graph: CausalGraph, target: str) -> set[str]:
+    """Columns built from the target, and columns whose blanks follow the target or such a column.
+
+    A blank that appears more often for one class tells the class, as a value computed from it
+    would.
+    """
+    leaks = graph.descendants(target)
+    for column in schema.columns:
+        setting = column.missingness
+        if setting is not None and setting.depends_on in leaks | {target}:
+            leaks.add(column.name)
+    return leaks
+
+
+def _correlated_with_drivers(
+    schema: DatasetSchema, graph: CausalGraph, drivers: set[str]
+) -> set[str]:
+    """Columns that move with a driver without causing the target.
+
+    That is a column correlated with a driver (or with a target that is drawn rather than
+    computed), or a column computed from a driver, such as a noisy proxy of a hidden one.
+    """
+    correlated = {
+        other
+        for correlation in schema.correlations
+        for first, other in (correlation.columns, correlation.columns[::-1])
+        if first in drivers and other not in drivers
+    }
+    for driver in drivers:
+        correlated |= graph.descendants(driver) - drivers
+    return correlated
 
 
 def _derivation(schema: DatasetSchema, target: str) -> list[dict[str, Any]]:

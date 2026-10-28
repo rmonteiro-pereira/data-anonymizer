@@ -66,7 +66,7 @@ def describe_class_balance(
     section: dict[str, object] = {
         "requested_positive_share": requested_share,
         "positive_rate": {"train": train_rate, "test": test_rate},
-        "majority_class_accuracy": 1 - test_rate,
+        "majority_class_accuracy": max(test_rate, 1 - test_rate),
         "pr_auc_baseline": test_rate,
     }
     if test_probabilities is None:

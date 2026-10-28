@@ -41,6 +41,11 @@ minimum itself. On an `integer` column they are inclusive: a `uniform` 1 to 6 gi
 face the same share, because the continuous draw is widened by half a unit at each end
 before it is rounded.
 
+Truncation keeps the shape but moves the declared `mean` and `std`, which describe the
+distribution before it is cut: a `normal` with mean 50 and std 10 cut at a minimum of 45 comes
+out with mean 55.1 and std 7.0. Use `exact` when the published mean and std must be the declared
+ones. A formula column with bounds is clipped instead, so values pile up at the bound.
+
 ## Planted patterns
 
 Every pattern below is in [examples/churn_challenge.json](../examples/churn_challenge.json).
@@ -49,8 +54,14 @@ Every pattern below is in [examples/churn_challenge.json](../examples/churn_chal
 dates, booleans and categories.
 - Categories rank in the order of their `choices`.
 - Booleans rank False below True.
-- Pairs are joined into one matrix, and an impossible set is adjusted to the nearest
-  valid matrix.
+- The value is reached for continuous columns. For columns with many ties (booleans, counts
+  with a small mean, categories with few levels) the declared value is the correlation of the
+  underlying draws, and the published one is smaller: 0.5 between two fair booleans comes out
+  near 0.35, and 0.3 between a 5% boolean and a number near 0.15.
+- Pairs are joined into one matrix. An impossible set, such as 0.9, 0.9 and -0.9 among three
+  columns, is made valid by raising its negative eigenvalues, which can shrink every
+  correlation of the set: that example comes out near 0.48 each, without a warning. Check
+  that the declared correlations can hold together.
 
 ```json
 "correlations": [{"columns": ["age", "income"], "value": 0.6}]
@@ -178,6 +189,11 @@ synthetic = anonymizer.synthesize(5_000, reference=customers, fidelity=Fidelity.
   - A category is one ordered scale, ranked by how common each value is. A nominal
     category whose effect is not monotone along that scale, such as group means `a` 0,
     `b` 10, `c` 1, is blurred. Fit one copula per level with `stratify_by` for that.
+  - The copula keeps monotone relations only. A relation such as `y = x²` (correlation 1.0
+    between `x²` and `y` in the reference) and an interaction such as `y = a XOR b` vanish in
+    the synthetic table.
+  - Blank cells keep their share per column but fall at random: blanks that depended on
+    another column (more of them among the young, say) lose that dependence.
 - **`privacy`**: every column is drawn independently from an inferred schema, so no
   row-level structure survives. Categories seen fewer than 20 times become `OTHER`.
   Numeric columns are inferred as `quantiles`: the deciles, the 5% and 95% points, finer
@@ -242,12 +258,16 @@ grows with the product of the row counts, which is why there is a cap.
 The verdict fails on any of these findings, and passes when there are none:
 
 - **Exact copies**: the share of synthetic rows equal to a training row exceeds the share equal
-  to a holdout row by more than 1%. Rows that repeat in a low-cardinality population match the
-  holdout too, so they are not counted. Without a holdout, the limit applies to the share itself.
+  to a holdout row by more than 1%, and a one-sided sign test over the rows that equal one
+  table but not the other says the excess is not chance (p ≤ 0.01). Rows that repeat in a
+  low-cardinality population match the holdout too, so they are not counted; the test keeps
+  small discrete tables from failing on chance alone, which the plain 1% limit did in about
+  half of 100-row trials. Without a holdout, the limit applies to the share itself.
 - **DCR share**: above 60%, and its 95% bootstrap interval excludes 50%.
 - **Membership attack**: the 95% bootstrap interval of the advantage lies entirely above 0 and
-  the advantage itself is at least 0.1. In 20 trials each, leak-free generators reached an
-  advantage of 0.05 at most, so the floor keeps them from failing.
+  the advantage itself is at least 0.1. On fresh draws of about 1,000 rows or more, leak-free
+  generators stay below 0.07, so the floor keeps them from failing. Small tables are noisier:
+  at 100 rows, 12% of fresh draws reached 0.1, and about 2% raised a membership finding.
 
 - **Isolated-record copies**: the whole-table tests average over every record, so a generator
   that appends five rare training records to a thousand fresh rows passes them (0.5% exact
@@ -327,8 +347,15 @@ The answer key holds:
   - `distractors`: everything else.
 - **how_the_target_was_built**: every formula, distribution and condition on the path to
   the target.
-- **best_achievable**: the best score any model can reach, measured against the noise-free
-  truth on the test rows.
+- **best_achievable**: the score of the noise-free truth on the test rows: what a model that
+  had learned the data-generating rule exactly would score on this test set. It is a target,
+  not a hard ceiling. On a finite test set a model can beat it slightly by chance (by up to
+  about 0.007 in accuracy in 15 trials); beating it by a clear margin points at a leak.
+- **best_achievable_assumes**: present when the published files lack something the truth
+  uses, so no model trained on them can reach the score: a hidden driver that was drawn or
+  carries noise (a hidden driver computed without noise from published columns, such as a
+  probability, can be learned back and is not listed), drivers with blank cells, or a random
+  split of a panel, where the labels of the periods around a test row sit in training.
   - Regression: RMSE, MAE and R². The truth is the `truth_column`, or the target's formula
     evaluated again without its noise. Without a `truth_column`, the key says "not
     computable" when the target has `minimum` or `maximum`, `exact`, `conditions`,
@@ -338,6 +365,8 @@ The answer key holds:
     `truth_column`, plus the positive rate. The target is boolean or 0/1. For any other
     target, such as the choices `no` and `yes`, set `positive_label` in the question.
   - Rows with a missing target or truth are left out of the scores.
+  - The `truth_column` is trusted as given: the key does not check that the target was drawn
+    from it, so a truth column that is not the target's real probability gives a wrong score.
   - The table needs at least one training row and one test row, or generation fails with a
     `SchemaError`.
 
@@ -550,7 +579,10 @@ the true probabilities).
 | `hard` | 2 × `noise_std` | 10 | 5% of labels flipped, or noise of 10% of the target's std | the mean of the first published numeric driver rises by 0.5 std |
 
 - Target noise multiplies the `noise_std` of the target's formula. A target without
-  `noise_std` is left as it is.
+  `noise_std` is left as it is, so for such a target, typically a classification target drawn
+  with `bernoulli`, the level does not lower `best_achievable`; the drift of `hard` can even
+  raise it (accuracy 0.759 at `easy` and 0.796 at `hard` on the churn example). Only the scores
+  a learned model reaches fall, through the label noise and the extra distractors.
 - Distractors are columns named `extra_feature_NN`, cycling between a normal number, a
   four-level category and a count. Nothing reads them, and the key lists them as distractors.
 - Label noise is the question's own `label_noise` with the `train` split. Drift is a

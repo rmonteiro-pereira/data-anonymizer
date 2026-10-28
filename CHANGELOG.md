@@ -24,6 +24,42 @@
 - The protection guide lists three more limits: consistent pseudonyms follow the value's
   frequency, rounded columns can join two releases, and deterministic `encrypt` leaks length.
 
+A review of the library's statistical claims, measured by simulation, led to these fixes:
+
+- **The synthetic-data check no longer fails fresh data on exact copies by chance.** The 1%
+  limit on the excess of copies over the holdout now also needs a one-sided sign test (p ≤
+  0.01). On small discrete tables the plain limit failed 27 to 51% of independent draws; it now
+  fails about 1 to 4%, and copies of unique training rows are still found.
+- **The answer key says what its best score assumes.** A new `best_achievable_assumes` list
+  names hidden drivers that a model cannot learn back, drivers with blank cells and a random
+  split of a panel. The best score is described as the truth's score on the test set, which a
+  model can beat slightly by chance, not as a ceiling.
+- **Answer-key roles.** Blanks that follow the target are a leak; a column computed from a
+  driver (a noisy proxy of a hidden one) or correlated with a drawn target is
+  `correlated_but_not_causal`, not a distractor; an earlier period of a column built from the
+  target is listed with `lags_target`.
+- **`majority_class_accuracy`** is the share of the more common class. It was one minus the
+  positive rate, which is wrong when positives are the majority.
+- **Date shifts agree across tables when an ID is an integer in one and a float in another.**
+  Keyed draws now hash a whole-number float as its integer, as pandas stores an integer ID as a
+  float once one value is missing. Before, only 1% of such rows got the same shift.
+- **The utility report** adds `added_blank_share` per column, the cells a release blanked,
+  since local suppression blanks rare cells and the filled cells alone can look unchanged. The
+  mean change of a date column is now its shift in standard deviations, not a ratio to days
+  since 1970.
+- **Differentially private integers decode into their own bin.** When the bins did not split
+  the integers evenly, up to 10% of decoded values fell in a neighbouring bin.
+- `top_bottom_code` and `multiplicative_noise` are labelled `distorts`, not `preserves
+  distribution`. Proposal reasons no longer say "shape kept" for an index or rank, or "3
+  significant figures kept" where small values round to zero. The linkage problem text gives
+  the number of rows it compared.
+- The docs now state: randomized response's estimator; suppression's bias on the filled cells;
+  that DP accuracy covers the clamped values; noise mass in empty DP bins; the conservative
+  zCDP conversion; date shifts break calendar alignment; truncation moves the declared mean;
+  Spearman targets are latent for tied columns; infeasible correlation sets shrink; the learned
+  copula loses non-monotone relations and dependent blanks; difficulty does not lower the best
+  score of a target without noise.
+
 ## 1.0.2
 
 - **Sparse numeric codes are record IDs.** A column of unique integers of at least 6 digits,

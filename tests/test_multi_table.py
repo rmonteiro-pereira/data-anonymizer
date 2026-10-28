@@ -518,3 +518,24 @@ def test_a_column_copied_into_a_third_table_does_not_hide_its_count_link():
     for result in results.values():
         assert result.protection.level is ProtectionLevel.AT_RISK
         assert any("same row counts" in text for text in result.protection.problems)
+
+
+def test_one_person_gets_the_same_date_shift_whether_their_id_is_stored_as_int_or_float():
+    ids = np.arange(1, 301)
+    visits = pd.DataFrame({"pid": ids, "day": pd.Timestamp("2022-01-01")})
+    claims = pd.DataFrame({"pid": ids.astype(float), "day": pd.Timestamp("2022-01-01")})
+    shift = ColumnAction(
+        column="day", technique="date_shift", params={"max_days": 30, "by": "pid", "stream": "v"}
+    )
+    plan = AnonymizationPlan(
+        fidelity=Fidelity.STATISTICAL,
+        protection=Protection.PSEUDONYMIZATION,
+        actions=[shift],
+        shuffle_rows=False,
+    )
+    anonymizer = Anonymizer(secret_key=KEY, seed=1)
+    frames = {"visits": visits, "claims": claims}
+
+    results = anonymizer.apply_many(frames, {"visits": plan, "claims": plan})
+
+    assert results["visits"].data["day"].equals(results["claims"].data["day"])

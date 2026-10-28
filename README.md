@@ -39,7 +39,7 @@ and how far each record moved](https://raw.githubusercontent.com/rmonteiro-perei
 | Utility | Change in mean and standard deviation, Kolmogorov–Smirnov, Wasserstein / IQR, total variation distance, correlation change, per-record shift in standard deviations |
 | Noise explorer | A self-contained interactive HTML page per column. For every technique and strength it shows before/after distributions, original against released per record with an exposure band, and a risk-utility map. It works offline and follows light and dark themes |
 | Synthesis | Distributions (normal, lognormal, gamma, exponential, Poisson, uniform, quantile curves) truncated to bounds. Spearman correlations imposed through a Gaussian copula. Conditional overrides that keep correlations. Formula columns using a safe expression language with date and random functions. Outlier planting, exact statistics, row constraints, unique keys, null shares (random, or following the data: MAR and MNAR) and templates. Related tables with foreign keys, class imbalance and difficulty levels for challenges. Learned Gaussian copula from a reference table |
-| Challenges | A schema `question` produces train and test files and a private answer key. The key lists the true drivers, the correlated-but-not-causal columns and the distractors, plus the best score any model can reach (RMSE/R², or accuracy/AUC/log loss). Columns that leak the target are flagged. With a `treatment`, the key also holds the true average, treated-only and per-group effects, the bias of the naive comparison, the confounders, mediators, colliders and instruments, and a valid adjustment set. Optional test-set drift (covariate or concept) and label noise on the train or test labels, both reported in the key. Panels of entities over periods (entity-level and period-level columns, `lag`, AR series, seasonality, regimes) with a time split that holds out the last periods |
+| Challenges | A schema `question` produces train and test files and a private answer key. The key lists the true drivers, the correlated-but-not-causal columns and the distractors, plus the score of the noise-free truth on the test set (RMSE/R², or accuracy/AUC/log loss) and what that score assumes the files would hold. Columns that leak the target are flagged. With a `treatment`, the key also holds the true average, treated-only and per-group effects, the bias of the naive comparison, the confounders, mediators, colliders and instruments, and a valid adjustment set. Optional test-set drift (covariate or concept) and label noise on the train or test labels, both reported in the key. Panels of entities over periods (entity-level and period-level columns, `lag`, AR series, seasonality, regimes) with a time split that holds out the last periods |
 | Interfaces | Python API (`Anonymizer`), editable JSON plans and schemas, the `oblitus` CLI, CSV and Parquet, custom techniques |
 
 ## Install
@@ -146,7 +146,8 @@ result = anonymizer.apply(customers, plan)
 result.data  # the anonymized DataFrame, of the kind you passed in
 result.protection.level  # anonymized, at_risk, pseudonymized or identifiable
 result.protection.problems  # why a level was not reached
-result.utility.max_correlation_change
+result.utility.max_correlation_change  # among columns numeric before and after
+result.utility.for_column("age").added_blank_share  # cells blanked by k-anonymity
 ```
 
 ## Configuration

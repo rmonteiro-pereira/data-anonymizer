@@ -46,7 +46,7 @@ the default `anonymization` target the proposal is:
 | Segment | `scramble_categories` (`SEG-…`) | Opaque codes in random order. Segments with fewer than 3 rows or 3 stores (5 with `--fidelity privacy`) are merged into `SEG-OTHER`. If `SEG-OTHER` itself falls short of that minimum, the smallest remaining segments join it until it reaches it; if all segments together are too few, the column is blanked. A segment with fewer than 3 contributors is also flagged by the dominance check while values keep their units |
 | Floor area | `bin_numeric`, quartiles | Size bands instead of square metres |
 | Revenue, rent | `normalize`, `index` by store | Each value / that store's own mean × 100. No reais are left and no single known value plus a total undoes it; each store's seasonality, spikes and trends are kept. Without a store column the proposal uses `rank` instead. Under pseudonymization the proposal keeps `robust` |
-| Dates | `date_shift` by store | Every row of one store moves by the same number of days, so its monthly pattern stays intact |
+| Dates | `keep` for a monthly column, the year for a daily one | A column whose dates are all the first of a month is a reporting period and stays as it is, so each store's monthly pattern survives. A daily date keeps only its year, because an exact date singles rows out |
 
 Every store averages 100, so the release no longer shows which store is biggest or how much
 any store sells. To let the provider compare store sizes, switch to `robust` in the plan and

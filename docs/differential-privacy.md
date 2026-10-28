@@ -86,7 +86,10 @@ features itself, and imports it only when called.
   same noise and costs each statistic's share once, however many groups there are.
 - A pure budget uses Laplace noise, a budget with delta or rho uses Gaussian noise.
 - `accuracy` is the half-width within which the noisy value is the exact one plus or minus
-  that distance, with probability `confidence` (default 0.95). The interval of a mean divides the
+  that distance, with probability `confidence` (default 0.95). The exact value is that of the
+  values clamped to the declared bounds, not of the raw data: with 38% of values above the upper
+  bound, a measured mean came out as 134.8 ± 0.4 while the raw mean was 241.6. Choose bounds
+  that hold nearly all values, or read the release as a statistic of the clamped values. The interval of a mean divides the
   noisy sum and count and is a first-order approximation, which is loose when the noisy count is near zero.
 - Noisy counts can be negative and noisy means are kept inside the declared bounds. Clipping a count
   at zero would bias sums of counts, so it is left to you.
@@ -149,6 +152,9 @@ What to expect:
 - A tight budget leaves mostly the one-way distributions. Raise epsilon, use fewer bins, or drop
   columns, before concluding that the method fails.
 - Large joint domains are refused: a pair of columns with more than 1,000,000 cells is an error.
+- Bins the data never fills still get rows. Noise makes some empty cells positive, and the
+  consistent table keeps them: with 60 bins of which 6 held data, 16% of synthetic rows fell in
+  empty bins at epsilon 0.5, 9% at 1 and 2% at 4. Declare bins that the data is expected to fill.
 
 The command line reads the declared domains from JSON (`column: list of values`, or
 `{"kind": "numeric", "lower": 0, "upper": 100, "bins": 10, "integer": true}`). In a CSV, a

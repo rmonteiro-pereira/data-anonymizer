@@ -27,6 +27,7 @@ from scipy import stats
 
 from oblitus.errors import SchemaError
 from oblitus.evaluation.isolated_records import (
+    SIGN_TEST_LEVEL,
     IsolatedRecordCopies,
     RecordMatches,
     copy_tolerance,
@@ -86,6 +87,7 @@ class SyntheticPrivacyReport:
     median_distance_to_train: float
     median_nndr: float
     holdout_exact_copy_share: float | None = None
+    exact_copy_excess_p_value: float | None = None
     median_distance_to_holdout: float | None = None
     dcr_share: float | None = None
     dcr_share_ci_low: float | None = None
@@ -228,11 +230,29 @@ def _with_dcr_share(
     return replace(
         report,
         holdout_exact_copy_share=float(np.mean(to_holdout.nearest == 0)),
+        exact_copy_excess_p_value=_exact_copy_excess_p_value(to_train, to_holdout),
         median_distance_to_holdout=float(np.median(to_holdout.nearest)),
         dcr_share=float(scores.mean()),
         dcr_share_ci_low=low,
         dcr_share_ci_high=high,
     )
+
+
+def _exact_copy_excess_p_value(to_train: NearestDistances, to_holdout: NearestDistances) -> float:
+    """A sign test: do synthetic rows equal a training row more often than a holdout row?
+
+    Only rows that equal one table and not the other count. On a small discrete table common
+    rows equal both by chance, and the plain difference of the two shares swings by several
+    points from one draw to the next.
+    """
+    copies_train = to_train.nearest == 0
+    copies_holdout = to_holdout.nearest == 0
+    only_train = int(np.sum(copies_train & ~copies_holdout))
+    only_holdout = int(np.sum(copies_holdout & ~copies_train))
+    if only_train + only_holdout == 0:
+        return 1.0
+    test = stats.binomtest(only_train, only_train + only_holdout, 0.5, alternative="greater")
+    return float(test.pvalue)
 
 
 def _membership_attack(
@@ -291,6 +311,9 @@ def _exact_copy_findings(
     natural_share = report.holdout_exact_copy_share or 0.0
     excess = report.exact_copy_share - natural_share
     if excess <= rules.max_exact_copy_share:
+        return []
+    p_value = report.exact_copy_excess_p_value
+    if p_value is not None and p_value > SIGN_TEST_LEVEL:
         return []
     return [
         f"{report.exact_copy_share:.1%} of synthetic rows are exact copies of training rows, "
