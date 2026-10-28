@@ -67,6 +67,7 @@ _NAME_AND_SHAPE_CONFIDENCE = 0.7
 _GENDER_LABELS_CONFIDENCE = 0.7
 _UNIQUENESS_ONLY_CONFIDENCE = 0.5
 _BIRTH_DATE_CONFIDENCE = 0.5
+_REPORTING_PERIOD_CONFIDENCE = 0.85
 _KNOWN_NAMES_CONFIDENCE = 0.65
 
 # Birth dates lie in the past, within a human lifetime, and spread over decades. The ages
@@ -241,6 +242,12 @@ def _from_values_alone(
             _BIRTH_DATE_CONFIDENCE,
             "dates lie in the past and spread over decades, like birth dates",
         )
+    if kind is ColumnKind.DATETIME and _looks_like_reporting_periods(sample):
+        return (
+            DataCategory.REPORTING_PERIOD,
+            _REPORTING_PERIOD_CONFIDENCE,
+            "every date is the first of a month at midnight, like a reporting period",
+        )
 
     if kind in (ColumnKind.TEXT, ColumnKind.CATEGORY):
         embedded = classify_free_text(sample)
@@ -291,6 +298,15 @@ def _from_name_or_generic(
     if name_category is not None:
         return name_category, _NAME_ONLY_CONFIDENCE, f"{reason}; the name suggests it"
     return _generic(kind), 1.0, reason
+
+
+def _looks_like_reporting_periods(sample: pd.Series) -> bool:
+    """Monthly, quarterly or yearly periods: every date is the first of a month at midnight."""
+    dates = as_datetime(sample).dropna()
+    if dates.nunique() < 2:
+        return False
+    starts_a_month = (dates.dt.day == 1) & (dates == dates.dt.normalize())
+    return bool(starts_a_month.all())
 
 
 def _looks_like_birth_dates(sample: pd.Series) -> bool:

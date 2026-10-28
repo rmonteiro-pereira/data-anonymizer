@@ -218,6 +218,14 @@ def test_a_code_word_that_does_not_end_the_name_is_not_a_record_id(name):
     assert category_from_name(name) is not DataCategory.RECORD_ID
 
 
+def test_first_of_month_dates_are_reporting_periods_and_other_dates_are_not():
+    months = pd.Series(pd.date_range("2024-01-01", periods=24, freq="MS").repeat(10))
+    days = pd.Series(pd.date_range("2024-01-01", periods=240, freq="D"))
+
+    assert scan_column("month", months).category is DataCategory.REPORTING_PERIOD
+    assert scan_column("visit", days).category is DataCategory.GENERIC_DATETIME
+
+
 def test_dates_stored_as_text_are_recognized_as_dates():
     finding = scan_column("created", pd.Series(["2024-01-05", "2024-02-11", "2023-12-30"] * 5))
 

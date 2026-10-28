@@ -4,9 +4,16 @@
 
 - **Event dates are quasi-identifiers.** A date that is not a birth date (a visit, a purchase,
   an admission) is now counted with the other quasi-identifiers, and the anonymization
-  proposal keeps only its month (year with privacy fidelity). Before, it was kept to the day
-  and not counted, so city, sex and one visit date singled out 20 to 87% of people in a
-  release labelled `anonymized`. Pseudonymization proposals keep the date and count it.
+  proposal keeps only its year. Before, it was kept to the day and not counted, so city, sex
+  and one visit date singled out 20 to 87% of people in a release labelled `anonymized`.
+  Pseudonymization proposals keep the date and count it. A column whose dates are all the
+  first of a month, the time axis of a monthly table, is a new `reporting_period` category:
+  also a quasi-identifier, but kept as it is with statistical fidelity, so a monthly pattern
+  survives.
+- **Ages are in five-year bands under anonymization** with statistical fidelity, instead of
+  means of groups of five. Group means give nearly every group its own age, which beside a
+  date left rows unique and got the ages blanked: on the quick start table, the bands and the
+  year keep 87% of ages and nearly every date, where month and means blanked 99% of ages.
 - **Random numeric codes are record IDs whatever their shape.** Unique whole numbers spread
   evenly within each digit length are codes, which covers codes of mixed lengths, negative
   codes, short codes and codes with a few repeats. 1.0.2 only caught codes of one length, and

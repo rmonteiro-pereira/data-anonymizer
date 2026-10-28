@@ -1,9 +1,12 @@
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import pytest
 
 from oblitus import Anonymizer, Fidelity, Protection, ProtectionLevel
 from oblitus.cli import main
+from oblitus.synthesis import load_schema
 
 ROWS = 2000
 
@@ -25,12 +28,12 @@ def _propose(frame: pd.DataFrame, fidelity: Fidelity):
     return Anonymizer(seed=1).propose(frame, protection=Protection.ANONYMIZATION, fidelity=fidelity)
 
 
-def test_statistical_fidelity_keeps_the_month_and_three_significant_figures():
+def test_statistical_fidelity_keeps_the_year_and_three_significant_figures():
     plan = _propose(_customers(), Fidelity.STATISTICAL)
 
-    # An event date is a quasi-identifier, so it keeps the month, not the day.
+    # An event date is a quasi-identifier, so it keeps the year, not the day.
     assert plan.action_for("signup").technique == "truncate_date"
-    assert plan.action_for("signup").params == {"unit": "month"}
+    assert plan.action_for("signup").params == {"unit": "year"}
     assert "signup" in plan.quasi_identifiers
     # A typical spend near 100 keeps whole units: three significant figures.
     assert plan.action_for("spend").params == {"decimals": 0}
@@ -89,14 +92,14 @@ def _visits(people: int) -> pd.DataFrame:
 
 
 def _singled_out_share(original: pd.DataFrame, released: pd.DataFrame) -> float:
-    """People whose city, sex and visit month match exactly one released row, their own."""
-    months = pd.to_datetime(released["visit_date"], errors="coerce").dt.to_period("M")
+    """People whose city, sex and visit year match exactly one released row, their own."""
+    years = pd.to_datetime(released["visit_date"], errors="coerce").dt.to_period("Y")
     hits = 0
     for index in range(len(original)):
         same = (released["cidade"] == original["cidade"][index]) & (
             released["sexo"] == original["sexo"][index]
         )
-        same &= months == original["visit_date"][index].to_period("M")
+        same &= years == original["visit_date"][index].to_period("Y")
         matches = np.flatnonzero(same.fillna(False).to_numpy())
         hits += int(len(matches) == 1 and matches[0] == index)
     return hits / len(original)
@@ -113,3 +116,16 @@ def test_an_event_date_with_city_and_sex_does_not_single_people_out_of_an_anonym
     assert "visit_date" in plan.quasi_identifiers
     if result.protection.level is ProtectionLevel.ANONYMIZED:
         assert _singled_out_share(visits, result.data) < 0.05
+
+
+def test_the_quick_start_table_keeps_most_ages_and_dates():
+    schema = load_schema(Path(__file__).parent.parent / "examples" / "customers_schema.json")
+    anonymizer = Anonymizer(secret_key=b"quick-start-test-key-not-real-01", seed=3)
+    customers = anonymizer.synthesize(2000, schema=schema)
+    plan = anonymizer.propose(customers, protection=Protection.ANONYMIZATION)
+
+    result = anonymizer.apply(customers, plan)
+
+    assert result.protection.level is ProtectionLevel.ANONYMIZED
+    assert result.data["age"].isna().mean() < 0.3
+    assert result.data["signup_date"].isna().mean() < 0.3

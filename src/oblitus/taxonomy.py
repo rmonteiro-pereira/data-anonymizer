@@ -49,6 +49,7 @@ class DataCategory(StrEnum):
     POSTAL_CODE = "postal_code"
     CITY = "city"
     DATE_OF_BIRTH = "date_of_birth"
+    REPORTING_PERIOD = "reporting_period"
     AGE = "age"
     GENDER = "gender"
     GEO_COORDINATE = "geo_coordinate"
@@ -117,6 +118,7 @@ _QUASI_IDENTIFIERS = {
     # Event dates (a visit, a purchase, an admission) single people out together with a
     # city or a sex, so they count like a birth date does.
     DataCategory.GENERIC_DATETIME,
+    DataCategory.REPORTING_PERIOD,
     DataCategory.AGE,
     DataCategory.GENDER,
     DataCategory.GEO_COORDINATE,

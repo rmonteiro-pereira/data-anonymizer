@@ -140,9 +140,23 @@ _ANONYMIZATION_RULES: dict[DataCategory, dict[Fidelity, Rule]] = {
         _STATISTICAL: Rule("truncate_date", {"unit": "year"}, "birth year only"),
         _PRIVACY: Rule("truncate_date", {"unit": "year"}, "birth year only"),
     },
+    # A month beside a few other details leaves most rows unique, so local suppression would
+    # blank most dates anyway; the year keeps nearly all of them.
     DataCategory.GENERIC_DATETIME: {
-        _STATISTICAL: Rule("truncate_date", {"unit": "month"}, "month only"),
+        _STATISTICAL: Rule("truncate_date", {"unit": "year"}, "year only"),
         _PRIVACY: Rule("truncate_date", {"unit": "year"}, "year only"),
+    },
+    # A month that is the time axis of a monthly table is already coarse, and the table's
+    # pattern over time lives in it.
+    DataCategory.REPORTING_PERIOD: {
+        _STATISTICAL: Rule("keep", note="already a month; counted as quasi-identifier"),
+        _PRIVACY: Rule("truncate_date", {"unit": "year"}, "year only"),
+    },
+    # Group means give nearly every group its own age, which leaves rows unique beside a date
+    # and gets the ages blanked. Five-year bands are shared by many people.
+    DataCategory.AGE: {
+        _STATISTICAL: Rule("bin_numeric", {"width": 5}, "ages in five-year bands"),
+        _PRIVACY: Rule("bin_numeric", {"width": 10}, "ages in decades"),
     },
     DataCategory.GEO_COORDINATE: {
         _STATISTICAL: Rule("round_numeric", {"decimals": 2}, "about one kilometre"),

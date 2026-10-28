@@ -12,9 +12,9 @@
 | Sensitivity | Meaning | Categories |
 |---|---|---|
 | direct identifier | Points at one person, or one company, on its own | email, phone, person_name, cpf, cnpj, ssn, credit_card, iban, ip_address, street_address, cnh, nis, health_card, voter_id, vehicle_registration, vehicle_plate, pix_key, invoice_key, national_id, imei, mac_address, crypto_wallet, organization, record_id, free_text_with_pii |
-| quasi-identifier | Identifies in combination | url, postal_code, city, date_of_birth, age, gender, geo_coordinate, nationality, marital_status, business_segment, floor_area |
+| quasi-identifier | Identifies in combination | url, postal_code, city, date_of_birth, generic_datetime (any other date), reporting_period (every date the first of a month), age, gender, geo_coordinate, nationality, marital_status, business_segment, floor_area |
 | sensitive | What an attacker wants to learn | income, health, special_category (race, religion, politics, union, sexual orientation, biometric, genetic), business_revenue, rent |
-| non-sensitive | Nothing found | generic_numeric, generic_category, generic_datetime, generic_text |
+| non-sensitive | Nothing found | generic_numeric, generic_category, generic_text |
 
 A CNPJ is kept as a direct identifier, because for a sole proprietor (MEI) it identifies a
 person under the LGPD.

@@ -60,7 +60,8 @@ plan.
 Two more steps read the whole table under anonymization:
 - A timestamp or number left untreated with a different value in nearly every row (90% or
   more distinct) is generalized, since it would single out rows. Statistical fidelity cuts
-  timestamps to the month and rounds numbers to three significant figures, which keeps their
+  timestamps to the day (event dates already keep only their year, see the table below) and
+  rounds numbers to three significant figures, which keeps their
   distribution. Privacy fidelity cuts to the year and uses quintile bands, and adds both
   columns to the quasi-identifiers.
 - Every other column with at most 50 distinct values joins the quasi-identifiers, so local
@@ -81,8 +82,9 @@ The other categories:
 | postal_code | keep 3 characters | keep 2 | keep 3 | keep 2 |
 | city | `keep` | `suppress_rare` below 10 | `keep` | `suppress_rare` below 10 |
 | date_of_birth | `date_shift` ±30 days, per entity | year only | year only | year only |
-| other dates (a visit, a purchase) | `keep`, counted as quasi-identifier | `keep`, counted | month only | year only |
-| age | `microaggregate` groups of 5 | decades | `microaggregate` groups of 5 | decades |
+| other dates (a visit, a purchase) | `keep`, counted as quasi-identifier | `keep`, counted | year only | year only |
+| reporting_period (a monthly table's month) | `keep`, counted | `keep`, counted | `keep` | year only |
+| age | `microaggregate` groups of 5 | decades | five-year bands | decades |
 | gender | `keep` | `keep` | `keep` | `keep` |
 | geo_coordinate | Gaussian noise about 1 km | 1 decimal | 2 decimals | 1 decimal |
 | income | `rank_swap` within 5% | quintiles | `microaggregate` groups of 5 | quintiles |
