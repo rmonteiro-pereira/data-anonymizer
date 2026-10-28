@@ -1,6 +1,6 @@
 [project]
 name = "oblitus"
-version = "0.4.0"
+version = "1.0.0"
 description = "Detect sensitive columns, propose and apply masking, noise and anonymization techniques, and generate synthetic data from a schema or a sample."
 readme = "README.md"
 license = "MIT"
@@ -20,7 +20,7 @@ keywords = [
     "duckdb",
 ]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
     "Operating System :: OS Independent",
@@ -45,6 +45,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+aim = ["mbi>=2,<3"]
 anonymeter = ["anonymeter>=1.1,<2"]
 duckdb = ["duckdb>=1.3,<2"]
 audio = ["sounddevice>=0.5"]

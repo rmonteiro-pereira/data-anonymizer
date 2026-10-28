@@ -8,7 +8,7 @@ spends, itemizes and refuses to exceed:
 - noisy **counts, sums and means per group** (`Anonymizer.aggregate_private`, `oblitus dp-aggregate`),
   computed with [OpenDP](https://opendp.org);
 - a **synthetic table** (`Anonymizer.synthesize_private`, `oblitus dp-synthesize`), built with the MST
-  algorithm.
+  algorithm, or with AIM (`oblitus[aim]`) when relations between three or more columns matter.
 
 ## What the privacy budget means
 
@@ -160,6 +160,60 @@ oblitus dp-synthesize customers.csv --domains domains.json --epsilon 2 --delta 1
 
 It prints the epsilon spent and the pairs measured.
 
+## Synthetic data with AIM
+
+AIM (McKenna, Mullins, Sheldon and Miklau, 2022) is the iterative successor of MST. MST measures
+one tree of column pairs, chosen once. AIM measures in rounds and puts the budget where the model
+is worst. It also measures groups of three or more columns, when the *workload* (the column
+groups the synthetic data should reproduce) lists them. It needs the `aim` extra, which installs
+Private-PGM (`mbi`) and JAX, about 350 MB, without PyTorch:
+
+```bash
+pip install "oblitus[aim]"
+```
+
+```python
+result = Anonymizer().synthesize_private(
+    patients,
+    domains,
+    PrivacyBudget.from_epsilon_delta(2.0, 1e-6),
+    method="aim",
+    workload=[("age", "region", "diagnosis")],  # every pair when omitted
+)
+result.measured_marginals  # every column group whose counts were measured
+```
+
+1. Spend a small share of the budget on noisy one-way counts of every column.
+2. Each round, pick with the exponential mechanism the workload group (or a sub-group of one)
+   whose counts the current model gets most wrong. The score is the weighted L1 error, less the
+   error the measurement noise alone would cause. Measure that group's counts with Gaussian
+   noise, and refit the model to every measurement so far with Private-PGM.
+3. When a measurement barely changes the model, halve the noise of later rounds. The last round
+   spends whatever is left, so the report always shows the whole declared budget spent.
+4. Sample rows from the fitted model. This costs no privacy.
+
+The mechanism (choices, noise and accounting) lives in oblitus and draws from your generator.
+Private-PGM only fits a model to numbers that are already noisy. Domains are your declared ones,
+and every round's choice and measurement is a line of the budget report.
+
+What to expect:
+
+- AIM is slower than MST: it refits the model every round, about 16 rounds per column at most.
+  A table of 10 columns takes minutes, not seconds.
+- With the default workload of pairs, AIM usually matches or beats MST at the same budget.
+  It is clearly better when a relation only shows in three columns at once (a value that depends
+  on the combination of two others). MST loses such a relation.
+- Workload groups with more than 10,000 cells are left out, because their counts would drown in
+  the noise. The model stops growing at 10,000,000 cells (`max_model_cells` in
+  `synthesize_aim`), which bounds memory.
+
+On the command line, add `--method aim`, and `--workload` once per group:
+
+```bash
+oblitus dp-synthesize patients.csv --domains domains.json --epsilon 2 --delta 1e-6 \
+  --method aim --workload age,region,diagnosis -o private.csv
+```
+
 ## Budget accounting
 
 `compose_budget(budget, spends)` is the single place where costs are added. Every noisy step is a `Spend`
@@ -179,13 +233,14 @@ within what you promise is up to you.
 
 - The privacy unit is one record added or removed. If one person has many records, either
   aggregate to one record per person first, or divide epsilon by the most records one person can have.
-- MST draws its noise with numpy's floating-point generators. Floating-point noise can in
+- MST and AIM draw their noise with numpy's floating-point generators. Floating-point noise can in
   principle leak through the least significant bits of the result (Mironov, 2012). The OpenDP aggregates
   use OpenDP's hardened noise. Prefer the OpenDP path for high-stakes releases.
 - A fixed `seed` makes the noise reproducible, which lets anyone who knows it subtract the
   noise. Use a seed for tests and demos only. Without a seed, the noise is fresh.
-- AIM, the iterative successor of MST, is not included. Its reference implementation
-  (`smartnoise-synth` on top of `mbi`) installs on Python 3.12, but pulls in PyTorch and JAX
-  (several gigabytes), learns each column's domain from the data rather than from a public declaration,
-  and spends its budget inside the library, where oblitus cannot itemize or refuse it. It stays on
-  the roadmap until it can run on public domains with the budget reported here.
+- AIM turns on JAX's double precision (`jax_enable_x64`) and turns off its compilation cache
+  when it first loads `mbi`. Both are process-wide JAX settings, so other JAX code in the same
+  process sees them.
+- oblitus implements AIM's mechanism itself rather than through `smartnoise-synth`. That
+  package pulls in PyTorch, learns each column's domain from the data, and keeps the budget
+  accounting where oblitus cannot itemize or refuse it.

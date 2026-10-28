@@ -172,6 +172,21 @@ def _build_parser() -> argparse.ArgumentParser:
         "--domains", type=Path, required=True, help="JSON file: public domain of each column"
     )
     private_synth_parser.add_argument("--rows", type=int, default=None)
+    private_synth_parser.add_argument(
+        "--method",
+        choices=["mst", "aim"],
+        default="mst",
+        help="mst measures one tree of column pairs; aim (needs oblitus[aim]) measures the "
+        "groups the model gets most wrong",
+    )
+    private_synth_parser.add_argument(
+        "--workload",
+        action="append",
+        default=None,
+        metavar="COLUMNS",
+        help="AIM only: comma-separated columns whose joint distribution matters; repeatable. "
+        "Default: every pair",
+    )
     _add_privacy_budget(private_synth_parser)
     private_synth_parser.set_defaults(handler=_dp_synthesize)
 
@@ -523,14 +538,27 @@ def _synthesize(anonymizer: Anonymizer, arguments: argparse.Namespace) -> None:
 def _dp_synthesize(anonymizer: Anonymizer, arguments: argparse.Namespace) -> None:
     frame = read_table(arguments.input).to_pandas()
     domains = json.loads(arguments.domains.read_text(encoding="utf-8"))
+    workload = None
+    if arguments.workload is not None:
+        workload = [_column_list(group) for group in arguments.workload]
     result = anonymizer.synthesize_private(
-        frame, domains, _privacy_budget(arguments), rows=arguments.rows
+        frame,
+        domains,
+        _privacy_budget(arguments),
+        rows=arguments.rows,
+        method=arguments.method,
+        workload=workload,
     )
     write_table(result.data, arguments.output)
     print(f"wrote {len(result.data)} rows to {arguments.output}")
     print(_budget_line(result.budget))
-    pairs = ", ".join(f"({first}, {second})" for first, second in result.tree_edges)
-    print(f"column pairs measured: {pairs or 'none'}")
+    joint = [group for group in result.measured_marginals if len(group) > 1]
+    groups = ", ".join(f"({', '.join(group)})" for group in joint)
+    print(f"column groups measured: {groups or 'none'}")
+
+
+def _column_list(text: str) -> list[str]:
+    return [name.strip() for name in text.split(",") if name.strip()]
 
 
 def _check_synthetic(anonymizer: Anonymizer, arguments: argparse.Namespace) -> None:

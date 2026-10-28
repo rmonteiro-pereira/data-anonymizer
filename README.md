@@ -42,14 +42,6 @@ and how far each record moved](https://raw.githubusercontent.com/rmonteiro-perei
 | Challenges | A schema `question` produces train and test files and a private answer key. The key lists the true drivers, the correlated-but-not-causal columns and the distractors, plus the best score any model can reach (RMSE/R², or accuracy/AUC/log loss). Columns that leak the target are flagged. With a `treatment`, the key also holds the true average, treated-only and per-group effects, the bias of the naive comparison, the confounders, mediators, colliders and instruments, and a valid adjustment set. Optional test-set drift (covariate or concept) and label noise on the train or test labels, both reported in the key. Panels of entities over periods (entity-level and period-level columns, `lag`, AR series, seasonality, regimes) with a time split that holds out the last periods |
 | Interfaces | Python API (`Anonymizer`), editable JSON plans and schemas, the `oblitus` CLI, CSV and Parquet, custom techniques |
 
-### Roadmap
-
-Planned, not yet implemented:
-
-- **Differential privacy**: AIM synthesis. Its reference package pulls in PyTorch and JAX,
-  learns column domains from the data and keeps its budget accounting inside the library (see
-  [docs/differential-privacy.md](https://github.com/rmonteiro-pereira/oblitus/blob/main/docs/differential-privacy.md#limits)).
-
 ## Install
 
 Python 3.12 or later:
@@ -64,6 +56,8 @@ pip install "oblitus[audio]" "oblitus[camera]"
 pip install "oblitus[spark]"
 # with OpenDP, for differentially private aggregates:
 pip install "oblitus[opendp]"
+# AIM differentially private synthesis (Private-PGM and JAX, no PyTorch):
+pip install "oblitus[aim]"
 # with attack-based risk checks (Anonymeter):
 pip install "oblitus[anonymeter]"
 # more countries' identifiers and international phone numbers:
@@ -190,7 +184,7 @@ locale for fake values, such as `pt_BR`; default `en_US`). Tables can be `.csv` 
 | `oblitus explore-noise INPUT --column NAME -o PAGE.html [--band SD] [--max-rows N]` | Writes the interactive noise explorer for one numeric column. Columns longer than `N` values (default 200,000) are explored on a random sample |
 | `oblitus infer-schema INPUT [--fidelity F] [-o SCHEMA]` | Learns a generation schema from a table |
 | `oblitus synthesize -o OUTPUT [--rows N] [--schema SCHEMA] [--reference INPUT] [--fidelity F]` | Generates a synthetic table. A schema with related tables writes one CSV per table into the folder `OUTPUT` |
-| `oblitus dp-synthesize INPUT --domains DOMAINS.json -o OUTPUT (--epsilon E [--delta D] \| --rho R) [--rows N]` | Generates a differentially private synthetic copy with MST. The JSON file declares each column's public domain. Needs `--delta` or `--rho` (Gaussian noise). Prints the budget spent |
+| `oblitus dp-synthesize INPUT --domains DOMAINS.json -o OUTPUT (--epsilon E [--delta D] \| --rho R) [--rows N] [--method mst\|aim] [--workload COLUMNS ...]` | Generates a differentially private synthetic copy with MST, or with AIM (`oblitus[aim]`), which measures the column groups the model gets most wrong. `--workload a,b,c` names a group whose joint distribution matters (AIM only, repeatable). The JSON file declares each column's public domain. Needs `--delta` or `--rho` (Gaussian noise). Prints the budget spent and the column groups measured |
 | `oblitus check-synthetic SYNTHETIC --real TRAIN [--holdout HOLDOUT] [--report REPORT.json]` | Checks whether a synthetic table memorized its training records: exact copies, near and partial copies of the most isolated training records, distance to the closest real record and, with a holdout the generator never saw, the DCR share and a membership-inference attack. Prints a verdict and exits 3 on a finding. Thresholds are in [docs/synthesis.md](https://github.com/rmonteiro-pereira/oblitus/blob/main/docs/synthesis.md#checking-a-synthetic-table-for-memorization) |
 | `oblitus dp-aggregate INPUT --spec SPEC.json -o OUTPUT (--epsilon E [--delta D] \| --rho R) [--confidence C] [--accuracy-output FILE]` | Releases noisy counts, sums and means per group with OpenDP (`oblitus[opendp]`). The JSON spec declares each group's values and each sum's bounds. Also writes the interval half-width of every value |
 | `oblitus challenge --schema SCHEMA [--rows N] -o FOLDER` | Generates a data-science challenge: `train.csv`, `test.csv`, `QUESTION.md` (a task description written from the schema), one CSV per child table for related-table schemas, and `answers/` with the answer key |
@@ -219,7 +213,7 @@ Exit codes:
 - [docs/synthesis.md](https://github.com/rmonteiro-pereira/oblitus/blob/main/docs/synthesis.md): schemas, planted patterns, synthesis from a
   sample, and data-science challenges
 - [docs/differential-privacy.md](https://github.com/rmonteiro-pereira/oblitus/blob/main/docs/differential-privacy.md): what epsilon means,
-  public bounds and domains, DP aggregates, MST synthesis and the budget report
+  public bounds and domains, DP aggregates, MST and AIM synthesis and the budget report
 - [ARCHITECTURE.md](https://github.com/rmonteiro-pereira/oblitus/blob/main/ARCHITECTURE.md): C4-style system views, how the code is organised and
   where to change things
 - [CONTRIBUTING.md](https://github.com/rmonteiro-pereira/oblitus/blob/main/CONTRIBUTING.md): the project's standards for code, design, tests, docs,

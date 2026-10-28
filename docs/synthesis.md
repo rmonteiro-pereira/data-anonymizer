@@ -209,8 +209,8 @@ add patterns.
 ## With a differential-privacy guarantee
 
 `Anonymizer.synthesize_private()` and `oblitus dp-synthesize` learn a reference table under a total
-ε (and δ) budget with MST, and return the synthetic table, the budget spent and the column pairs
-the model kept. It differs from the two fidelities above in what it promises: the release is
+ε (and δ) budget with MST, or with AIM (`method="aim"`, the `aim` extra), and return the
+synthetic table, the budget spent and the column groups the model measured. It differs from the two fidelities above in what it promises: the release is
 differentially private, so it protects every record against any attacker, and the cost is
 accuracy. The domain of every column (its values, or its bounds and bins) must be declared, not
 read from the data. See [differential-privacy.md](differential-privacy.md).

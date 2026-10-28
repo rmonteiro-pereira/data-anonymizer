@@ -92,6 +92,18 @@ def test_mst_at_a_small_epsilon_passes(train, holdout):
     assert report.passed, report.findings
 
 
+@pytest.mark.parametrize("epsilon", [1.0, 20.0])
+def test_aim_passes_at_a_small_and_a_moderate_epsilon(train, holdout, epsilon):
+    pytest.importorskip("mbi")
+    anonymizer = Anonymizer(seed=7)
+    budget = PrivacyBudget.from_epsilon_delta(epsilon, 1e-6)
+    synthetic = anonymizer.synthesize_private(train, DOMAINS, budget, rows=800, method="aim").data
+
+    report = anonymizer.check_synthetic(synthetic, train, holdout)
+
+    assert report.passed, report.findings
+
+
 def test_without_a_holdout_only_copies_and_distances_are_reported(train):
     report = Anonymizer(seed=3).check_synthetic(train.head(100), train)
 

@@ -5,7 +5,7 @@ import secrets
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 import pandas as pd
@@ -25,6 +25,7 @@ from oblitus.differential_privacy import (
     PrivateSynthesis,
     Statistic,
     private_aggregates,
+    synthesize_aim,
     synthesize_mst,
 )
 from oblitus.engines import (
@@ -428,18 +429,31 @@ class Anonymizer:
         domains: Mapping[str, Any],
         budget: PrivacyBudget,
         rows: int | None = None,
+        *,
+        method: Literal["mst", "aim"] = "mst",
+        workload: Sequence[Sequence[str]] | None = None,
     ) -> PrivateSynthesis:
-        """Synthesize a copy of `reference` under differential privacy, with MST.
+        """Synthesize a copy of `reference` under differential privacy, with MST or AIM.
 
         `domains` gives every released column's public domain: a list of values, or the
         lower and upper bounds and bin count of a number. They must come from public
         knowledge, not from the data. The result carries the table, the budget report and
-        the column pairs the model measured. Without `rows`, the row count is the noisy one.
+        the column groups the model measured. Without `rows`, the row count is the noisy one.
+
+        MST measures one tree of column pairs. AIM (the `aim` extra) measures, round by round,
+        the groups the model gets most wrong among `workload`, every pair by default; list
+        groups of three or more columns when their joint distribution matters.
 
         A fixed `seed` makes the noise reproducible, so anyone who knows it can remove the
         noise: use it for tests and demos only. Without a seed, the noise is fresh.
         """
         rng = np.random.default_rng(self._seed)
+        if method == "aim":
+            return synthesize_aim(reference, domains, budget, rng, rows, workload)
+        if method != "mst":
+            raise SchemaError(f"unknown synthesis method {method!r}; use 'mst' or 'aim'")
+        if workload is not None:
+            raise SchemaError("only AIM takes a workload; MST always measures one tree of pairs")
         return synthesize_mst(reference, domains, budget, rng, rows)
 
     def check_synthetic(

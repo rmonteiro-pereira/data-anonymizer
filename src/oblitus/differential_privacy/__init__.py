@@ -1,6 +1,7 @@
 """Differential privacy: noisy aggregates, synthetic data, and the budget that pays for them."""
 
 from oblitus.differential_privacy.aggregates import PrivateAggregates, Statistic, private_aggregates
+from oblitus.differential_privacy.aim_synthesis import synthesize_aim
 from oblitus.differential_privacy.budget import (
     BudgetReport,
     PrivacyBudget,
@@ -25,5 +26,6 @@ __all__ = [
     "epsilon_from_rho",
     "private_aggregates",
     "rho_from_epsilon_delta",
+    "synthesize_aim",
     "synthesize_mst",
 ]

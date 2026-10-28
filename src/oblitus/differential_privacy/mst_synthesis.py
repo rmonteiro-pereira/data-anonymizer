@@ -26,7 +26,12 @@ from oblitus.differential_privacy.budget import (
     exponential_mechanism_spend,
     gaussian_spend,
 )
-from oblitus.differential_privacy.domains import CategoricalDomain, NumericDomain, parse_domain
+from oblitus.differential_privacy.domains import (
+    CategoricalDomain,
+    NumericDomain,
+    parse_domain,
+    released_columns,
+)
 from oblitus.differential_privacy.tree_model import NoisyMarginals, TreeModel, fit_tree_model
 from oblitus.errors import PrivacyBudgetError, SchemaError
 
@@ -39,13 +44,15 @@ _PHASE_SHARE = 1 / 3
 class PrivateSynthesis:
     """A synthetic table and what it cost.
 
-    `budget` lists every noisy release; `tree_edges` names the column pairs whose joint
-    distribution was measured. Pairs not in the tree are only as correlated as the tree implies.
+    `budget` lists every noisy release. `measured_marginals` names every group of columns whose
+    joint counts were measured; groups not listed are only as related as the model implies.
+    `tree_edges` holds the measured column pairs of an MST tree, and is empty for AIM.
     """
 
     data: pd.DataFrame
     budget: BudgetReport
     tree_edges: tuple[tuple[str, str], ...]
+    measured_marginals: tuple[tuple[str, ...], ...] = ()
 
 
 def synthesize_mst(
@@ -63,7 +70,7 @@ def synthesize_mst(
     if budget.is_pure or budget.rho is None:
         raise PrivacyBudgetError("MST uses Gaussian noise; declare delta (or rho) with epsilon")
     typed_domains = {name: parse_domain(value) for name, value in domains.items()}
-    names = _checked_columns(frame, typed_domains)
+    names = released_columns(frame, typed_domains)
     sizes = [typed_domains[name].size for name in names]
     _check_pair_sizes(names, sizes)
     codes = [typed_domains[name].encode(name, frame[name]) for name in names]
@@ -79,18 +86,10 @@ def synthesize_mst(
     row_count = rows if rows is not None else int(round(model.estimated_rows))
     data = _decode_rows(model, row_count, names, typed_domains, rng)
     named_edges = tuple((names[first], names[second]) for first, second in edges)
-    return PrivateSynthesis(data=data, budget=report, tree_edges=named_edges)
-
-
-def _checked_columns(
-    frame: pd.DataFrame, domains: Mapping[str, CategoricalDomain | NumericDomain]
-) -> list[str]:
-    if not domains:
-        raise SchemaError("declare a public domain for at least one column")
-    missing = [name for name in domains if name not in frame.columns]
-    if missing:
-        raise SchemaError(f"domains name columns that are not in the table: {missing}")
-    return list(domains)
+    measured = tuple((name,) for name in names) + named_edges
+    return PrivateSynthesis(
+        data=data, budget=report, tree_edges=named_edges, measured_marginals=measured
+    )
 
 
 def _check_pair_sizes(names: list[str], sizes: list[int]) -> None:

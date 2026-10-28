@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.0.0
+
+- **AIM synthesis.** `synthesize_private(..., method="aim")` and `oblitus dp-synthesize --method aim`
+  build a differentially private synthetic table with AIM, the iterative successor of MST. Each
+  round measures the column group the model gets most wrong; a `workload` (`--workload a,b,c`)
+  names groups of three or more columns whose joint distribution matters. The mechanism and its
+  budget accounting are in oblitus, on the declared domains. Private-PGM fits the model. It
+  needs the new `aim` extra (`mbi` and JAX, no PyTorch).
+- `PrivateSynthesis.measured_marginals` lists every column group a synthesizer measured, for
+  MST and AIM. `oblitus dp-synthesize` prints "column groups measured" instead of "column pairs
+  measured".
+- The roadmap is complete.
+
 ## 0.4.0
 
 - **Short labels with a name are person names.** A column of cells such as `Paciente: Ana Silva`

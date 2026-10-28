@@ -8,7 +8,7 @@ privacy.
 """
 
 import math
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Annotated, Any, Literal
 
 import numpy as np
@@ -113,6 +113,18 @@ def parse_domain(value: Any) -> CategoricalDomain | NumericDomain:
     if isinstance(value, Sequence) and not isinstance(value, str):
         return CategoricalDomain(values=list(value))
     return _DOMAIN_ADAPTER.validate_python(value)
+
+
+def released_columns(
+    frame: pd.DataFrame, domains: Mapping[str, CategoricalDomain | NumericDomain]
+) -> list[str]:
+    """The columns a synthesizer releases: every column with a declared domain, in order."""
+    if not domains:
+        raise SchemaError("declare a public domain for at least one column")
+    missing = [name for name in domains if name not in frame.columns]
+    if missing:
+        raise SchemaError(f"domains name columns that are not in the table: {missing}")
+    return list(domains)
 
 
 def _refuse_missing(column: str, series: pd.Series) -> None:
