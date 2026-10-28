@@ -66,6 +66,12 @@ def linkage_rate(original: np.ndarray, released: np.ndarray) -> float:
     """
     original = np.asarray(original, dtype=float)
     released = np.asarray(released, dtype=float)
+    # An infinite value has no nearest neighbour to measure; it is left out, not counted.
+    both_finite = np.isfinite(original) & np.isfinite(released)
+    if not both_finite.any():
+        return 0.0
+    original = original[both_finite]
+    released = released[both_finite]
     ordered = np.sort(original)
     positions = np.searchsorted(ordered, released)
     below = ordered[np.clip(positions - 1, 0, len(ordered) - 1)]

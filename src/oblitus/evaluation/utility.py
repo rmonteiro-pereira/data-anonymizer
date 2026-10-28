@@ -81,7 +81,7 @@ def _compare_column(column: str, before: pd.Series, after: pd.Series) -> ColumnU
 
 def _compare_filled_cells(column: str, before: pd.Series, after: pd.Series) -> ColumnUtility:
     if _is_numeric(before) and _is_numeric(after):
-        return _compare_numeric(column, before.dropna(), after.dropna())
+        return _compare_numeric(column, _finite(before), _finite(after))
     if pd.api.types.is_datetime64_any_dtype(before) and pd.api.types.is_datetime64_any_dtype(after):
         before_days = as_nanoseconds(before.dropna()) / _NANOSECONDS_PER_DAY
         after_days = as_nanoseconds(after.dropna()) / _NANOSECONDS_PER_DAY
@@ -92,6 +92,12 @@ def _compare_filled_cells(column: str, before: pd.Series, after: pd.Series) -> C
         comparison="categorical",
         total_variation=_total_variation(before, after),
     )
+
+
+def _finite(values: pd.Series) -> pd.Series:
+    """Filled, finite cells: one infinite value would make every statistic infinite."""
+    numbers = values.dropna().astype(float)
+    return numbers[np.isfinite(numbers)]
 
 
 def _mean_shift_in_std(before: pd.Series, after: pd.Series) -> float | None:

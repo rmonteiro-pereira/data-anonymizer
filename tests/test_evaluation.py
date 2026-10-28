@@ -78,3 +78,18 @@ def test_a_date_shift_is_measured_in_standard_deviations_not_against_1970():
 
     # Half a year on a one-year spread of about 105 days is close to 1.7 deviations.
     assert report.for_column("day").mean_change == pytest.approx(182 / 105.5, rel=0.02)
+
+
+def test_a_person_in_several_small_groups_is_counted_once():
+    frame = pd.DataFrame(
+        {
+            "person": ["a"] * 5 + ["b", "c"],
+            "zip": ["1", "2", "3", "4", "5", "6", "6"],
+            "dx": list("xyxyxyx"),
+        }
+    )
+
+    report = assess_privacy(frame, ["zip"], ["dx"], k_target=5, entity_column="person")
+
+    assert report.rows_below_target == 3
+    assert report.share_below_target == 1.0

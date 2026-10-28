@@ -25,6 +25,9 @@ _TRUNCATION_UNITS = {"year": "1y", "month": "1mo", "day": "1d"}
 _ALL_UNITS = (*_TRUNCATION_UNITS, "week")
 _DAYS_TO_MONDAY = range(-6, 1)
 
+# Bin edges are rounded to this many decimals, far below any width a person would choose.
+_EDGE_DECIMALS = 9
+
 
 def bin_numeric(
     table: Table,
@@ -73,9 +76,11 @@ def _bin_edges(
 
     low, high = found["low"], found["high"]
     if width is not None:
-        upper = (high // width + 1) * width
-        # Half a width past the top edge so floating-point steps never drop it.
-        return np.arange(low // width * width, upper + width / 2, width)
+        # Each edge is a whole multiple of the width, rounded off, so 3 × 0.1 is the edge 0.3
+        # rather than 0.30000000000000004, and the value 0.3 falls in [0.3, 0.4).
+        first = math.floor(low / width)
+        last = math.floor(high / width) + 1
+        return np.round(np.arange(first, last + 1) * width, _EDGE_DECIMALS)
     if use_quantiles:
         inner = [found[f"quantile_{position}"] for position in range(len(fractions))]
         return np.unique(np.array([low, *inner, high]))

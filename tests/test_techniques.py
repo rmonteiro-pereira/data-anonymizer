@@ -7,6 +7,7 @@ from oblitus.techniques import BUILTIN_TECHNIQUES
 from oblitus.techniques.catalogue import apply_to_series
 from oblitus.techniques.generalization import (
     bin_numeric,
+    round_numeric,
     suppress_rare,
     top_bottom_code,
     truncate_date,
@@ -29,6 +30,7 @@ from oblitus.techniques.pseudonymization import (
     scramble_characters,
     surrogate,
 )
+from oblitus.techniques.rescaling import normalize
 
 
 def test_redact_keeps_missing_values_missing(run, context):
@@ -232,3 +234,37 @@ def test_unknown_parameters_are_rejected_for_every_builtin():
     for technique in BUILTIN_TECHNIQUES.values():
         with pytest.raises(TypeError):
             technique.check_parameters({"not_a_parameter": 1})
+
+
+def test_fixed_width_bins_put_a_value_on_an_edge_in_the_bin_it_opens(run, context):
+    values = pd.Series([0.3, 0.30000000000000004, 0.1, 0.25])
+
+    result = run(bin_numeric, values, context, width=0.1)
+
+    assert result.tolist() == ["[0.3, 0.4)", "[0.3, 0.4)", "[0.1, 0.2)", "[0.2, 0.3)"]
+
+
+def test_rounding_keeps_the_largest_float_below_a_half_down_and_gives_no_negative_zero(
+    run, context
+):
+    values = pd.Series([0.49999999999999994, 0.5, -0.4, -0.5, 2.5])
+
+    result = run(round_numeric, values, context)
+
+    assert result.tolist() == [0.0, 1.0, 0.0, -1.0, 3.0]
+    assert not np.signbit(result.iloc[2])
+
+
+@pytest.mark.parametrize(
+    ("technique", "params"), [(gaussian_noise, {}), (normalize, {"method": "zscore"})]
+)
+def test_one_infinite_cell_stays_infinite_and_leaves_the_others_alone(
+    run, context, technique, params
+):
+    values = pd.Series(np.r_[np.random.default_rng(0).normal(10, 2, 50), np.inf])
+
+    result = run(technique, values, context, **params)
+
+    assert result.notna().all()
+    assert np.isinf(result.iloc[-1])
+    assert np.isfinite(result.iloc[:-1]).all()

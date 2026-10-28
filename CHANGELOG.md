@@ -53,6 +53,13 @@ A review of the library's statistical claims, measured by simulation, led to the
   distribution`. Proposal reasons no longer say "shape kept" for an index or rank, or "3
   significant figures kept" where small values round to zero. The linkage problem text gives
   the number of rows it compared.
+- With an `entity_column`, a person in several small quasi-identifier groups is counted once
+  among the people below the target. The share below the target could exceed 100%.
+- `bin_numeric` with a fixed width puts a value on an edge in the bin that edge opens (0.3 in
+  `[0.3, 0.4)` with a width of 0.1); the edges were float sums such as 0.30000000000000004.
+- `round_numeric` rounds the largest float below 0.5 down, and gives 0 instead of -0.0.
+- One infinite cell no longer turns a column into NaN under `gaussian_noise` or `normalize`:
+  the statistics leave infinite cells out, and the cell itself stays infinite.
 - The docs now state: randomized response's estimator; suppression's bias on the filled cells;
   that DP accuracy covers the clamped values; noise mass in empty DP bins; the conservative
   zCDP conversion; date shifts break calendar alignment; truncation moves the declared mean;

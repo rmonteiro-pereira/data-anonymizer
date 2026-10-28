@@ -27,6 +27,10 @@ from oblitus.engines import WorkingFrame, as_working_frame, collect, first_row
 
 GROUP_SIZE = "__da_group_size"
 _ROWS = "__da_rows"
+_GROUP_KEY = "__da_group_key"
+# Separators no real cell holds, so two different groups never share a key.
+_KEY_SEPARATOR = "\x1f"
+_BLANK_MARK = "\x00"
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,12 +114,15 @@ def assess_privacy(
             *[nw.col(attribute).min().alias(attribute) for attribute in scored],
         )
     )
+    below = int(summary["below"])
+    if entity is not None:
+        below = _entities_in_small_groups(working, columns, entity, k_target)
     return PrivacyReport(
         quasi_identifiers=columns,
         k_anonymity=int(summary["smallest"]),
         k_target=k_target,
-        rows_below_target=int(summary["below"]),
-        share_below_target=int(summary["below"]) / total,
+        rows_below_target=below,
+        share_below_target=below / total,
         l_diversity={attribute: int(summary[attribute]) for attribute in scored},
         t_closeness=t_closeness(working, columns, scored) if t_target is not None else {},
         t_target=t_target,
@@ -166,6 +173,28 @@ def _entity_to_count(
         return None
     distinct = first_row(frame.select(distinct_present(entity_column).alias("entities")))
     return entity_column if int(distinct["entities"]) >= 2 else None
+
+
+def _entities_in_small_groups(
+    working: WorkingFrame, columns: Sequence[str], entity: str, k_target: int
+) -> int:
+    """Distinct entities with at least one row in a group smaller than the target.
+
+    Summing group sizes would count a person once per small group they appear in, and could
+    report more people below the target than the table holds. The groups are joined on one
+    text key, because a join skips the blank cells local suppression leaves.
+    """
+    parts = [nw.col(column).cast(nw.String).fill_null(_BLANK_MARK) for column in columns]
+    key = nw.concat_str(parts, separator=_KEY_SEPARATOR).alias(_GROUP_KEY)
+    keyed = working.lazy().with_columns(key)
+    small = (
+        keyed.group_by(_GROUP_KEY)
+        .agg(nw.col(entity).n_unique().alias(GROUP_SIZE))
+        .filter(nw.col(GROUP_SIZE) < k_target)
+        .select(_GROUP_KEY)
+    )
+    inside = keyed.join(small, on=_GROUP_KEY, how="inner")
+    return int(first_row(inside.select(nw.col(entity).n_unique().alias("entities")))["entities"])
 
 
 def _group_size(entity_column: str | None) -> nw.Expr:

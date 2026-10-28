@@ -7,6 +7,7 @@ from oblitus.techniques.context import TechniqueContext
 from oblitus.techniques.date_expressions import as_datetime_expression, shift_days
 from oblitus.techniques.numeric_expressions import (
     as_number,
+    finite_only,
     in_original_type,
     laplace,
     standard_normal,
@@ -29,7 +30,8 @@ def gaussian_noise(
     a factor of 1 / sqrt(1 + relative_scale squared).
     """
     values = as_number(column)
-    original = table.statistics(mean=values.mean(), std=values.std(ddof=0), present=values.count())
+    finite = finite_only(values)
+    original = table.statistics(mean=finite.mean(), std=finite.std(ddof=0), present=finite.count())
     if original["present"] < 2:
         return nw.col(column)
 
@@ -38,10 +40,10 @@ def gaussian_noise(
     noisy = nw.col(table.add(values + standard_normal(first, second) * noise_scale))
 
     if preserve_variance:
-        noisy_std = table.statistics(std=noisy.std(ddof=0))["std"]
+        noisy_std = table.statistics(std=finite_only(noisy).std(ddof=0))["std"]
         if noisy_std > 0:
             scale_back = original["std"] / noisy_std
-            noisy = (noisy - noisy.mean()) * scale_back + original["mean"]
+            noisy = (noisy - finite_only(noisy).mean()) * scale_back + original["mean"]
     return in_original_type(noisy, table.dtype(column))
 
 

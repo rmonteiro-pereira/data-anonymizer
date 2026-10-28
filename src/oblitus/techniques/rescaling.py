@@ -15,7 +15,12 @@ import narwhals as nw
 
 from oblitus.table import Table
 from oblitus.techniques.context import TechniqueContext
-from oblitus.techniques.numeric_expressions import as_number, per_group, round_half_away
+from oblitus.techniques.numeric_expressions import (
+    as_number,
+    finite_only,
+    per_group,
+    round_half_away,
+)
 
 SHAPE_KEEPING_METHODS = ("robust", "zscore", "minmax")
 _SHAPE_CHANGING_METHODS = ("index", "rank", "log_ratio", "growth")
@@ -85,22 +90,25 @@ def _rescale(values: nw.Expr, method: str, group: str | None) -> nw.Expr:
     def within(aggregate: nw.Expr) -> nw.Expr:
         return per_group(aggregate, group)
 
+    # The statistics leave infinite cells out, so one of them does not blank the column.
+    finite = finite_only(values)
+
     if method == "robust":
-        spread = within(values.quantile(0.75, "linear") - values.quantile(0.25, "linear"))
-        median = within(values.quantile(0.5, "linear"))
-        return (values - median) / _nonzero(spread, within(values.std(ddof=0)))
+        spread = within(finite.quantile(0.75, "linear") - finite.quantile(0.25, "linear"))
+        median = within(finite.quantile(0.5, "linear"))
+        return (values - median) / _nonzero(spread, within(finite.std(ddof=0)))
     if method == "zscore":
-        return (values - within(values.mean())) / _nonzero(within(values.std(ddof=0)))
+        return (values - within(finite.mean())) / _nonzero(within(finite.std(ddof=0)))
     if method == "minmax":
-        lowest = within(values.min())
-        return (values - lowest) / _nonzero(within(values.max()) - lowest)
+        lowest = within(finite.min())
+        return (values - lowest) / _nonzero(within(finite.max()) - lowest)
     if method == "index":
         # Float division turns a flat series into 100 and 100.00000000000001; the last digits
         # carry no meaning, and they would make equal values look different.
-        return round_half_away(values / within(values.mean()) * 100, _INDEX_DECIMALS)
+        return round_half_away(values / within(finite.mean()) * 100, _INDEX_DECIMALS)
     if method == "rank":
         return within(values.rank("average")) / within(values.count())
-    return values.log() - within(values.log().mean())
+    return values.log() - within(finite_only(values.log()).mean())
 
 
 def _nonzero(spread: nw.Expr, fallback: nw.Expr | None = None) -> nw.Expr:

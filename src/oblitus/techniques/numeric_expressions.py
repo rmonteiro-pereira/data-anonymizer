@@ -11,6 +11,15 @@ def as_number(column: str) -> nw.Expr:
     return nw.col(column).cast(nw.Float64)
 
 
+def finite_only(values: nw.Expr) -> nw.Expr:
+    """The values with infinities left out, for column statistics.
+
+    One infinite cell makes a mean or a standard deviation infinite, which would turn every
+    other value of the column into NaN. The infinite cell itself stays infinite.
+    """
+    return nw.when(values.is_finite()).then(values)
+
+
 def round_half_away(expression: nw.Expr, decimals: int = 0) -> nw.Expr:
     """Round to `decimals` places, with halves going away from zero on every engine.
 
@@ -18,8 +27,15 @@ def round_half_away(expression: nw.Expr, decimals: int = 0) -> nw.Expr:
     release different values depending on where the table lives.
     """
     factor = float(10**decimals)
-    magnitude = (expression.abs() * factor + 0.5).floor() / factor
-    return nw.when(expression < 0).then(-magnitude).otherwise(magnitude)
+    scaled = expression.abs() * factor
+    whole = scaled.floor()
+    # Comparing the fraction with a half, rather than flooring value + 0.5, keeps the
+    # largest float below 0.5 from rounding up: adding 0.5 to it rounds to exactly 1.
+    rounds_up = (scaled - whole) >= 0.5
+    magnitude = nw.when(rounds_up).then(whole + 1).otherwise(whole) / factor
+    # A negative value that rounds to zero gives zero, not -0.0.
+    is_negative = (expression < 0) & (magnitude > 0)
+    return nw.when(is_negative).then(-magnitude).otherwise(magnitude)
 
 
 def in_original_type(expression: nw.Expr, dtype: Any) -> nw.Expr:
