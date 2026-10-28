@@ -9,9 +9,9 @@ AIM spends a zCDP budget in rounds:
 
 The workload is the list of column groups the synthetic data should reproduce: every pair of
 columns by default. Unlike MST, AIM measures groups of three or more columns when the workload
-asks for them, and spends the budget where the model is worst. Only the counts and the round
-choices touch the data, and each one is recorded in the budget report. Domains are public, so
-they are never derived from the data.
+asks for them, and spends the budget where the model is worst. Once the table passes its domain
+checks, only the counts and the round choices touch the data, and each one is recorded in the
+budget report. Domains are public, so they are never derived from the data.
 """
 
 import itertools

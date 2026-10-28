@@ -142,6 +142,21 @@ def test_a_value_outside_a_declared_domain_is_refused_not_dropped(customers):
         Anonymizer(seed=8).synthesize_private(odd, DOMAINS, SMALL_BUDGET)
 
 
+@pytest.mark.parametrize("method", ["mst", "aim"])
+def test_a_text_value_in_a_numeric_column_is_refused_without_naming_it(customers, method):
+    if method == "aim":
+        pytest.importorskip("mbi")
+    odd = customers.assign(age=customers["age"].astype(object))
+    odd.loc[3, "age"] = "CONFIDENTIAL_DIAGNOSIS"
+
+    with pytest.raises(SchemaError, match="not numbers") as refusal:
+        Anonymizer(seed=9).synthesize_private(odd, DOMAINS, SMALL_BUDGET, method=method)
+
+    assert "CONFIDENTIAL" not in str(refusal.value)
+    assert refusal.value.__cause__ is None
+    assert refusal.value.__suppress_context__
+
+
 def test_missing_values_are_refused(customers):
     gappy = customers.assign(age=customers["age"].astype(float).mask(customers.index == 0))
 

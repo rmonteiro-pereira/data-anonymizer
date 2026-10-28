@@ -236,6 +236,10 @@ within what you promise is up to you.
 - MST and AIM draw their noise with numpy's floating-point generators. Floating-point noise can in
   principle leak through the least significant bits of the result (Mironov, 2012). The OpenDP aggregates
   use OpenDP's hardened noise. Prefer the OpenDP path for high-stakes releases.
+- A refusal is not private. A missing value, a value outside a declared domain or text in a
+  numeric column stops the release with an error that names the column and the kind of
+  problem, never the value. Whether the call succeeds still tells whoever sees it that some
+  record breaks the schema, so clean the data and keep errors inside the data owner's process.
 - A fixed `seed` makes the noise reproducible, which lets anyone who knows it subtract the
   noise. Use a seed for tests and demos only. Without a seed, the noise is fresh.
 - AIM turns on JAX's double precision (`jax_enable_x64`) and turns off its compilation cache

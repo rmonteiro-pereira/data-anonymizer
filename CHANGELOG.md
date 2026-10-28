@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.1
+
+- **A numeric domain no longer echoes a private value in its error.** Text in a column declared
+  numeric (for MST, AIM or any release with a `NumericDomain`) raised pandas' own error, which
+  quotes the offending value. It now raises `SchemaError` naming only the column, with the
+  original error left out of the traceback.
+
 ## 1.0.0
 
 - **AIM synthesis.** `synthesize_private(..., method="aim")` and `oblitus dp-synthesize --method aim`

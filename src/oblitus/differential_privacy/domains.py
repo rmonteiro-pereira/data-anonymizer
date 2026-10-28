@@ -85,7 +85,14 @@ class NumericDomain(BaseModel):
     def encode(self, column: str, series: pd.Series) -> np.ndarray:
         """Clip to the bounds and map each value to its bin."""
         _refuse_missing(column, series)
-        values = pd.to_numeric(series).to_numpy(dtype=float)
+        try:
+            values = pd.to_numeric(series).to_numpy(dtype=float)
+        except (TypeError, ValueError):
+            # pandas names the offending value in its message, and that value is private.
+            # `from None` keeps it out of the traceback as well.
+            raise SchemaError(
+                f"column {column!r} holds values that are not numbers; its domain is numeric"
+            ) from None
         clipped = np.clip(values, self.lower, self.upper)
         position = (clipped - self.lower) / self._span()
         return np.minimum((position * self.bins).astype(np.int64), self.bins - 1)
