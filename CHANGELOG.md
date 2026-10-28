@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.0
 
 - **Short labels with a name are person names.** A column of cells such as `Paciente: Ana Silva`
   (a listed name and at most one other word) is classed as a person name, so the default
