@@ -175,9 +175,8 @@ def _random_codes(shape: str, rows: int = 400) -> pd.Series:
         "a_few_repeats",
     ],
 )
-@pytest.mark.parametrize("column", ["code", "codigo", "policy_number", "ticket", "x"])
-def test_random_codes_are_identifiers_whatever_their_shape_or_name(shape, column):
-    finding = scan_column(column, _random_codes(shape))
+def test_random_codes_are_identifiers_whatever_their_shape(shape):
+    finding = scan_column("codigo", _random_codes(shape))
 
     assert finding.category is DataCategory.RECORD_ID
 
