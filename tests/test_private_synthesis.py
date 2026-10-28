@@ -154,7 +154,7 @@ def test_a_text_value_in_a_numeric_column_is_refused_without_naming_it(customers
 
     assert "CONFIDENTIAL" not in str(refusal.value)
     assert refusal.value.__cause__ is None
-    assert refusal.value.__suppress_context__
+    assert refusal.value.__context__ is None
 
 
 def test_missing_values_are_refused(customers):
@@ -234,3 +234,56 @@ def test_the_cli_refuses_a_run_without_a_declared_budget(customers, tmp_path, ca
 
     assert exit_code == 2
     assert "privacy budget" in capsys.readouterr().err
+
+
+def _cli_release(tmp_path, name: str, csv_text: str, domains: dict) -> int:
+    source = tmp_path / f"{name}.csv"
+    source.write_text(csv_text, encoding="utf-8")
+    domain_file = tmp_path / f"{name}-domains.json"
+    domain_file.write_text(json.dumps(domains))
+    output = tmp_path / f"{name}-out.csv"
+    return main(
+        ["--seed", "1", "dp-synthesize", str(source), "--domains", str(domain_file)]
+        + ["-o", str(output), "--epsilon", "1", "--delta", "1e-6"]
+    )
+
+
+@pytest.mark.parametrize(
+    ("values", "extra"),
+    [(["true", "false", "other"], "other"), (["01234", "02345", "unknown"], "unknown")],
+)
+def test_one_record_does_not_change_whether_a_csv_release_succeeds(tmp_path, values, extra):
+    domains = {"c": values, "x": {"kind": "numeric", "lower": 0, "upper": 10}}
+    rows = "x,c\n" + "".join(f"{index},{values[index % 2]}\n" for index in range(10))
+
+    without = _cli_release(tmp_path, "without", rows, domains)
+    with_record = _cli_release(tmp_path, "with", rows + f"3,{extra}\n", domains)
+
+    assert without == with_record == 0
+
+
+def test_a_listed_number_matches_its_csv_text(tmp_path):
+    domains = {"c": [10, 20, True], "x": {"kind": "numeric", "lower": 0, "upper": 10}}
+
+    exit_code = _cli_release(tmp_path, "numbers", "x,c\n1,10\n2,20\n3,true\n", domains)
+
+    assert exit_code == 0
+
+
+def test_an_unreadable_csv_cell_is_refused_without_naming_it_or_its_place(tmp_path, capsys):
+    domains = {"x": {"kind": "numeric", "lower": 0, "upper": 10}, "c": ["a", "b"]}
+
+    exit_code = _cli_release(tmp_path, "digits", "x,c\n1,a\n2,b\n٣٤٥٦٧,a\n", domains)
+
+    stderr = capsys.readouterr().err
+    assert exit_code == 2
+    assert "cannot read" in stderr
+    assert "٣٤٥٦٧" not in stderr
+    assert "offset" not in stderr
+
+
+def test_a_wide_integer_in_a_numeric_csv_column_is_released(tmp_path):
+    domains = {"x": {"kind": "numeric", "lower": 0, "upper": 10}, "c": ["a", "b"]}
+    rows = "x,c\n1,a\n2,b\n99999999999999999999999999,a\n"
+
+    assert _cli_release(tmp_path, "wide", rows, domains) == 0

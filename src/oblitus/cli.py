@@ -14,6 +14,7 @@ from collections.abc import Sequence
 from contextlib import AbstractContextManager, nullcontext
 from dataclasses import asdict
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 import polars as pl
@@ -536,8 +537,8 @@ def _synthesize(anonymizer: Anonymizer, arguments: argparse.Namespace) -> None:
 
 
 def _dp_synthesize(anonymizer: Anonymizer, arguments: argparse.Namespace) -> None:
-    frame = read_table(arguments.input).to_pandas()
-    domains = json.loads(arguments.domains.read_text(encoding="utf-8"))
+    declared = json.loads(arguments.domains.read_text(encoding="utf-8"))
+    frame, domains = _read_for_domains(arguments.input, declared)
     workload = None
     if arguments.workload is not None:
         workload = [_column_list(group) for group in arguments.workload]
@@ -617,12 +618,12 @@ def _isolated_records_line(isolated: IsolatedRecordCopies) -> str:
 
 
 def _dp_aggregate(anonymizer: Anonymizer, arguments: argparse.Namespace) -> None:
-    frame = read_table(arguments.input).to_pandas()
     spec = json.loads(arguments.spec.read_text(encoding="utf-8"))
+    frame, group_domains = _read_for_domains(arguments.input, spec.get("group_by", {}))
     statistics = [Statistic.model_validate(item) for item in spec["statistics"]]
     result = anonymizer.aggregate_private(
         frame,
-        spec.get("group_by", {}),
+        group_domains,
         statistics,
         _privacy_budget(arguments),
         confidence=arguments.confidence,
@@ -632,6 +633,38 @@ def _dp_aggregate(anonymizer: Anonymizer, arguments: argparse.Namespace) -> None
         write_table(result.accuracy, arguments.accuracy_output)
     print(f"wrote {len(result.table)} groups to {arguments.output}")
     print(_budget_line(result.budget))
+
+
+def _read_for_domains(path: Path, domains: dict[str, Any]) -> tuple[pd.DataFrame, dict[str, Any]]:
+    """Read a table to release under declared domains, matching listed values as written.
+
+    Polars guesses a CSV column's type from every row, so one record can change it: a column of
+    "true" and "false" becomes boolean unless some row says "other", and "01234" loses its
+    leading zero. A refusal that depends on one record would reveal it without spending budget.
+    So in a CSV, columns with listed values are read as text, and listed values that are not
+    text are compared by their JSON form (true, 10, 1.5).
+    """
+    if path.suffix.lower() != ".csv":
+        return read_table(path).to_pandas(), domains
+    listed = {}
+    for name, domain in domains.items():
+        values = _listed_values(domain)
+        if values is not None:
+            listed[name] = [_csv_text(value) for value in values]
+    frame = read_table(path, text_columns=listed).to_pandas()
+    return frame, {**domains, **listed}
+
+
+def _listed_values(domain: Any) -> list[Any] | None:
+    if isinstance(domain, list):
+        return domain
+    if isinstance(domain, dict) and domain.get("kind") == "categorical":
+        return domain.get("values")
+    return None
+
+
+def _csv_text(value: Any) -> str:
+    return value if isinstance(value, str) else json.dumps(value)
 
 
 def _budget_line(report: BudgetReport) -> str:

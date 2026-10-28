@@ -112,7 +112,7 @@ def test_text_in_a_numeric_column_is_refused_without_naming_it(train, holdout):
         Anonymizer(seed=3).check_synthetic(synthetic, train, holdout)
 
     assert "CONFIDENTIAL" not in str(refusal.value)
-    assert refusal.value.__suppress_context__
+    assert refusal.value.__context__ is None
 
 
 def test_bytes_in_a_category_column_are_compared_not_decoded(train, holdout):

@@ -179,11 +179,13 @@ def _as_floats(values: pd.Series) -> np.ndarray:
     try:
         return values.to_numpy(dtype=np.float64, na_value=np.nan)
     except (TypeError, ValueError, OverflowError):
-        # The conversion error quotes the offending value, which is private.
-        raise SchemaError(
-            f"column {values.name!r} is numeric in the training table but holds values that "
-            "are not numbers in another table"
-        ) from None
+        pass
+    # The conversion error quotes the offending value, which is private. Raising after the
+    # except block leaves that error out of this one.
+    raise SchemaError(
+        f"column {values.name!r} is numeric in the training table but holds values that "
+        "are not numbers in another table"
+    )
 
 
 def _robust_scales(reference_numbers: np.ndarray) -> np.ndarray:

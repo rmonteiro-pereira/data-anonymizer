@@ -105,7 +105,7 @@ def test_text_in_a_summed_column_is_refused_without_naming_it(orders):
         Anonymizer(seed=1).aggregate_private(odd, GROUPS, STATISTICS, budget)
 
     assert "CONFIDENTIAL" not in str(refusal.value)
-    assert refusal.value.__suppress_context__
+    assert refusal.value.__context__ is None
 
 
 def test_a_group_value_outside_the_declared_list_is_refused(orders):

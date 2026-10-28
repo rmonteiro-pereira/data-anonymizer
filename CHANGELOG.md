@@ -14,6 +14,14 @@
 - **Numeric bounds must be less than a float's range apart.** Bounds such as `-1e308` and `1e308`
   are refused when declared. Before, a valid record at the upper bound crashed the release,
   so whether it crashed told an observer that the record was there, without spending budget.
+- **CSV input for `dp-synthesize` and `dp-aggregate` no longer depends on Polars' type guess.**
+  Columns with listed values are read as text and matched as written, so one record such as
+  `other` beside `true` and `false` no longer turns a refusal into a release. Listed numbers and
+  booleans match their JSON form.
+- **A CSV cell that cannot be parsed is refused without the cell.** Polars' error quoted the
+  cell and its offset in the file; every command now reports only the file name. Integers of 20
+  to 39 digits are read as text instead of crashing the conversion to pandas.
+- These refusals carry no trace of the original error, not even as the exception's context.
 
 ## 1.0.0
 

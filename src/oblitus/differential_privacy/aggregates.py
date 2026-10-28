@@ -28,7 +28,7 @@ from oblitus.differential_privacy.budget import (
     compose_budget,
     pure_epsilon_spend,
 )
-from oblitus.differential_privacy.domains import CategoricalDomain
+from oblitus.differential_privacy.domains import CategoricalDomain, numbers_or_none
 from oblitus.errors import SchemaError
 
 EXTRA_HINT = 'differentially private aggregates need OpenDP: pip install "oblitus[opendp]"'
@@ -185,13 +185,10 @@ def _release(
     if statistic.kind == "count":
         count, count_scale = _noisy_query(opendp, share, budget, 1, [1.0] * len(rows), None)
         return count, _half_width(budget, count_scale, confidence)
-    try:
-        column_values = rows[statistic.column].astype(float).tolist()
-    except (TypeError, ValueError, OverflowError):
-        # The conversion error quotes the offending value, which is private.
-        raise SchemaError(
-            f"column {statistic.column!r} holds values that are not numbers"
-        ) from None
+    numbers = numbers_or_none(rows[statistic.column])
+    if numbers is None:
+        raise SchemaError(f"column {statistic.column!r} holds values that are not numbers")
+    column_values = numbers.tolist()
     bounds = (float(statistic.lower or 0.0), float(statistic.upper or 0.0))
     total, total_scale = _noisy_query(
         opendp, share, budget, statistic.query_count, column_values, bounds

@@ -7,7 +7,7 @@ need a few columns.
 """
 
 import io
-from collections.abc import Iterator
+from collections.abc import Collection, Iterator
 from pathlib import Path
 from types import TracebackType
 from typing import Any
@@ -19,19 +19,46 @@ import pyarrow.parquet as pq  # type: ignore[import-untyped]
 from oblitus.errors import TableFormatError
 
 _SUPPORTED = ".csv, .parquet"
+# Older Polars releases have no unsigned 128-bit type.
+_WIDE_INTEGERS = tuple(getattr(pl, name) for name in ("Int128", "UInt128") if hasattr(pl, name))
 
 
-def read_table(path: Path) -> pl.DataFrame:
-    """Read a CSV or Parquet file into a Polars DataFrame."""
+def read_table(path: Path, text_columns: Collection[str] = ()) -> pl.DataFrame:
+    """Read a CSV or Parquet file into a Polars DataFrame.
+
+    `text_columns` are read from a CSV as written, without type inference. Names the file
+    does not have are ignored.
+    """
     suffix = path.suffix.lower()
     if suffix == ".csv":
-        # The whole file decides each column's type, so a late decimal in an integer
-        # column does not fail the read. ISO dates are read as dates, so date techniques and
-        # checks see them as dates rather than text.
-        return pl.read_csv(path, infer_schema_length=None, try_parse_dates=True)
+        return _wide_integers_as_text(_read_csv(path, text_columns))
     if suffix == ".parquet":
-        return pl.read_parquet(path)
+        return _wide_integers_as_text(pl.read_parquet(path))
     raise TableFormatError(f"cannot read {path.name}; supported: {_SUPPORTED}")
+
+
+def _read_csv(path: Path, text_columns: Collection[str]) -> pl.DataFrame:
+    # The whole file decides each column's type, so a late decimal in an integer
+    # column does not fail the read. ISO dates are read as dates, so date techniques and
+    # checks see them as dates rather than text.
+    overrides = {name: pl.String for name in text_columns}
+    try:
+        return pl.read_csv(
+            path, infer_schema_length=None, try_parse_dates=True, schema_overrides=overrides
+        )
+    except pl.exceptions.PolarsError:
+        pass
+    # Polars' message quotes the cell it could not parse and its offset in the file, and both
+    # are private. Raising after the except block leaves that error out of this one.
+    raise TableFormatError(f"cannot read {path.name}: a value does not fit the type of its column")
+
+
+def _wide_integers_as_text(table: pl.DataFrame) -> pl.DataFrame:
+    """Integers of 20 to 39 digits as text: pandas has no 128-bit integer to hold them."""
+    wide = [name for name, dtype in table.schema.items() if dtype in _WIDE_INTEGERS]
+    if not wide:
+        return table
+    return table.with_columns(pl.col(wide).cast(pl.String))
 
 
 def write_table(frame: Any, path: Path) -> None:

@@ -89,14 +89,11 @@ class NumericDomain(BaseModel):
     def encode(self, column: str, series: pd.Series) -> np.ndarray:
         """Clip to the bounds and map each value to its bin."""
         _refuse_missing(column, series)
-        try:
-            values = pd.to_numeric(series).to_numpy(dtype=float)
-        except (TypeError, ValueError, OverflowError):
-            # pandas names the offending value in its message, and that value is private.
-            # `from None` keeps it out of the traceback as well.
+        values = numbers_or_none(series)
+        if values is None:
             raise SchemaError(
                 f"column {column!r} holds values that are not numbers; its domain is numeric"
-            ) from None
+            )
         clipped = np.clip(values, self.lower, self.upper)
         position = (clipped - self.lower) / self._span()
         return np.minimum((position * self.bins).astype(np.int64), self.bins - 1)
@@ -124,6 +121,18 @@ def parse_domain(value: Any) -> CategoricalDomain | NumericDomain:
     if isinstance(value, Sequence) and not isinstance(value, str):
         return CategoricalDomain(values=list(value))
     return _DOMAIN_ADAPTER.validate_python(value)
+
+
+def numbers_or_none(series: pd.Series) -> np.ndarray | None:
+    """The values as floats, or None when one is not a number.
+
+    pandas names the offending value in its error, and that value is private. Returning None
+    lets the caller raise its own error outside the except block, with no trace of this one.
+    """
+    try:
+        return pd.to_numeric(series).to_numpy(dtype=float)
+    except (TypeError, ValueError, OverflowError):
+        return None
 
 
 def released_columns(

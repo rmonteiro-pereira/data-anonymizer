@@ -151,7 +151,10 @@ What to expect:
 - Large joint domains are refused: a pair of columns with more than 1,000,000 cells is an error.
 
 The command line reads the declared domains from JSON (`column: list of values`, or
-`{"kind": "numeric", "lower": 0, "upper": 100, "bins": 10, "integer": true}`):
+`{"kind": "numeric", "lower": 0, "upper": 100, "bins": 10, "integer": true}`). In a CSV, a
+column with listed values is read as text and matched as written: `["true", "false", "other"]`
+or `["01234", "unknown"]` match those exact strings, and a listed number or boolean matches its
+JSON form (`10`, `true`). The same holds for `dp-aggregate`'s `group_by` lists.
 
 ```bash
 oblitus dp-synthesize customers.csv --domains domains.json --epsilon 2 --delta 1e-6 \
@@ -240,6 +243,9 @@ within what you promise is up to you.
   numeric column stops the release with an error that names the column and the kind of
   problem, never the value. Whether the call succeeds still tells whoever sees it that some
   record breaks the schema, so clean the data and keep errors inside the data owner's process.
+  Two cases count as breaking the schema although a reader might call them valid: a Python
+  integer too large for a float (beyond about 1.8e308), and a column of booleans declared with
+  the listed values `[0, 1]`. Declare a boolean column as `[true, false]`.
 - A fixed `seed` makes the noise reproducible, which lets anyone who knows it subtract the
   noise. Use a seed for tests and demos only. Without a seed, the noise is fresh.
 - AIM turns on JAX's double precision (`jax_enable_x64`) and turns off its compilation cache
