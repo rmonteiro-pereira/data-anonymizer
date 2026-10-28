@@ -11,6 +11,8 @@
 - `PrivateSynthesis.measured_marginals` lists every column group a synthesizer measured, for
   MST and AIM. `oblitus dp-synthesize` prints "column groups measured" instead of "column pairs
   measured".
+- A sample of a Spark table (the noise explorer, the sampled checks) now always has the
+  requested number of rows. It kept each row with a probability before, and could come up short.
 - The roadmap is complete.
 
 ## 0.4.0

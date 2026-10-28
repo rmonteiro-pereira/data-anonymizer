@@ -159,14 +159,18 @@ def sample_to_pandas(frame: WorkingFrame, columns: Sequence[str], size: int, see
     return selected.to_pandas()
 
 
+_SPARK_DRAW = "__oblitus_sample_draw"
+
+
 def _spark_sample(selected: WorkingFrame, size: int, seed: int) -> Any:
     rows = first_row(selected.select(nw.len().alias("rows")))["rows"]
     if rows <= size:
         return collect(selected).to_pandas()
-    # Keep each row with a seeded probability, a little above what is needed, and cut to size.
-    fraction = min(1.0, 1.2 * size / rows)
+    # Order by a seeded random number and keep the first rows: Spark runs this as a top-k, and
+    # unlike keeping each row with a probability it always returns exactly `size` rows.
     native = selected.to_native()
-    sampled = native.where(_spark_functions(native).rand(seed) < fraction).limit(size)
+    drawn = native.withColumn(_SPARK_DRAW, _spark_functions(native).rand(seed))
+    sampled = drawn.orderBy(_SPARK_DRAW).limit(size).drop(_SPARK_DRAW)
     return nw.from_native(sampled).collect().to_pandas()
 
 
