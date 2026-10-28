@@ -105,7 +105,7 @@ gives the command for each system, and warns that the page holds real values fro
 
 ## How it works, on one row
 
-![The scan and apply commands with their real output: each column's category and evidence,
+![The quick start's commands with their real output: each column's category and evidence,
 then "result is anonymized"](https://raw.githubusercontent.com/rmonteiro-pereira/oblitus/main/docs/images/quick-start-terminal.png)
 
 `scan` classifies every column. On the sample table it finds five direct identifiers

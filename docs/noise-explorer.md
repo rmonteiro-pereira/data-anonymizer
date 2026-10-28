@@ -82,10 +82,13 @@ size (`--max-rows` or `max_rows=` to change it); the page says so. The metrics a
 and medians, which a sample this size estimates closely.
 
 Pick a technique and slide its strength. Clicking a point on the risk map selects that
-setting. A good setting sits low and to the left on the risk map: few re-linked records for
+setting. From the keyboard, Tab reaches each chart: on the histogram the arrow keys read one
+band at a time, and on the risk map Left and Right walk a technique's strengths, Up and Down
+change technique, and Enter selects the point. A good setting sits low and to the left on the risk map: few re-linked records for
 the shift you accept. Copy its technique and strength into the plan, as above. For
 `laplace_noise`, also set `lower` and `upper` to bounds you choose without looking at the data:
-the explorer used the column's own minimum and maximum, which a release must not reveal.
+the explorer used the column's own minimum and maximum, which a release must not reveal. The page
+says so whenever `laplace_noise` is selected.
 
 ## What it shows
 
@@ -121,7 +124,8 @@ band](images/noise-explorer-records.png)
 
 *Risk against information loss.* For every technique and strength, re-linked records (log
 scale) against typical record shift (log scale). Lower and further left is better, the ring
-marks the selected setting, and the dashed line is chance. A log scale has no zero, so
+marks the selected setting, and the dashed line is chance. Each technique has its own
+marker shape, so the lines can be told apart without colour. A log scale has no zero, so
 settings with no re-linked records or no shift sit on the edge of the axis; its tick reads 0
 only when such settings exist.
 
@@ -129,7 +133,7 @@ only when such settings exist.
 re-linked](images/noise-explorer-risk-map.png)
 
 The same column with `gaussian_noise` at its strongest setting: the histograms now differ a
-little, records scatter far from the diagonal, and only 8.1% stay exposed.
+little, records scatter far from the diagonal, and only 8.2% stay exposed.
 
 ![The explorer with gaussian_noise at relative scale 1.5: records scattered widely around the
 diagonal](images/noise-explorer-strong.png)

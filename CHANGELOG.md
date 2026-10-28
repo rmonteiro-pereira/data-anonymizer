@@ -7,6 +7,15 @@
   prints the level reached, why it fell short, and the share of each column's cells blanked
   to protect rare rows. `AnonymizationPlan.describe()` and `AnonymizationResult.describe()`
   return the same text, and printing a result no longer dumps the whole table.
+- **Noise explorer page.** The risk map, histogram and strength slider work from the
+  keyboard: the histogram is one Tab stop read with the arrow keys, and on the risk map the
+  arrows walk the points and Enter selects one. Risk-map techniques differ by marker shape as
+  well as colour. A tap on a point selects that point, not the nearest point of the selected
+  technique. Selecting `laplace_noise` shows that the page bounded the noise with the column's
+  own minimum and maximum and that a release needs public bounds. Strengths carry units and a
+  direction ("max_distance_percent = 5% of rows", "epsilon = 1 (smaller is stronger)"), the
+  risk map gives chance as odds ("1 in 2,000"), the table keeps its first column in view on a
+  phone, and the metrics are defined under it. Muted text is darker and axis labels larger.
 - `oblitus --help` shows the usual path and the commands grouped by task. A missing input file
   is reported as "<path>: no such file". Problem texts count "distinct customer_id values"
   instead of "entities", and a plain date's scan evidence says it can single people out.

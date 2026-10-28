@@ -11,7 +11,7 @@
     --surface-raised: #ffffff;
     --text-primary: #0b0b0b;
     --text-secondary: #52514e;
-    --text-muted: #77766f;
+    --text-muted: #6b6a63;
     --grid: #e4e3df;
     --border: #d6d5d0;
     --series-1: #2a78d6;
@@ -78,6 +78,10 @@
     border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; font: inherit;
   }
   input[type="range"] { width: min(320px, 60vw); accent-color: var(--series-2); }
+  .ends { color: var(--text-muted); font-size: 0.8rem; }
+  /* The end words stay on the slider's line, so the direction reads at a glance. */
+  .slider-row { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+  .slider-row input[type="range"] { margin-left: 0; width: min(320px, calc(100vw - 150px)); }
   .strength { font-variant-numeric: tabular-nums; color: var(--text-primary); }
   .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
   .tile {
@@ -90,12 +94,23 @@
   .charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 24px; }
   figure { margin: 24px 0 0; }
   svg { width: 100%; height: auto; display: block; overflow: visible; }
-  .axis text { fill: var(--text-muted); font-size: 11px; }
+  .axis text { fill: var(--text-muted); font-size: 12px; }
   .axis line, .grid line { stroke: var(--grid); }
   .legend { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 6px 0; font-size: 0.85rem; }
   .legend span { display: inline-flex; align-items: center; gap: 6px; color: var(--text-secondary); }
   .key { display: inline-block; width: 16px; height: 3px; border-radius: 2px; }
   .key.dot { width: 9px; height: 9px; border-radius: 50%; }
+  .legend svg { width: 26px; height: 12px; display: inline-block; overflow: visible; }
+  .technique-note { margin: -4px 0 16px; max-width: 72ch; }
+  .caveat {
+    border-left: 3px solid var(--series-4); padding: 6px 12px; margin: 0 0 16px;
+    background: var(--surface-raised); color: var(--text-secondary); font-size: 0.9rem;
+    max-width: 80ch;
+  }
+  .caveat[hidden] { display: none; }
+  svg:focus-visible, select:focus-visible, input:focus-visible {
+    outline: 2px solid var(--series-1); outline-offset: 2px;
+  }
   .tooltip {
     position: fixed; pointer-events: none; background: var(--surface-raised);
     border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; font-size: 0.82rem;
@@ -107,7 +122,18 @@
     text-align: right; padding: 6px 8px; border-bottom: 1px solid var(--grid); white-space: nowrap;
   }
   th:first-child, td:first-child { text-align: left; }
+  /* The setting stays in view while a phone scrolls the metrics sideways. */
+  th:first-child, td:first-child {
+    position: sticky; left: 0; background: var(--surface);
+    box-shadow: 1px 0 0 var(--grid);
+  }
+  tr.current td:first-child {
+    background: linear-gradient(var(--band), var(--band)), var(--surface);
+  }
+  .scroll-cue { display: none; color: var(--text-muted); font-size: 0.8rem; margin: 4px 0 0; }
+  @media (max-width: 760px) { .scroll-cue { display: block; } }
   th { color: var(--text-secondary); font-weight: 600; }
+  th:first-child { white-space: pre-line; }
   tr.current td { font-weight: 600; background: var(--band); }
   .table-wrap { overflow-x: auto; }
 </style>
@@ -120,9 +146,21 @@
   <div class="controls">
     <label>Technique<select id="technique"></select></label>
     <label>Strength <span class="strength" id="strength-label"></span>
-      <input type="range" id="strength" min="0" max="0" step="1" value="0">
+      <span class="slider-row">
+        <span class="ends" aria-hidden="true">weaker</span>
+        <input type="range" id="strength" min="0" max="0" step="1" value="0">
+        <span class="ends" aria-hidden="true">stronger</span>
+      </span>
     </label>
   </div>
+  <p class="note technique-note" id="technique-note"></p>
+  <p class="caveat" id="laplace-caveat" hidden>
+    Epsilon is the differential-privacy budget: a smaller epsilon adds more noise and protects
+    more. This page bounded the noise by the column's own minimum and maximum, which is fine for
+    exploring but would itself leak those two values. A real release needs bounds chosen
+    independently of the data, such as public limits for the field. The re-linking figures here
+    measure one attack on this one column; they are not the formal guarantee.
+  </p>
 
   <section class="tiles" id="tiles" aria-label="Metrics at the selected strength"></section>
 
@@ -135,7 +173,7 @@
         <span><i class="key" style="background: var(--series-1)"></i>Original</span>
         <span><i class="key" style="background: var(--series-2)"></i>Released</span>
       </div>
-      <svg id="distribution" role="img"
+      <svg id="distribution" role="img" tabindex="0"
            aria-label="Histogram of original and released values"></svg>
     </figure>
     <figure>
@@ -155,15 +193,23 @@
     <h2>Risk against information loss, every technique</h2>
     <p class="note">Each line is one technique from weak to strong noise. Lower and further left
       is better. The ring marks the selected setting. The dashed line is pure chance:
-      an attacker guessing at random.</p>
+      an attacker guessing at random. Click a point to select it, or focus the chart and use
+      the arrow keys, then Enter.</p>
+    <p class="note" id="ru-note"></p>
     <div class="legend" id="ru-legend"></div>
-    <svg id="risk-utility" role="img"
+    <svg id="risk-utility" role="img" tabindex="0"
          aria-label="Linkage risk against median shift for each technique and strength"></svg>
   </figure>
 
   <figure>
     <h2>All strengths of the selected technique</h2>
-    <div class="table-wrap"><table id="table"></table></div>
+    <p class="note" id="table-caption"></p>
+    <div class="table-wrap"><table id="table" aria-describedby="table-caption"></table></div>
+    <p class="scroll-cue">Scroll the table sideways for more measures.</p>
+    <p class="note">Mean and spread change are relative to the original column. KS is the
+      largest gap between the two cumulative distributions. Wasserstein / IQR is the average
+      distance values must move to match the original, over its interquartile range. Shifts are
+      |released − true| per record, in standard deviations.</p>
   </figure>
 </main>
 <div class="tooltip" id="tooltip" role="status"></div>
@@ -175,7 +221,39 @@
   const DATA = JSON.parse(document.getElementById("data").textContent);
   const SVG_NS = "http://www.w3.org/2000/svg";
   const SERIES = ["--series-1", "--series-2", "--series-3", "--series-4", "--series-5"];
+  // Risk-map series differ by marker shape as well as hue, so they read without color.
+  const MARKERS = ["circle", "square", "triangle", "diamond", "triangle-down"];
   const state = { technique: 0, level: 0 };
+  // The band or risk-map point the keyboard is on; it survives redraws.
+  const cursor = { band: null, point: null };
+
+  // Units and a sentence for the built-in sweeps. The parameter keeps its plan name, since
+  // that is what the reader copies into the plan; a custom sweep shows the name alone.
+  const TECHNIQUES = {
+    gaussian_noise: {
+      unit: " × SD", header: "(× SD)",
+      describe: "Adds normal noise whose size is a multiple of the column's standard deviation.",
+    },
+    multiplicative_noise: {
+      unit: "", header: "",
+      describe: "Multiplies each value by a random factor around 1; relative_scale is the " +
+        "factor's standard deviation.",
+    },
+    laplace_noise: {
+      unit: " (smaller is stronger)", header: "",
+      describe: "Adds Laplace noise for differential privacy. The slider moves to smaller " +
+        "epsilon, which is stronger.",
+    },
+    rank_swap: {
+      unit: "% of rows", header: "(% of rows)",
+      describe: "Swaps values between records whose ranks lie within this share of the rows, " +
+        "so the set of values is unchanged.",
+    },
+    microaggregate: {
+      unit: " records", header: "(records)",
+      describe: "Replaces each value by the mean of a group of neighbouring values.",
+    },
+  };
   const compactNumber = new Intl.NumberFormat(undefined, {
     notation: "compact",
     maximumSignificantDigits: 3,
@@ -229,6 +307,28 @@
     return Number(value.toPrecision(3)).toLocaleString();
   }
 
+  // Chance is tiny on large tables, so it is shown with its odds: "0.05% (1 in 2,000)".
+  function formatChance(value) {
+    if (!(value > 0)) {
+      return formatPercent(value);
+    }
+    const percent = (value * 100).toLocaleString(undefined, { maximumSignificantDigits: 2 });
+    return `${percent}% (1 in ${Math.round(1 / value).toLocaleString()})`;
+  }
+
+  function techniqueName(sweep) {
+    return sweep.technique.replaceAll("_", " ");
+  }
+
+  function techniqueWords(sweep) {
+    const fallback = { unit: "", header: "", describe: "" };
+    return TECHNIQUES[sweep.technique] || fallback;
+  }
+
+  function settingLabel(sweep, value) {
+    return `${sweep.parameter} = ${value}${techniqueWords(sweep).unit}`;
+  }
+
   function formatPercent(value) {
     if (value > 0 && value < 0.001) {
       return "<0.1%";
@@ -265,11 +365,24 @@
   function attachTooltip(node, rows) {
     node.addEventListener("pointermove", (event) => showTooltip(event, rows));
     node.addEventListener("pointerleave", hideTooltip);
-    node.addEventListener("focus", (event) => {
-      const box = node.getBoundingClientRect();
-      showTooltip({ clientX: box.right, clientY: box.top }, rows);
-    });
-    node.addEventListener("blur", hideTooltip);
+  }
+
+  // Where a point in the chart's own coordinates sits on the screen, to anchor a tooltip.
+  function screenPoint(svg, x, y) {
+    const point = svg.createSVGPoint();
+    point.x = x;
+    point.y = y;
+    const onScreen = point.matrixTransform(svg.getScreenCTM());
+    return { clientX: onScreen.x, clientY: onScreen.y };
+  }
+
+  // Arrow keys move by one step, Home and End jump to the ends; other keys return null.
+  function steppedIndex(key, index, count) {
+    const moves = { ArrowLeft: index - 1, ArrowRight: index + 1, Home: 0, End: count - 1 };
+    if (!(key in moves)) {
+      return null;
+    }
+    return Math.min(count - 1, Math.max(0, moves[key]));
   }
 
   function drawAxes(svg, frame, xTicks, yTicks, xScale, yScale, formatX, formatY) {
@@ -314,7 +427,7 @@
     DATA.sweeps.forEach((sweep, index) => {
       const option = document.createElement("option");
       option.value = String(index);
-      option.textContent = sweep.technique.replaceAll("_", " ");
+      option.textContent = techniqueName(sweep);
       select.appendChild(option);
     });
     select.addEventListener("change", onTechniqueChange);
@@ -337,8 +450,11 @@
     const slider = document.getElementById("strength");
     slider.max = String(sweep.levels.length - 1);
     slider.value = String(state.level);
-    const label = `${sweep.parameter.replaceAll("_", " ")} = ${currentLevel().value}`;
+    const label = settingLabel(sweep, currentLevel().value);
     document.getElementById("strength-label").textContent = label;
+    slider.setAttribute("aria-valuetext", label);
+    document.getElementById("technique-note").textContent = techniqueWords(sweep).describe;
+    document.getElementById("laplace-caveat").hidden = sweep.technique !== "laplace_noise";
   }
 
   function renderTiles() {
@@ -350,7 +466,7 @@
       [formatNumber(metrics.median_deviation_sd) + " SD", "typical record shift",
         "median |released − true|, in standard deviations"],
       [formatPercent(metrics.linkage_rate), "re-linked records",
-        `nearest original is the true one; chance is ${formatPercent(chance)}`],
+        `nearest original is the true one; chance is ${formatChance(chance)}`],
       [formatPercent(metrics.interval_disclosure), "values still exposed",
         `true value within ±${DATA.band_sd} SD of the released one`],
       [formatNumber(metrics.ks_statistic), "distribution distance (KS)",
@@ -400,18 +516,57 @@
       }, svg);
     }
 
-    before.forEach((share, index) => {
+    const bands = before.map((share, index) => {
       const hit = element("rect", {
         x: xScale(edges[index]), y: frame.top,
         width: Math.max(1, xScale(edges[index + 1]) - xScale(edges[index])),
-        height: frame.bottom - frame.top, fill: "transparent", tabindex: 0,
+        height: frame.bottom - frame.top, fill: "transparent",
       }, svg);
-      attachTooltip(hit, [
+      const rows = [
         ["value band", bandLabel(edges, index)],
         ["of original rows", formatPercent(share)],
         ["of released rows", formatPercent(after[index])],
-      ]);
+      ];
+      attachTooltip(hit, rows);
+      return { hit, rows, x: xScale(edges[index + 1]), y: frame.top };
     });
+    svg.onkeydown = (event) => moveBandCursor(event, svg, bands);
+    svg.onblur = hideBandCursor;
+    if (cursor.band !== null && document.activeElement === svg) {
+      showBandCursor(svg, bands);
+    }
+    const ks = formatNumber(currentLevel().metrics.ks_statistic);
+    svg.setAttribute("aria-label", `Histogram of original and released ${DATA.column} ` +
+      `in ${bands.length} value bands; distribution distance (KS) ${ks}. ` +
+      "Use the arrow keys to read each band.");
+  }
+
+  function moveBandCursor(event, svg, bands) {
+    const start = cursor.band === null ? -1 : cursor.band;
+    const next = steppedIndex(event.key, Math.max(start, 0), bands.length);
+    if (next === null) {
+      return;
+    }
+    event.preventDefault();
+    cursor.band = start === -1 ? 0 : next;
+    showBandCursor(svg, bands);
+  }
+
+  function showBandCursor(svg, bands) {
+    const index = Math.min(cursor.band, bands.length - 1);
+    bands.forEach((band, bandIndex) => {
+      band.hit.setAttribute("fill", bandIndex === index ? "var(--band)" : "transparent");
+    });
+    const band = bands[index];
+    showTooltip(screenPoint(svg, band.x, band.y), band.rows);
+  }
+
+  function hideBandCursor() {
+    cursor.band = null;
+    hideTooltip();
+    for (const rect of document.querySelectorAll("#distribution rect")) {
+      rect.setAttribute("fill", "transparent");
+    }
   }
 
   // The end bands also hold every value beyond the axis, so their labels say so.
@@ -438,6 +593,12 @@
     if (released > 0 || original > 0) {
       parts.push(`${formatPercent(original)} of original and ${formatPercent(released)} of ` +
         "released values lie beyond the axis and are counted in the end bands.");
+    }
+    const originalCounts = currentSweep().original_histogram;
+    const releasedCounts = currentLevel().histogram;
+    if (originalCounts.every((count, index) => count === releasedCounts[index])) {
+      parts.push("Released values fill every band exactly as the original did, so the " +
+        "released line hides the original one.");
     }
     note.textContent = parts.join(" ");
   }
@@ -476,9 +637,13 @@
       }, svg);
     });
     const exposedShare = currentLevel().metrics.interval_disclosure;
-    const note = `${formatPercent(exposedShare)} of all records stay inside the shaded band, ` +
+    const shown = xs.length.toLocaleString();
+    const note = `Each dot is one of ${shown} sampled records. ` +
+      `${formatPercent(exposedShare)} of all records stay inside the shaded band, ` +
       `±${DATA.band_sd} SD around their true value. Points on the dashed line did not move.`;
     document.getElementById("scatter-note").textContent = note;
+    svg.setAttribute("aria-label", `True against released ${DATA.column} for ${shown} ` +
+      `sampled records; ${formatPercent(exposedShare)} stay within ±${DATA.band_sd} SD.`);
   }
 
   function standardDeviation(values) {
@@ -514,8 +679,10 @@
     drawAxes(svg, frame, xTicks, yTicks, xScale, yScale,
       (exponent) => formatPowerOfTen(exponent, xZeroAt, ""),
       (exponent) => formatPowerOfTen(exponent + 2, yZeroAt, "%"));
-    axisTitle(svg, "information loss: typical record shift, in standard deviations (log)",
-      (frame.left + frame.right) / 2, frame.bottom + 34);
+    // A phone has room for a short title only.
+    const xTitle = width < 560 ? "typical shift (SD, log scale)"
+      : "information loss: typical record shift, in standard deviations (log scale)";
+    axisTitle(svg, xTitle, (frame.left + frame.right) / 2, frame.bottom + 34);
     axisTitle(svg, "re-linked records (log)", 12, (frame.top + frame.bottom) / 2, true);
 
     const chanceY = yScale(toLogY(chance));
@@ -524,8 +691,8 @@
       stroke: "var(--text-muted)", "stroke-dasharray": "5 4",
     }, svg);
     const chanceLabel = element("text", {
-      x: frame.right, y: chanceY - 6, "text-anchor": "end",
-      fill: "var(--text-muted)", "font-size": 11,
+      x: frame.left + 6, y: chanceY - 6, "text-anchor": "start",
+      fill: "var(--text-muted)", "font-size": 12,
     }, svg);
     chanceLabel.textContent = "chance";
 
@@ -542,7 +709,23 @@
       coordinates.forEach(([x, y], levelIndex) => placed.push({ x, y, index, levelIndex }));
     }
     addNearestPointLayer(svg, frame, placed);
+    addRiskKeyboard(svg, placed);
     renderRiskLegend();
+    renderRiskNote(chance, shiftsHaveZeros || risksHaveZeros);
+    const level = currentLevel();
+    svg.setAttribute("aria-label", "Linkage risk against typical shift for every technique. " +
+      `Selected: ${techniqueName(currentSweep())}, ${settingLabel(currentSweep(), level.value)}, ` +
+      `${formatPercent(level.metrics.linkage_rate)} re-linked, typical shift ` +
+      `${formatNumber(level.metrics.median_deviation_sd)} SD.`);
+  }
+
+  function renderRiskNote(chance, hasZeros) {
+    let text = `Chance is ${formatChance(chance)}.`;
+    if (hasZeros) {
+      text += " A log axis cannot show zero, so settings with no re-linked records or no " +
+        "shift sit on the floor tick marked 0.";
+    }
+    document.getElementById("ru-note").textContent = text;
   }
 
   // Ticks at whole powers of ten. When some points are exactly zero they are drawn on
@@ -584,15 +767,37 @@
     }, svg);
     coordinates.forEach(([x, y], levelIndex) => {
       const isCurrent = selected && levelIndex === state.level;
-      element("circle", {
-        cx: x, cy: y, r: isCurrent ? 6.5 : 3.5, fill: isCurrent ? "var(--surface)" : color,
-        stroke: isCurrent ? color : "var(--surface)", "stroke-width": isCurrent ? 3 : 1.5,
-      }, svg);
+      if (isCurrent) {
+        element("circle", {
+          cx: x, cy: y, r: 7.5, fill: "var(--surface)", stroke: color, "stroke-width": 3,
+        }, svg);
+      }
+      drawMarker(svg, MARKERS[index % MARKERS.length], x, y, isCurrent ? 3 : 4, {
+        fill: color, stroke: "var(--surface)", "stroke-width": isCurrent ? 0 : 1.25,
+      });
     });
   }
 
+  // One marker shape per technique; `size` is about the radius of the matching circle.
+  function drawMarker(parent, shape, x, y, size, attributes) {
+    if (shape === "circle") {
+      return element("circle", { cx: x, cy: y, r: size, ...attributes }, parent);
+    }
+    const outlines = {
+      square: [[-0.9, -0.9], [0.9, -0.9], [0.9, 0.9], [-0.9, 0.9]],
+      triangle: [[0, -1.25], [1.15, 0.85], [-1.15, 0.85]],
+      diamond: [[0, -1.3], [1.3, 0], [0, 1.3], [-1.3, 0]],
+      "triangle-down": [[0, 1.25], [1.15, -0.85], [-1.15, -0.85]],
+    };
+    const points = outlines[shape]
+      .map(([dx, dy]) => `${x + dx * size},${y + dy * size}`)
+      .join(" ");
+    return element("polygon", { points, ...attributes }, parent);
+  }
+
   // One transparent layer finds the point nearest the pointer, so close points from
-  // different techniques never steal each other's hover; the selected technique wins ties.
+  // different techniques never steal each other's hover. The selected technique only wins
+  // a near tie, so a tap that lands on another technique's point selects that point.
   function addNearestPointLayer(svg, frame, placed) {
     const layer = element("rect", {
       x: frame.left, y: frame.top, width: frame.right - frame.left,
@@ -607,10 +812,11 @@
       let bestDistance = 24;
       for (const candidate of placed) {
         const distance = Math.hypot(candidate.x - local.x, candidate.y - local.y);
-        const preferSelected = candidate.index === state.technique ? 2 : 0;
-        if (distance - preferSelected < bestDistance) {
+        const tie = Math.abs(distance - bestDistance) < 0.5;
+        const winsTie = tie && candidate.index === state.technique;
+        if ((distance < bestDistance && !tie) || winsTie) {
           best = candidate;
-          bestDistance = distance - preferSelected;
+          bestDistance = distance;
         }
       }
       return best;
@@ -621,14 +827,7 @@
         hideTooltip();
         return;
       }
-      const sweep = DATA.sweeps[best.index];
-      const level = sweep.levels[best.levelIndex];
-      showTooltip(event, [
-        ["", sweep.technique.replaceAll("_", " ")],
-        [sweep.parameter.replaceAll("_", " "), String(level.value)],
-        ["re-linked", formatPercent(level.metrics.linkage_rate)],
-        ["typical shift (SD)", formatNumber(level.metrics.median_deviation_sd)],
-      ]);
+      showTooltip(event, pointRows(best));
     });
     layer.addEventListener("pointerleave", hideTooltip);
     layer.addEventListener("click", (event) => {
@@ -637,6 +836,74 @@
         selectPoint(best.index, best.levelIndex);
       }
     });
+  }
+
+  function pointRows(point) {
+    const sweep = DATA.sweeps[point.index];
+    const level = sweep.levels[point.levelIndex];
+    return [
+      ["", techniqueName(sweep)],
+      ["", settingLabel(sweep, level.value)],
+      ["re-linked", formatPercent(level.metrics.linkage_rate)],
+      ["typical shift (SD)", formatNumber(level.metrics.median_deviation_sd)],
+    ];
+  }
+
+  // Left and Right walk one technique's strengths, Up and Down change technique,
+  // Enter or Space selects the point under the cursor.
+  function addRiskKeyboard(svg, placed) {
+    const find = (index, levelIndex) =>
+      placed.find((point) => point.index === index && point.levelIndex === levelIndex);
+    const ring = element("circle", {
+      r: 11, fill: "none", stroke: "var(--text-primary)", "stroke-width": 1.5,
+      "stroke-dasharray": "3 2", visibility: "hidden", "pointer-events": "none",
+    }, svg);
+    const show = () => {
+      const point = find(cursor.point.index, cursor.point.levelIndex);
+      ring.setAttribute("cx", point.x);
+      ring.setAttribute("cy", point.y);
+      ring.setAttribute("visibility", "visible");
+      showTooltip(screenPoint(svg, point.x, point.y), pointRows(point));
+    };
+    svg.onkeydown = (event) => {
+      if (cursor.point === null) {
+        cursor.point = { index: state.technique, levelIndex: state.level };
+      }
+      const moved = movedRiskCursor(event.key, cursor.point);
+      if (moved) {
+        event.preventDefault();
+        cursor.point = moved;
+        show();
+        return;
+      }
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        selectPoint(cursor.point.index, cursor.point.levelIndex);
+      }
+    };
+    svg.onblur = () => {
+      cursor.point = null;
+      ring.setAttribute("visibility", "hidden");
+      hideTooltip();
+    };
+    if (cursor.point !== null && document.activeElement === svg) {
+      show();
+    }
+  }
+
+  function movedRiskCursor(key, point) {
+    if (key === "ArrowUp" || key === "ArrowDown") {
+      const step = key === "ArrowUp" ? -1 : 1;
+      const index = (point.index + step + DATA.sweeps.length) % DATA.sweeps.length;
+      const last = DATA.sweeps[index].levels.length - 1;
+      return { index, levelIndex: Math.min(point.levelIndex, last) };
+    }
+    const count = DATA.sweeps[point.index].levels.length;
+    const levelIndex = steppedIndex(key, point.levelIndex, count);
+    if (levelIndex === null) {
+      return null;
+    }
+    return { index: point.index, levelIndex };
   }
 
   function selectPoint(techniqueIndex, levelIndex) {
@@ -651,10 +918,15 @@
     legend.replaceChildren();
     DATA.sweeps.forEach((sweep, index) => {
       const item = document.createElement("span");
-      const key = document.createElement("i");
-      key.className = "key";
-      key.style.background = `var(${SERIES[index % SERIES.length]})`;
-      item.append(key, sweep.technique.replaceAll("_", " "));
+      const key = document.createElementNS(SVG_NS, "svg");
+      key.setAttribute("viewBox", "0 0 26 12");
+      key.setAttribute("aria-hidden", "true");
+      const color = `var(${SERIES[index % SERIES.length]})`;
+      element("line", {
+        x1: 0, x2: 26, y1: 6, y2: 6, stroke: color, "stroke-width": 2,
+      }, key);
+      drawMarker(key, MARKERS[index % MARKERS.length], 13, 6, 4, { fill: color });
+      item.append(key, techniqueName(sweep));
       legend.appendChild(item);
     });
   }
@@ -664,7 +936,7 @@
     const table = document.getElementById("table");
     table.replaceChildren();
     const columns = [
-      [sweep.parameter.replaceAll("_", " "), (level) => String(level.value)],
+      [`${sweep.parameter}\n${techniqueWords(sweep).header}`.trim(), (level) => String(level.value)],
       ["mean change", (level) => formatPercent(level.metrics.mean_change)],
       ["spread change", (level) => formatPercent(level.metrics.std_change)],
       ["KS", (level) => formatNumber(level.metrics.ks_statistic)],
@@ -674,6 +946,9 @@
       ["re-linked", (level) => formatPercent(level.metrics.linkage_rate)],
       ["exposed", (level) => formatPercent(level.metrics.interval_disclosure)],
     ];
+    document.getElementById("table-caption").textContent =
+      `Every strength of ${techniqueName(sweep)}, weakest first; the highlighted row is the ` +
+      "selected one.";
     const head = table.createTHead().insertRow();
     for (const [title] of columns) {
       const cell = document.createElement("th");
