@@ -104,6 +104,26 @@ def test_aim_passes_at_a_small_and_a_moderate_epsilon(train, holdout, epsilon):
     assert report.passed, report.findings
 
 
+def test_text_in_a_numeric_column_is_refused_without_naming_it(train, holdout):
+    synthetic = train.head(300).assign(income=train["income"].head(300).astype(object))
+    synthetic.loc[5, "income"] = "CONFIDENTIAL_DIAGNOSIS"
+
+    with pytest.raises(SchemaError, match="not numbers") as refusal:
+        Anonymizer(seed=3).check_synthetic(synthetic, train, holdout)
+
+    assert "CONFIDENTIAL" not in str(refusal.value)
+    assert refusal.value.__suppress_context__
+
+
+def test_bytes_in_a_category_column_are_compared_not_decoded(train, holdout):
+    synthetic = train.head(300).assign(plan=train["plan"].head(300).astype(object))
+    synthetic.loc[5, "plan"] = b"\xff\xfe"
+
+    report = Anonymizer(seed=3).check_synthetic(synthetic, train, holdout)
+
+    assert report.n_synthetic == 300
+
+
 def test_without_a_holdout_only_copies_and_distances_are_reported(train):
     report = Anonymizer(seed=3).check_synthetic(train.head(100), train)
 

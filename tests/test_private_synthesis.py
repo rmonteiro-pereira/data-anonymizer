@@ -190,6 +190,8 @@ def test_numbers_outside_the_declared_bounds_are_clipped_to_them():
 def test_a_domain_must_have_ordered_finite_bounds_and_unique_values():
     with pytest.raises(ValueError):
         NumericDomain(lower=5, upper=1)
+    with pytest.raises(ValueError, match="finite"):
+        NumericDomain(lower=-1e308, upper=1e308)
     with pytest.raises(ValueError):
         CategoricalDomain(values=["a", "a"])
 

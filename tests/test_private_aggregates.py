@@ -96,6 +96,18 @@ def test_a_sum_without_declared_bounds_is_refused():
         Statistic(name="s", kind="sum", column="spend")
 
 
+def test_text_in_a_summed_column_is_refused_without_naming_it(orders):
+    odd = orders.assign(spend=orders["spend"].astype(object))
+    odd.loc[7, "spend"] = "CONFIDENTIAL_DIAGNOSIS"
+    budget = PrivacyBudget.from_epsilon_delta(1.0, 1e-6)
+
+    with pytest.raises(SchemaError, match="not numbers") as refusal:
+        Anonymizer(seed=1).aggregate_private(odd, GROUPS, STATISTICS, budget)
+
+    assert "CONFIDENTIAL" not in str(refusal.value)
+    assert refusal.value.__suppress_context__
+
+
 def test_a_group_value_outside_the_declared_list_is_refused(orders):
     with pytest.raises(SchemaError, match="outside its declared domain"):
         Anonymizer().aggregate_private(

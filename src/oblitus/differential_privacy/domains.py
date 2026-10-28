@@ -75,6 +75,10 @@ class NumericDomain(BaseModel):
             raise ValueError("lower and upper must be finite")
         if not self.lower < self.upper:
             raise ValueError("lower must be below upper")
+        # A span too wide for a float would turn the top value's bin position into NaN, so a
+        # valid record at the bound would crash the release and reveal itself for free.
+        if not math.isfinite(self._span()):
+            raise ValueError("upper - lower must be a finite number; narrow the bounds")
         return self
 
     @property
@@ -87,7 +91,7 @@ class NumericDomain(BaseModel):
         _refuse_missing(column, series)
         try:
             values = pd.to_numeric(series).to_numpy(dtype=float)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             # pandas names the offending value in its message, and that value is private.
             # `from None` keeps it out of the traceback as well.
             raise SchemaError(

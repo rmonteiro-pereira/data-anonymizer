@@ -185,7 +185,13 @@ def _release(
     if statistic.kind == "count":
         count, count_scale = _noisy_query(opendp, share, budget, 1, [1.0] * len(rows), None)
         return count, _half_width(budget, count_scale, confidence)
-    column_values = rows[statistic.column].astype(float).tolist()
+    try:
+        column_values = rows[statistic.column].astype(float).tolist()
+    except (TypeError, ValueError, OverflowError):
+        # The conversion error quotes the offending value, which is private.
+        raise SchemaError(
+            f"column {statistic.column!r} holds values that are not numbers"
+        ) from None
     bounds = (float(statistic.lower or 0.0), float(statistic.upper or 0.0))
     total, total_scale = _noisy_query(
         opendp, share, budget, statistic.query_count, column_values, bounds

@@ -18,6 +18,8 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
+from oblitus.errors import SchemaError
+
 # Largest number of rows of each table compared pair by pair. 10,000 x 10,000 rows is 10^8
 # pairs per column, a matter of seconds; the full tables would take hours.
 MAX_COMPARED_ROWS = 10_000
@@ -174,7 +176,14 @@ def _as_floats(values: pd.Series) -> np.ndarray:
         floats = nanoseconds.astype(np.float64)
         floats[dates.isna().to_numpy()] = np.nan
         return floats
-    return values.to_numpy(dtype=np.float64, na_value=np.nan)
+    try:
+        return values.to_numpy(dtype=np.float64, na_value=np.nan)
+    except (TypeError, ValueError, OverflowError):
+        # The conversion error quotes the offending value, which is private.
+        raise SchemaError(
+            f"column {values.name!r} is numeric in the training table but holds values that "
+            "are not numbers in another table"
+        ) from None
 
 
 def _robust_scales(reference_numbers: np.ndarray) -> np.ndarray:
@@ -216,6 +225,16 @@ def _blank_marker(reference_values: np.ndarray) -> float:
     return float(observed.max() + 1e6 * (np.ptp(observed) + 1.0))
 
 
+def _category_text(values: pd.Series) -> pd.Series:
+    """Values as text for matching.
+
+    Python's `str` never fails. pandas' own conversion decodes bytes as UTF-8, and its error
+    would quote a private byte and where it sits.
+    """
+    text = values.map(str, na_action="ignore")
+    return text.mask(values.isna(), "<blank>")
+
+
 def _category_codes(tables: list[pd.DataFrame], columns: list[str]) -> list[np.ndarray]:
     if not columns:
         return [np.empty((len(table), 0), dtype=np.int32) for table in tables]
@@ -223,7 +242,7 @@ def _category_codes(tables: list[pd.DataFrame], columns: list[str]) -> list[np.n
     codes = []
     for name in columns:
         joined = pd.concat([table[name] for table in tables], ignore_index=True)
-        codes.append(pd.factorize(joined.astype("string").fillna("<blank>"))[0].astype(np.int32))
+        codes.append(pd.factorize(_category_text(joined))[0].astype(np.int32))
     stacked = np.column_stack(codes)
     boundaries = np.cumsum(sizes)[:-1]
     return np.split(stacked, boundaries)

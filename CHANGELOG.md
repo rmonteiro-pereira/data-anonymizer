@@ -6,6 +6,14 @@
   numeric (for MST, AIM or any release with a `NumericDomain`) raised pandas' own error, which
   quotes the offending value. It now raises `SchemaError` naming only the column, with the
   original error left out of the traceback.
+- **The same fix for aggregates and the synthetic-data check.** Text in a summed or averaged
+  column (`aggregate_private`, `oblitus dp-aggregate`) and text in a column that is numeric in
+  the training table (`check_synthetic`, `oblitus check-synthetic`) raise `SchemaError` without
+  the value. Bytes in a category column are compared as text instead of decoded, so a
+  malformed byte no longer appears in an error with its position.
+- **Numeric bounds must be less than a float's range apart.** Bounds such as `-1e308` and `1e308`
+  are refused when declared. Before, a valid record at the upper bound crashed the release,
+  so whether it crashed told an observer that the record was there, without spending budget.
 
 ## 1.0.0
 
