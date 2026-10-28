@@ -297,3 +297,19 @@ def test_the_cli_reports_the_blockers_of_a_plan_that_cannot_chunk(source, tmp_pa
 
     assert exit_code != 0
     assert "cannot run in chunks" in capsys.readouterr().err
+
+
+def test_wide_and_overlong_integers_read_as_text_in_every_path(tmp_path):
+    source = tmp_path / "wide.csv"
+    overlong = "9" * 45
+    source.write_text(
+        "account,amount\n12345678901234567890123,1.5\n" + f"{overlong},2.5\n" + "7,3.5\n"
+    )
+
+    whole = read_table(source)
+    chunks = pl.concat(list(iter_table_chunks(source, 2)))
+
+    assert whole.schema["account"] == pl.String
+    assert whole["account"].to_list() == ["12345678901234567890123", overlong, "7"]
+    assert chunks.equals(whole)
+    assert len(whole.to_pandas()) == 3

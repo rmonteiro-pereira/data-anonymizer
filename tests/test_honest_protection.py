@@ -261,7 +261,9 @@ def test_the_proposal_keeps_measurements_and_pseudonymization_plans_unchanged():
     engine = Anonymizer(seed=1)
     rng = np.random.default_rng(0)
     decimals = pd.DataFrame({"price": rng.choice(np.arange(100) + 0.5, 3000)})
-    keys = _repeated_key_frame(60, 10, as_float=False)
+    # A neutral name: a column named `account` is a record ID by its name alone, and this
+    # test is about the repeated-key check, which must not add a step of its own.
+    keys = _repeated_key_frame(60, 10, as_float=False).rename(columns={"account": "ledger"})
 
     assert engine.propose(decimals).actions == []
     assert engine.propose(keys, protection=Protection.PSEUDONYMIZATION).actions == []

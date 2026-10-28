@@ -5,6 +5,7 @@ import pandas as pd
 import pytest
 from faker import Faker
 
+from oblitus import Anonymizer
 from oblitus.detection import checksums, scan, scan_column
 from oblitus.detection.column_names import category_from_name, name_tokens
 from oblitus.detection.patterns import (
@@ -15,7 +16,9 @@ from oblitus.detection.patterns import (
     passes_luhn,
 )
 from oblitus.errors import TableFormatError
+from oblitus.plan import Protection
 from oblitus.taxonomy import ColumnKind, DataCategory, Sensitivity
+from oblitus.techniques.catalogue import BUILTIN_TECHNIQUES
 
 
 @pytest.mark.parametrize(
@@ -102,6 +105,56 @@ def test_unique_short_codes_are_flagged_as_identifiers():
 
     assert finding.kind is ColumnKind.TEXT
     assert finding.category is DataCategory.RECORD_ID
+
+
+def _sparse_codes(digits: int, rows: int = 400) -> pd.Series:
+    rng = np.random.default_rng(digits)
+    drawn = np.unique(rng.integers(10 ** (digits - 1), 10**digits, rows * 2))
+    return pd.Series(rng.permutation(drawn)[:rows])
+
+
+@pytest.mark.parametrize("digits", [6, 10, 18])
+def test_sparse_numbers_of_one_length_are_identifiers_whatever_the_column_name(digits):
+    finding = scan_column("valor", _sparse_codes(digits))
+
+    assert finding.category is DataCategory.RECORD_ID
+
+
+def test_the_default_anonymization_replaces_sparse_account_numbers():
+    rng = np.random.default_rng(0)
+    frame = pd.DataFrame(
+        {"conta": _sparse_codes(10), "idade": rng.integers(18, 90, 400), "saldo": rng.random(400)}
+    )
+    anonymizer = Anonymizer(secret_key=b"detection-test-key-0123456789ab")
+
+    plan = anonymizer.propose(frame, protection=Protection.ANONYMIZATION)
+
+    technique = BUILTIN_TECHNIQUES[plan.action_for("conta").technique]
+    assert technique.replaces_identifiers
+
+
+@pytest.mark.parametrize(
+    ("column", "values"),
+    [
+        ("created", pd.Series(1_700_000_000 + np.arange(400) * 977)),
+        ("created_ms", pd.Series(1_700_000_000_000 + np.arange(400) * 977_001)),
+        ("amount_cents", pd.Series(np.random.default_rng(3).lognormal(9, 1.5, 400).astype(int))),
+    ],
+)
+def test_epoch_times_and_amounts_are_not_taken_for_codes(column, values):
+    finding = scan_column(column, values)
+
+    assert finding.category is not DataCategory.RECORD_ID
+
+
+@pytest.mark.parametrize("name", ["conta", "account_number", "msisdn", "numero_prontuario"])
+def test_names_of_per_person_codes_are_record_ids(name):
+    assert category_from_name(name) is DataCategory.RECORD_ID
+
+
+@pytest.mark.parametrize("name", ["account_balance", "conta_saldo_total"])
+def test_a_code_word_that_does_not_end_the_name_is_not_a_record_id(name):
+    assert category_from_name(name) is not DataCategory.RECORD_ID
 
 
 def test_dates_stored_as_text_are_recognized_as_dates():

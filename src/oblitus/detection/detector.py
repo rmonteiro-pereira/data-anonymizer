@@ -41,6 +41,13 @@ _MIN_ROWS_FOR_KEYS = 20
 # Keys are handed out densely, so their range stays close to the number of rows. Epoch
 # timestamps, amounts in cents and populations spread over a range far wider than that.
 _KEY_RANGE_PER_ROW = 10
+# Unique numbers of at least this many digits, nearly all of one length, are codes.
+_MIN_CODE_DIGITS = 6
+_SAME_LENGTH_SHARE = 0.95
+# Epoch times also have one length, and are times, not codes.
+_EPOCH_SECONDS_LOW = 1_000_000_000
+_EPOCH_SECONDS_HIGH = 2_100_000_000
+_EPOCH_SCALES = (1, 1_000, 1_000_000)
 
 # A name that points at a category is only a guess, so it is always put up for review.
 _NAME_ONLY_CONFIDENCE = 0.55
@@ -316,7 +323,33 @@ def _looks_like_identifier(kind: ColumnKind, present: pd.Series) -> bool:
 def _looks_like_keys(integers: pd.Series) -> bool:
     smallest = int(integers.min())
     largest = int(integers.max())
-    return smallest >= 0 and largest - smallest < _KEY_RANGE_PER_ROW * len(integers)
+    if smallest < 0:
+        return False
+    return largest - smallest < _KEY_RANGE_PER_ROW * len(integers) or _looks_like_codes(integers)
+
+
+def _looks_like_codes(integers: pd.Series) -> bool:
+    """Unique numbers that nearly all have the same number of digits, such as account numbers.
+
+    Such codes are spread too thinly for the dense-range test, but rounding them still leaves
+    a value that points to one row for anyone who knows the code.
+    """
+    if _looks_like_epoch_times(integers):
+        return False
+    digit_counts = integers.astype("int64").astype(str).str.len()
+    typical_count = int(digit_counts.mode().min())
+    same_length_share = float((digit_counts == typical_count).mean())
+    return typical_count >= _MIN_CODE_DIGITS and same_length_share >= _SAME_LENGTH_SHARE
+
+
+def _looks_like_epoch_times(integers: pd.Series) -> bool:
+    """Seconds, milliseconds or microseconds since 1970, between 2001 and about 2036."""
+    smallest = int(integers.min())
+    largest = int(integers.max())
+    for scale in _EPOCH_SCALES:
+        if _EPOCH_SECONDS_LOW * scale <= smallest and largest <= _EPOCH_SECONDS_HIGH * scale:
+            return True
+    return False
 
 
 def _generic(kind: ColumnKind) -> DataCategory:

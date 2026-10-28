@@ -1,6 +1,6 @@
 [project]
 name = "oblitus"
-version = "1.0.1"
+version = "1.0.2"
 description = "Detect sensitive columns, propose and apply masking, noise and anonymization techniques, and generate synthetic data from a schema or a sample."
 readme = "README.md"
 license = "MIT"

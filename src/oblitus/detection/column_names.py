@@ -242,6 +242,8 @@ _EXACT_NAMES: dict[str, DataCategory] = {
 }
 
 _ID_TOKENS = {"id", "uuid", "guid"}
+# Words that name a per-person code when they end a column name.
+_CODE_TOKENS = {"account", "conta", "msisdn", "matricula", "prontuario"}
 
 # Names of columns that hold business codes, counters or timestamps. In these columns only
 # recognizers with a strong check run, so a part number is not taken for a phone number.
@@ -356,4 +358,7 @@ def _has_unmatched_qualifier(tokens: list[str], matched_tokens: list[str]) -> bo
 
 
 def _has_id_token(tokens: list[str]) -> bool:
-    return tokens[-1] in _ID_TOKENS or tokens[0] in _ID_TOKENS
+    if tokens[-1] in _ID_TOKENS or tokens[0] in _ID_TOKENS:
+        return True
+    # Only as the last word: `account_number` is a key, `account_balance` is not.
+    return tokens[-1] in _CODE_TOKENS or tokens[-2:] == ["account", "number"]

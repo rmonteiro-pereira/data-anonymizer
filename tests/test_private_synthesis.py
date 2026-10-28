@@ -270,14 +270,14 @@ def test_a_listed_number_matches_its_csv_text(tmp_path):
     assert exit_code == 0
 
 
-def test_an_unreadable_csv_cell_is_refused_without_naming_it_or_its_place(tmp_path, capsys):
+def test_digits_of_another_script_are_refused_without_naming_them_or_their_place(tmp_path, capsys):
     domains = {"x": {"kind": "numeric", "lower": 0, "upper": 10}, "c": ["a", "b"]}
 
     exit_code = _cli_release(tmp_path, "digits", "x,c\n1,a\n2,b\n٣٤٥٦٧,a\n", domains)
 
     stderr = capsys.readouterr().err
     assert exit_code == 2
-    assert "cannot read" in stderr
+    assert "not numbers" in stderr
     assert "٣٤٥٦٧" not in stderr
     assert "offset" not in stderr
 
@@ -287,3 +287,23 @@ def test_a_wide_integer_in_a_numeric_csv_column_is_released(tmp_path):
     rows = "x,c\n1,a\n2,b\n99999999999999999999999999,a\n"
 
     assert _cli_release(tmp_path, "wide", rows, domains) == 0
+
+
+def test_a_listed_empty_string_matches_an_empty_csv_cell(tmp_path):
+    domains = {"s": ["", "a", "b"], "n": {"kind": "numeric", "lower": 0, "upper": 9}}
+    rows = "s,n\n" + "a,1\nb,2\n" * 15
+
+    without = _cli_release(tmp_path, "plain", rows, domains)
+    with_empty = _cli_release(tmp_path, "empty", rows + ",3\n", domains)
+
+    assert without == with_empty == 0
+
+
+def test_an_overlong_integer_in_an_unused_column_does_not_stop_the_release(tmp_path):
+    domains = {"c": ["a", "b"]}
+    rows = "x,c\n" + "1,a\n-5,b\n" * 15
+
+    without = _cli_release(tmp_path, "short", rows, domains)
+    with_long = _cli_release(tmp_path, "long", rows + "9" * 39 + ",a\n", domains)
+
+    assert without == with_long == 0

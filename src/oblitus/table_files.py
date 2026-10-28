@@ -31,20 +31,19 @@ def read_table(path: Path, text_columns: Collection[str] = ()) -> pl.DataFrame:
     """
     suffix = path.suffix.lower()
     if suffix == ".csv":
-        return _wide_integers_as_text(_read_csv(path, text_columns))
+        return _read_csv(path, text_columns)
     if suffix == ".parquet":
         return _wide_integers_as_text(pl.read_parquet(path))
     raise TableFormatError(f"cannot read {path.name}; supported: {_SUPPORTED}")
 
 
 def _read_csv(path: Path, text_columns: Collection[str]) -> pl.DataFrame:
-    # The whole file decides each column's type, so a late decimal in an integer
-    # column does not fail the read. ISO dates are read as dates, so date techniques and
-    # checks see them as dates rather than text.
-    overrides = {name: pl.String for name in text_columns}
     try:
         return pl.read_csv(
-            path, infer_schema_length=None, try_parse_dates=True, schema_overrides=overrides
+            path,
+            infer_schema_length=None,
+            try_parse_dates=True,
+            schema_overrides=_csv_text_overrides(path, text_columns),
         )
     except pl.exceptions.PolarsError:
         pass
@@ -53,9 +52,24 @@ def _read_csv(path: Path, text_columns: Collection[str]) -> pl.DataFrame:
     raise TableFormatError(f"cannot read {path.name}: a value does not fit the type of its column")
 
 
-def _wide_integers_as_text(table: pl.DataFrame) -> pl.DataFrame:
-    """Integers of 20 to 39 digits as text: pandas has no 128-bit integer to hold them."""
-    wide = [name for name, dtype in table.schema.items() if dtype in _WIDE_INTEGERS]
+def _csv_text_overrides(path: Path, text_columns: Collection[str]) -> dict[str, Any]:
+    """Columns to read as text: the ones asked for, and every 128-bit integer column.
+
+    The whole file decides each column's type, so a late decimal in an integer column does not
+    fail the read, and ISO dates are read as dates. Polars guesses a 128-bit integer for any
+    run of digits too long for 64 bits, including ones longer than 128 bits hold and digits
+    of other scripts, and then fails on them. pandas has no 128-bit integer either. So such a
+    column is read as text, and one long value never decides whether the file can be read.
+    """
+    inferred = pl.scan_csv(path, infer_schema_length=None, try_parse_dates=True).collect_schema()
+    wide = [name for name, dtype in inferred.items() if dtype in _WIDE_INTEGERS]
+    return {name: pl.String for name in [*wide, *text_columns]}
+
+
+def _wide_integers_as_text(table: Any) -> Any:
+    """A Polars frame or lazy frame with its 128-bit integer columns cast to text."""
+    schema = table.collect_schema() if isinstance(table, pl.LazyFrame) else table.schema
+    wide = [name for name, dtype in schema.items() if dtype in _WIDE_INTEGERS]
     if not wide:
         return table
     return table.with_columns(pl.col(wide).cast(pl.String))
@@ -80,10 +94,15 @@ def scan_table(path: Path, *, schema: pl.Schema | None = None) -> pl.LazyFrame:
     """
     suffix = _checked_suffix(path, "read")
     if suffix == ".parquet":
-        return pl.scan_parquet(path)
+        return _wide_integers_as_text(pl.scan_parquet(path))
     if schema is not None:
         return pl.scan_csv(path, schema=schema)
-    return pl.scan_csv(path, infer_schema_length=None, try_parse_dates=True)
+    return pl.scan_csv(
+        path,
+        infer_schema_length=None,
+        try_parse_dates=True,
+        schema_overrides=_csv_text_overrides(path, ()),
+    )
 
 
 def iter_table_chunks(path: Path, chunk_rows: int) -> Iterator[pl.DataFrame]:
@@ -110,7 +129,7 @@ def _parquet_chunks(path: Path, chunk_rows: int) -> Iterator[pl.DataFrame]:
     for batch in pq.ParquetFile(path).iter_batches(batch_size=chunk_rows):
         chunk = pl.from_arrow(batch)
         assert isinstance(chunk, pl.DataFrame)
-        yield chunk
+        yield _wide_integers_as_text(chunk)
 
 
 def _csv_chunks(path: Path, chunk_rows: int) -> Iterator[pl.DataFrame]:

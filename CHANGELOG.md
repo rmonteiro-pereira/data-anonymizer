@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.0.2
+
+- **Sparse numeric codes are record IDs.** A column of unique integers of at least 6 digits,
+  95% of one length (account, phone or medical record numbers), is now a record ID, whatever
+  its name. Before, only densely numbered keys were: an account number was rounded to 3
+  significant figures, and the release said `anonymized` while the rounded number still
+  pointed to one row for about 6 in 10 customers of a 400-row table. Epoch timestamps stay
+  numeric. Column names ending in `account`, `account_number`, `conta`, `msisdn`, `matricula`
+  or `prontuario` are record IDs too.
+- **Long integers never stop a CSV read.** Any column that Polars would read as a 128-bit
+  integer (more than 19 digits, including values too long for 128 bits and digits of other
+  scripts) is read as text, in whole-file, lazy and chunked reads alike. 1.0.1 handled only
+  20 to 38 digits, and `apply --chunk-rows` still crashed on them.
+- **A listed empty string matches an empty CSV cell** in `dp-synthesize` and `dp-aggregate`.
+
 ## 1.0.1
 
 - **A numeric domain no longer echoes a private value in its error.** Text in a column declared

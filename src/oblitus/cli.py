@@ -652,6 +652,11 @@ def _read_for_domains(path: Path, domains: dict[str, Any]) -> tuple[pd.DataFrame
         if values is not None:
             listed[name] = [_csv_text(value) for value in values]
     frame = read_table(path, text_columns=listed).to_pandas()
+    for name, values in listed.items():
+        # A CSV writes an empty string as an empty cell, which reads back as missing. When the
+        # domain lists the empty string, that cell can only mean it.
+        if "" in values and name in frame.columns:
+            frame[name] = frame[name].fillna("")
     return frame, {**domains, **listed}
 
 

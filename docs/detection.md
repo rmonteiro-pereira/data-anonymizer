@@ -120,8 +120,9 @@ like names. The checks are in `src/oblitus/detection/checksums.py`.
    6. A strong check that matched more than 20% of values, but too few to pass: that
       category at 0.4, never "no sign of personal data".
    7. Nearly unique short values are a record ID (0.5). Integers count only when they look
-      like keys: non-negative, in a range under ten times the row count. Epoch
-      timestamps, amounts in cents and populations stay numeric.
+      like keys: non-negative, and either in a range under ten times the row count, or
+      codes of at least 6 digits of which 95% have the same length (account, phone or
+      record numbers). Epoch timestamps, amounts in cents and populations stay numeric.
 
 `scan` accepts object columns that hold lists, dicts, sets or arrays by reading their
 text. It raises `TableFormatError` for duplicate column names and `ValueError` for a
