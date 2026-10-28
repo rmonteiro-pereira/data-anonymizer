@@ -110,9 +110,9 @@ then "result is anonymized"](https://raw.githubusercontent.com/rmonteiro-pereira
 
 `scan` classifies every column. On the sample table it finds five direct identifiers
 (`customer_id`, `full_name`, `email`, `cpf`, and `voucher`, whose few filled values are almost
-all distinct) and `signup_date` and `age` as quasi-identifiers. `propose` turns that into a plan, and `apply`
-runs it. One row before and after; your values will differ, and timestamps and amounts are
-shortened here:
+all distinct) and `signup_date` and `age` as quasi-identifiers. `propose` turns that into a
+plan, and `apply` runs it. One row before and after; your values will differ, and timestamps
+and amounts are shortened here:
 
 | | customer_id | full_name | email | signup_date | age | monthly_spend |
 |---|---|---|---|---|---|---|
