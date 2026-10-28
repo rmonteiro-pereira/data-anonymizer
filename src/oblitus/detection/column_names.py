@@ -276,6 +276,43 @@ _NEGATIVE_TOKENS = {
 }
 
 
+# Words that name a quantity. Such a column is a measurement even when its values are unique
+# and spread evenly, as random codes are.
+_MEASURE_TOKENS = {
+    "amount",
+    "cents",
+    "valor",
+    "preco",
+    "price",
+    "total",
+    "saldo",
+    "balance",
+    "population",
+    "populacao",
+    "distance",
+    "distancia",
+    "count",
+    "visits",
+    "qty",
+    "quantidade",
+    "weight",
+    "peso",
+    "height",
+    "altura",
+    "salary",
+    "salario",
+    "revenue",
+    "receita",
+    "cost",
+    "custo",
+    "score",
+    "duration",
+    "duracao",
+    "size",
+    "bytes",
+}
+
+
 def name_tokens(column_name: str) -> list[str]:
     """Split a column name into lowercase ASCII tokens on separators and camelCase."""
     without_accents = (
@@ -299,6 +336,11 @@ def has_negative_hint(column_name: str) -> bool:
     tokens = name_tokens(column_name)
     joined = "_".join(tokens)
     return any(token in _NEGATIVE_TOKENS for token in tokens) or joined in _NEGATIVE_TOKENS
+
+
+def names_a_measure(column_name: str) -> bool:
+    """True when the name says the column holds a quantity, such as an amount or a count."""
+    return any(token in _MEASURE_TOKENS for token in name_tokens(column_name))
 
 
 def is_person_word_column(column_name: str) -> bool:

@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.1.0
+
+- **Event dates are quasi-identifiers.** A date that is not a birth date (a visit, a purchase,
+  an admission) is now counted with the other quasi-identifiers, and the anonymization
+  proposal keeps only its month (year with privacy fidelity). Before, it was kept to the day
+  and not counted, so city, sex and one visit date singled out 20 to 87% of people in a
+  release labelled `anonymized`. Pseudonymization proposals keep the date and count it.
+- **Random numeric codes are record IDs whatever their shape.** Unique whole numbers spread
+  evenly within each digit length are codes, which covers codes of mixed lengths, negative
+  codes, short codes and codes with a few repeats. 1.0.2 only caught codes of one length, and
+  such columns were still rounded and linked for about 60% of people. A column named after a
+  quantity stays a number.
+- The protection guide lists three more limits: consistent pseudonyms follow the value's
+  frequency, rounded columns can join two releases, and deterministic `encrypt` leaks length.
+
 ## 1.0.2
 
 - **Sparse numeric codes are record IDs.** A column of unique integers of at least 6 digits,

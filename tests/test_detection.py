@@ -147,6 +147,61 @@ def test_epoch_times_and_amounts_are_not_taken_for_codes(column, values):
     assert finding.category is not DataCategory.RECORD_ID
 
 
+def _random_codes(shape: str, rows: int = 400) -> pd.Series:
+    rng = np.random.default_rng(7)
+    if shape == "uniform_below_a_power_of_ten":
+        drawn = rng.choice(10**9, rows, replace=False) + 1
+    elif shape == "seven_and_eight_digits":
+        drawn = np.concatenate(
+            [rng.choice(9 * 10**6, rows // 2) + 10**6, rng.choice(9 * 10**7, rows // 2) + 10**7]
+        )
+    elif shape == "negative":
+        drawn = -(rng.choice(9 * 10**8, rows, replace=False) + 10**8)
+    elif shape == "five_digits":
+        drawn = rng.choice(9 * 10**4, rows, replace=False) + 10**4
+    else:
+        unique = rng.choice(9 * 10**8, int(rows * 0.92), replace=False) + 10**8
+        drawn = np.concatenate([unique, rng.choice(unique, rows - len(unique))])
+    return pd.Series(rng.permutation(drawn))
+
+
+@pytest.mark.parametrize(
+    "shape",
+    [
+        "uniform_below_a_power_of_ten",
+        "seven_and_eight_digits",
+        "negative",
+        "five_digits",
+        "a_few_repeats",
+    ],
+)
+@pytest.mark.parametrize("column", ["code", "codigo", "policy_number", "ticket", "x"])
+def test_random_codes_are_identifiers_whatever_their_shape_or_name(shape, column):
+    finding = scan_column(column, _random_codes(shape))
+
+    assert finding.category is DataCategory.RECORD_ID
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        np.random.default_rng(1).lognormal(10, 1, 400).astype(int),
+        np.random.default_rng(2).normal(60_000, 25_000, 400).clip(1_000).astype(int),
+        np.random.default_rng(3).gamma(2.0, 40_000, 400).astype(int),
+    ],
+)
+def test_unique_measures_that_crowd_around_typical_values_are_not_codes(values):
+    finding = scan_column("x", pd.Series(values))
+
+    assert finding.category is not DataCategory.RECORD_ID
+
+
+def test_an_evenly_spread_column_named_as_a_measure_stays_a_measure():
+    values = pd.Series(np.random.default_rng(4).choice(10**7, 400, replace=False))
+
+    assert scan_column("valor_total", values).category is not DataCategory.RECORD_ID
+
+
 @pytest.mark.parametrize("name", ["conta", "account_number", "msisdn", "numero_prontuario"])
 def test_names_of_per_person_codes_are_record_ids(name):
     assert category_from_name(name) is DataCategory.RECORD_ID

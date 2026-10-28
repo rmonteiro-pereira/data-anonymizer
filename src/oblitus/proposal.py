@@ -140,6 +140,10 @@ _ANONYMIZATION_RULES: dict[DataCategory, dict[Fidelity, Rule]] = {
         _STATISTICAL: Rule("truncate_date", {"unit": "year"}, "birth year only"),
         _PRIVACY: Rule("truncate_date", {"unit": "year"}, "birth year only"),
     },
+    DataCategory.GENERIC_DATETIME: {
+        _STATISTICAL: Rule("truncate_date", {"unit": "month"}, "month only"),
+        _PRIVACY: Rule("truncate_date", {"unit": "year"}, "year only"),
+    },
     DataCategory.GEO_COORDINATE: {
         _STATISTICAL: Rule("round_numeric", {"decimals": 2}, "about one kilometre"),
         _PRIVACY: Rule("round_numeric", {"decimals": 1}, "about ten kilometres"),

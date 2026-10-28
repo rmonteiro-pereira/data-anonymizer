@@ -114,6 +114,9 @@ _QUASI_IDENTIFIERS = {
     DataCategory.POSTAL_CODE,
     DataCategory.CITY,
     DataCategory.DATE_OF_BIRTH,
+    # Event dates (a visit, a purchase, an admission) single people out together with a
+    # city or a sex, so they count like a birth date does.
+    DataCategory.GENERIC_DATETIME,
     DataCategory.AGE,
     DataCategory.GENDER,
     DataCategory.GEO_COORDINATE,

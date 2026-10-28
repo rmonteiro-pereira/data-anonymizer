@@ -81,6 +81,7 @@ The other categories:
 | postal_code | keep 3 characters | keep 2 | keep 3 | keep 2 |
 | city | `keep` | `suppress_rare` below 10 | `keep` | `suppress_rare` below 10 |
 | date_of_birth | `date_shift` ±30 days, per entity | year only | year only | year only |
+| other dates (a visit, a purchase) | `keep`, counted as quasi-identifier | `keep`, counted | month only | year only |
 | age | `microaggregate` groups of 5 | decades | `microaggregate` groups of 5 | decades |
 | gender | `keep` | `keep` | `keep` | `keep` |
 | geo_coordinate | Gaussian noise about 1 km | 1 decimal | 2 decimals | 1 decimal |
@@ -525,6 +526,22 @@ and still let someone who knows their own records follow those records:
   values, a key made of three or more columns, a pair of columns that each have fewer than 20
   values, or a decimal key with a few fractional cells passes. List every column in the plan,
   and drop the ones the recipient does not need.
+- **Consistent pseudonyms follow the value's frequency.** A keyed hash or a consistent
+  surrogate gives the most common name the most common token. Someone who knows how common
+  each name is can decode the frequent ones: in a measured test, ranking 40 first names by
+  public frequency decoded about 60% of rows of a pseudonymized column, against about 20% for
+  guessing the most common name. Anonymization replaces such columns with fresh codes.
+- **Rounded columns join two releases.** Codes and fakes are fresh in every run, but a column
+  that is only rounded or microaggregated gives the same values in two releases. Two releases
+  of different columns of one table can be joined on them; in a measured test, a rounded
+  amount and an age in groups of five joined 48% of the rows of a 1,500-row table correctly.
+  Release one table, or give the releases no generalized column in common.
+- **Numeric codes are found by their spread.** Unique whole numbers spread evenly within each
+  digit length, or nearly all of one length with at least 6 digits, are taken for codes and
+  replaced. A code with a pattern (leading digits that encode a branch, say) and fewer than 6
+  digits passes as a number. The other way round, an unnamed measure whose values all have the
+  same number of digits is replaced too, which costs utility, not privacy. Naming the column
+  after a quantity (`amount`, `valor`, `saldo`, `population` and similar) keeps it a number.
 - **Group sizes and own values survive fresh codes.** Replacing an account with a fresh code
   hides the value, not the group. Someone who knows how many rows they have, or a few of their
   own amounts, can find their code and read the rest of their rows. Perturb or generalize the

@@ -130,7 +130,8 @@ with SqliteVault("tokens.sqlite") as vault:
   refuses `tokenize`. Deleting the vault removes the link, and the released table alone then
   holds random strings.
 - **Format.** `preserve_format` keeps length and character classes, which leaks the length of
-  each value and gives short values few possible tokens. A column with more distinct values
+  each value and gives short values few possible tokens. Deterministic `encrypt` leaks the
+  length too: its token grows with the value. A column with more distinct values
   than tokens fails with an error. Revealed values come back as text.
 
 `laplace_noise` satisfies ε-local differential privacy only with `lower` and `upper` fixed

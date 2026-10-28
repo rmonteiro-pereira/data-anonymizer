@@ -4,12 +4,14 @@ from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
+from scipy import stats as scipy_stats
 
 from oblitus.detection.calibration import calibrated_confidence
 from oblitus.detection.column_names import (
     category_from_name,
     has_negative_hint,
     is_person_word_column,
+    names_a_measure,
 )
 from oblitus.detection.free_text import classify_free_text
 from oblitus.detection.kinds import as_datetime, can_hold, infer_kind
@@ -44,6 +46,14 @@ _KEY_RANGE_PER_ROW = 10
 # Unique numbers of at least this many digits, nearly all of one length, are codes.
 _MIN_CODE_DIGITS = 6
 _SAME_LENGTH_SHARE = 0.95
+# Random codes: nearly unique, and spread evenly within each digit length. A few repeats
+# are allowed, because codes are often entered twice. A digit length needs enough values to
+# test, and the tested lengths must hold nearly all the column.
+_CODE_UNIQUE_SHARE = 0.85
+_MIN_ROWS_PER_LENGTH = 30
+_TESTED_SHARE = 0.85
+_EVENNESS_BINS = 10
+_EVENNESS_P_VALUE = 0.001
 # Epoch times also have one length, and are times, not codes.
 _EPOCH_SECONDS_LOW = 1_000_000_000
 _EPOCH_SECONDS_HIGH = 2_100_000_000
@@ -192,7 +202,8 @@ def _classify(
     by_name = _from_name_and_values(column, kind, name_category, sample)
     if by_name is not None:
         return by_name
-    return _from_values_alone(kind, present, sample, candidates)
+    measure = names_a_measure(column)
+    return _from_values_alone(kind, present, sample, candidates, measure)
 
 
 def _from_name_and_values(
@@ -218,7 +229,11 @@ def _holds_person_names(
 
 
 def _from_values_alone(
-    kind: ColumnKind, present: pd.Series, sample: pd.Series, candidates: list[Candidate]
+    kind: ColumnKind,
+    present: pd.Series,
+    sample: pd.Series,
+    candidates: list[Candidate],
+    named_as_measure: bool,
 ) -> tuple[DataCategory, float, str]:
     if kind is ColumnKind.DATETIME and _looks_like_birth_dates(sample):
         return (
@@ -247,7 +262,7 @@ def _from_values_alone(
         evidence = "most values are a Brazilian name with at most one other word"
         return DataCategory.PERSON_NAME, _KNOWN_NAMES_CONFIDENCE, evidence
 
-    if _looks_like_identifier(kind, present):
+    if _looks_like_identifier(kind, present, named_as_measure):
         return (
             DataCategory.RECORD_ID,
             _UNIQUENESS_ONLY_CONFIDENCE,
@@ -308,10 +323,15 @@ def _looks_like_gender(sample: pd.Series) -> bool:
     return len(labels) <= 4 and labels <= _GENDER_VALUES
 
 
-def _looks_like_identifier(kind: ColumnKind, present: pd.Series) -> bool:
+def _looks_like_identifier(kind: ColumnKind, present: pd.Series, named_as_measure: bool) -> bool:
     if kind not in (ColumnKind.INTEGER, ColumnKind.TEXT) or len(present) < _MIN_ROWS_FOR_KEYS:
         return False
     unique_share = present.nunique() / len(present)
+    # An evenly spread measure, such as amounts drawn at random, looks like random codes; only
+    # its name tells them apart.
+    may_be_random_codes = kind is ColumnKind.INTEGER and not named_as_measure
+    if may_be_random_codes and unique_share >= _CODE_UNIQUE_SHARE:
+        return _looks_like_random_codes(present) or _looks_like_keys(present)
     if unique_share < _IDENTIFIER_UNIQUE_SHARE:
         return False
     if kind is ColumnKind.TEXT:
@@ -340,6 +360,36 @@ def _looks_like_codes(integers: pd.Series) -> bool:
     typical_count = int(digit_counts.mode().min())
     same_length_share = float((digit_counts == typical_count).mean())
     return typical_count >= _MIN_CODE_DIGITS and same_length_share >= _SAME_LENGTH_SHARE
+
+
+def _looks_like_random_codes(integers: pd.Series) -> bool:
+    """Numbers handed out at random: spread evenly within each number of digits.
+
+    A code drawn at random is as likely to be 3,141,592 as 8,271,828, so within each digit
+    length its values fill the range evenly, whatever the lengths, the sign or a few repeats.
+    Measurements such as amounts, ages or populations crowd around typical values instead.
+    Rounding a code still leaves a value that points to one row for anyone who knows it.
+    """
+    if _looks_like_epoch_times(integers):
+        return False
+    magnitudes = integers.astype("int64").abs()
+    lengths = magnitudes.astype(str).str.len()
+    tested = 0
+    for length, members in magnitudes.groupby(lengths):
+        if len(members) < _MIN_ROWS_PER_LENGTH or int(length) < 2:
+            continue
+        if not _fills_range_evenly(members.to_numpy(), int(length)):
+            return False
+        tested += len(members)
+    return tested >= _TESTED_SHARE * len(integers)
+
+
+def _fills_range_evenly(values: np.ndarray, length: int) -> bool:
+    """A chi-square test of the values against an even spread over their digit range."""
+    lowest = 10 ** (length - 1)
+    highest = 10**length
+    counts, _edges = np.histogram(values, bins=_EVENNESS_BINS, range=(lowest, highest))
+    return bool(scipy_stats.chisquare(counts).pvalue >= _EVENNESS_P_VALUE)
 
 
 def _looks_like_epoch_times(integers: pd.Series) -> bool:
