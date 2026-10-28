@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 from oblitus.cli import main
 
@@ -119,3 +120,40 @@ def test_challenge_command_builds_a_panel_without_a_row_count(tmp_path, capsys):
     assert len(pd.read_csv(tmp_path / "s.csv")) == 40 * 36
     assert main(["synthesize", "-o", str(tmp_path / "x.csv")]) == 2
     assert "rows is required" in capsys.readouterr().err
+
+
+def test_propose_shows_what_each_column_will_get_and_the_next_command(people, tmp_path, capsys):
+    source = tmp_path / "people.csv"
+    people.to_csv(source, index=False)
+    plan_path = tmp_path / "plan.json"
+
+    assert main(["propose", str(source), "-o", str(plan_path)]) == 0
+
+    printed = capsys.readouterr().out
+    assert "full_name" in printed
+    assert "surrogate" in printed
+    assert f"oblitus apply {source} --plan {plan_path}" in printed
+
+
+def test_a_plan_on_standard_output_stays_valid_json(people, tmp_path, capsys):
+    source = tmp_path / "people.csv"
+    people.to_csv(source, index=False)
+
+    assert main(["propose", str(source)]) == 0
+
+    json.loads(capsys.readouterr().out)
+
+
+def test_a_missing_input_file_is_named_plainly(tmp_path, capsys):
+    assert main(["scan", str(tmp_path / "nope.csv")]) == 2
+
+    assert "nope.csv: no such file" in capsys.readouterr().err
+
+
+def test_the_help_shows_the_usual_path(capsys):
+    with pytest.raises(SystemExit):
+        main(["--help"])
+
+    printed = capsys.readouterr().out
+    assert "the usual path:" in printed
+    assert "commands by task:" in printed

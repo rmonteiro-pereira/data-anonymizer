@@ -31,6 +31,7 @@ from oblitus.key_generation import GeneratedKey, SourceStatus, generate_key
 from oblitus.noise_explorer import explore_noise, save_page
 from oblitus.noise_explorer.sweep import DEFAULT_MAX_ROWS
 from oblitus.plan import AnonymizationPlan, Fidelity, Protection
+from oblitus.release_summary import describe_result
 from oblitus.synthesis import RelationalSchema, infer_schema, load_schema
 from oblitus.synthesis.question_text import describe_task
 from oblitus.synthesis.rare_values import min_records_for
@@ -81,19 +82,43 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"error: {error}", file=sys.stderr)
         return 2
     except ProtectionNotReachedError as error:
+        # The report went to standard output; flush it so the warning comes after it.
+        sys.stdout.flush()
         print(f"warning: {error}", file=sys.stderr)
         return EXIT_PROTECTION_NOT_REACHED
     return 0
+
+
+# Shown under --help, so a first-time reader sees the usual path before the full list.
+_COMMAND_GROUPS = """\
+the usual path:
+  oblitus scan data.csv                                  what each column holds
+  oblitus propose data.csv -o plan.json                  a plan to review and edit
+  oblitus apply data.csv --plan plan.json -o out.csv     run it and check the result
+
+commands by task:
+  anonymize    scan, propose, apply, apply-many, reveal, techniques
+  synthesize   infer-schema, synthesize, challenge, check-synthetic
+  private      dp-synthesize, dp-aggregate (differential privacy)
+  explore      explore-noise (an HTML page of how noise moves a column)
+  keys         keygen
+
+Run `oblitus <command> --help` for a command's options.
+"""
 
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="oblitus",
         description="Detect, anonymize and synthesize sensitive tabular data.",
+        epilog=_COMMAND_GROUPS,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--seed", type=int, default=None, help="seed for reproducible output")
     parser.add_argument("--locale", default="en_US", help="Faker locale for fake values")
-    commands = parser.add_subparsers(dest="command", required=True)
+    commands = parser.add_subparsers(
+        dest="command", required=True, metavar="<command>", title="commands"
+    )
 
     scan_parser = commands.add_parser("scan", help="report what each column holds")
     scan_parser.add_argument("input", type=Path)
@@ -375,6 +400,16 @@ def _propose(anonymizer: Anonymizer, arguments: argparse.Namespace) -> None:
         protection=arguments.protection,
     )
     _emit(plan.to_json(), arguments.output)
+    if arguments.output is None:
+        # The plan itself went to standard output, so it stays valid JSON there.
+        return
+    print()
+    print(plan.describe())
+    print()
+    print(
+        f"next: review {arguments.output} (change a technique, or a column's role), then run "
+        f"oblitus apply {arguments.input} --plan {arguments.output} -o <released file>"
+    )
 
 
 def _apply(anonymizer: Anonymizer, arguments: argparse.Namespace) -> None:
@@ -416,13 +451,8 @@ def _apply_in_chunks(anonymizer: Anonymizer, arguments: argparse.Namespace) -> N
     if arguments.report is not None:
         report = {"rows": result.rows, "chunks": result.chunks, **_report(result)}
         arguments.report.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
-    print(
-        f"wrote {result.rows} rows in {result.chunks} chunks to {arguments.output}; "
-        f"k-anonymity {result.privacy_before.k_anonymity} -> {result.privacy_after.k_anonymity}; "
-        f"result is {result.protection.level.value}"
-    )
-    for problem in result.protection.problems:
-        print(f"  - {problem}")
+    print(f"wrote {result.rows} rows in {result.chunks} chunks to {arguments.output}")
+    print(describe_result(result))
     if not result.protection.reached:
         raise ProtectionNotReachedError(f"the {plan.protection.value} target was not reached")
 
@@ -460,13 +490,8 @@ def _plan_for(
 
 
 def _print_outcome(result: AnonymizationResult, output: Path) -> None:
-    print(
-        f"wrote {len(result.data)} rows to {output}; "
-        f"k-anonymity {result.privacy_before.k_anonymity} -> {result.privacy_after.k_anonymity}; "
-        f"result is {result.protection.level.value}"
-    )
-    for problem in result.protection.problems:
-        print(f"  - {problem}")
+    print(f"wrote {len(result.data)} rows to {output}")
+    print(result.describe())
 
 
 def _run_attacks(original: pl.DataFrame, result: AnonymizationResult) -> AttackRiskReport:

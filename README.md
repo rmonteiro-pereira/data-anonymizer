@@ -90,8 +90,16 @@ uv run oblitus apply customers.csv --plan plan.json -o customers_anon.csv --repo
 uv run oblitus explore-noise customers.csv --column monthly_spend -o monthly_spend_noise.html
 ```
 
-`apply` ends with a line such as
-`wrote 2000 rows to customers_anon.csv; k-anonymity 1 -> 5; result is anonymized`. Open the
+`propose` prints each column's technique and the reason, then the `apply` command to run
+after your review. `apply` ends with lines such as
+
+```
+wrote 2000 rows to customers_anon.csv
+result is anonymized (target anonymization); k-anonymity 1 -> 5
+cells blanked to protect rare rows: age 14%
+```
+
+When the target is not reached, it lists why and exits with code 3. Open the
 explorer page in a browser; [docs/noise-explorer.md](https://github.com/rmonteiro-pereira/oblitus/blob/main/docs/noise-explorer.md#open-the-page)
 gives the command for each system, and warns that the page holds real values from the column.
 
@@ -142,7 +150,9 @@ for finding in anonymizer.scan(customers):
 plan = anonymizer.propose(
     customers, protection=Protection.ANONYMIZATION, fidelity=Fidelity.STATISTICAL
 )
+print(plan.describe())  # each column's technique and why, the text `propose` prints
 result = anonymizer.apply(customers, plan)
+print(result.describe())  # the level reached, why it fell short, the cells blanked
 result.data  # the anonymized DataFrame, of the kind you passed in
 result.protection.level  # anonymized, at_risk, pseudonymized or identifiable
 result.protection.problems  # why a level was not reached

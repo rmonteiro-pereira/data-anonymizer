@@ -57,6 +57,7 @@ from oblitus.protection import (
     linking_actions,
     with_added_exposures,
 )
+from oblitus.release_summary import describe_result
 from oblitus.row_order import shuffle_rows
 from oblitus.surrogates import SurrogateFactory
 from oblitus.synthesis import (
@@ -96,6 +97,19 @@ class AnonymizationResult:
     privacy_after: PrivacyReport
     utility: UtilityReport
     protection: ProtectionAssessment
+
+    def describe(self) -> str:
+        """The protection reached, why it fell short if it did, and what the release cost."""
+        return describe_result(self)
+
+    def __repr__(self) -> str:
+        # The default would print the whole table; a notebook reader wants the verdict.
+        return (
+            f"AnonymizationResult(level={self.protection.level.value}, "
+            f"k_anonymity={self.privacy_after.k_anonymity}, "
+            f"problems={len(self.protection.problems)}, "
+            f"suppressed_cells={self.suppressed_cells})"
+        )
 
 
 class Anonymizer:

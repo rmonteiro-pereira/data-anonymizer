@@ -271,4 +271,4 @@ def test_k_counts_people_per_combination_of_a_quasi_identifier_and_the_joint_col
     assert result.privacy_after.k_anonymity == 2
     assert result.privacy_after.counts_entities
     assert result.protection.level is ProtectionLevel.AT_RISK
-    assert any("entities sit in" in problem for problem in result.protection.problems)
+    assert any("distinct person values sit in" in problem for problem in result.protection.problems)

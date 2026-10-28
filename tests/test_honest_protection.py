@@ -267,3 +267,27 @@ def test_the_proposal_keeps_measurements_and_pseudonymization_plans_unchanged():
 
     assert engine.propose(decimals).actions == []
     assert engine.propose(keys, protection=Protection.PSEUDONYMIZATION).actions == []
+
+
+def test_a_result_describes_its_level_its_problems_and_prints_without_the_table(people):
+    anonymizer = Anonymizer(seed=1)
+    plan = anonymizer.propose(people, protection=Protection.ANONYMIZATION)
+    plan.actions = [action for action in plan.actions if action.column != "full_name"]
+
+    result = anonymizer.apply(people, plan)
+
+    described = result.describe()
+    assert described.startswith(f"result is {result.protection.level.value}")
+    assert "full_name" in described
+    assert repr(result).startswith("AnonymizationResult(level=")
+    assert "\n" not in repr(result)
+
+
+def test_a_plan_describes_each_column_with_its_technique_and_reason(people):
+    plan = Anonymizer(seed=1).propose(people, protection=Protection.ANONYMIZATION)
+
+    described = plan.describe()
+
+    for action in plan.actions:
+        assert action.column in described
+        assert action.technique in described

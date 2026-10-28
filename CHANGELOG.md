@@ -2,6 +2,14 @@
 
 ## 1.1.0
 
+- **Readable output.** `oblitus propose -o plan.json` prints each column's technique and the
+  reason, the quasi-identifiers, and the `apply` command to run after review. `oblitus apply`
+  prints the level reached, why it fell short, and the share of each column's cells blanked
+  to protect rare rows. `AnonymizationPlan.describe()` and `AnonymizationResult.describe()`
+  return the same text, and printing a result no longer dumps the whole table.
+- `oblitus --help` shows the usual path and the commands grouped by task. A missing input file
+  is reported as "<path>: no such file". Problem texts count "distinct customer_id values"
+  instead of "entities", and a plain date's scan evidence says it can single people out.
 - **Event dates are quasi-identifiers.** A date that is not a birth date (a visit, a purchase,
   an admission) is now counted with the other quasi-identifiers, and the anonymization
   proposal keeps only its year. Before, it was kept to the day and not counted, so city, sex

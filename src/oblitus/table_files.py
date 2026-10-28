@@ -29,12 +29,12 @@ def read_table(path: Path, text_columns: Collection[str] = ()) -> pl.DataFrame:
     `text_columns` are read from a CSV as written, without type inference. Names the file
     does not have are ignored.
     """
-    suffix = path.suffix.lower()
+    suffix = _checked_suffix(path, "read")
+    if not path.exists():
+        raise FileNotFoundError(f"{path}: no such file")
     if suffix == ".csv":
         return _read_csv(path, text_columns)
-    if suffix == ".parquet":
-        return _wide_integers_as_text(pl.read_parquet(path))
-    raise TableFormatError(f"cannot read {path.name}; supported: {_SUPPORTED}")
+    return _wide_integers_as_text(pl.read_parquet(path))
 
 
 def _read_csv(path: Path, text_columns: Collection[str]) -> pl.DataFrame:

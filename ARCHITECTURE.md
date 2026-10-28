@@ -135,6 +135,7 @@ The code map below names every module and what must not live in it.
 | `table_manifest.py` | `TableManifest`: the JSON file `apply-many` reads, listing each table's input, output and plan | Applying plans |
 | `plan.py` | `Fidelity`, `Protection`, `ColumnAction`, `AnonymizationPlan` (pydantic, JSON round-trip) | Rules for choosing techniques |
 | `proposal.py` | `_direct_identifier_rule`, the attribute rule table with its anonymization overrides, and `propose_plan` | Applying techniques |
+| `release_summary.py` | `describe_plan` and `describe_result`: the plain-text summaries `propose` and `apply` print, and `AnonymizationPlan.describe()` and `AnonymizationResult.describe()` return | Deciding anything; it only words what the plan and the checks found |
 | `protection.py` | `assess_protection`: the level an applied plan reached (anonymized, at_risk, pseudonymized, identifiable), from the record isolation, linkage and inference checks, run on the released data | Changing data |
 | `identifying_columns.py` | Released columns that single out rows or link an entity's rows: fingerprints and untreated entity keys (single or paired columns), counted on the whole table | Changing data |
 | `untreated_columns.py` | `treat_untreated_columns`: under anonymization, completes a proposed plan from the whole table's values (fresh codes for text keys, generalized fingerprint timestamps and numbers, low-cardinality columns as quasi-identifiers) | Applying techniques |

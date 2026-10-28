@@ -189,6 +189,12 @@ class AnonymizationPlan(BaseModel):
                 return action
         return None
 
+    def describe(self) -> str:
+        """A plain-text table of what the plan does to each column, for review."""
+        from oblitus.release_summary import describe_plan
+
+        return describe_plan(self)
+
     def to_json(self) -> str:
         """Serialize the plan as indented JSON for review."""
         return self.model_dump_json(indent=2)

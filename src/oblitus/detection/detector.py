@@ -275,6 +275,10 @@ def _from_values_alone(
             _UNIQUENESS_ONLY_CONFIDENCE,
             "nearly every row has its own value, so the column can single out a record",
         )
+    if kind is ColumnKind.DATETIME:
+        # A plain date is still a quasi-identifier, so "no sign of personal data" would mislead.
+        evidence = "an event date: with a city or an age it can single people out"
+        return DataCategory.GENERIC_DATETIME, 1.0, evidence
     return _generic(kind), 1.0, "no sign of personal data in the name or the values"
 
 

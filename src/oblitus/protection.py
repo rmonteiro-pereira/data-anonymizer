@@ -239,10 +239,15 @@ def _surviving_share(before: pd.Series, after: pd.Series) -> float:
     return float(same.mean())
 
 
+def _counted_noun(entity_column: str | None) -> str:
+    """What a count of people is a count of: rows, or distinct values of the entity column."""
+    return "rows" if entity_column is None else f"distinct {entity_column} values"
+
+
 def _exposures(plan: AnonymizationPlan, privacy: PrivacyReport) -> list[str]:
     problems = []
     if privacy.k_anonymity < plan.k_target:
-        counted = "entities" if privacy.counts_entities else "rows"
+        counted = _counted_noun(plan.entity_column if privacy.counts_entities else None)
         problems.append(
             f"{privacy.rows_below_target} {counted} sit in quasi-identifier groups smaller than "
             f"{plan.k_target} (k-anonymity is {privacy.k_anonymity})"
@@ -388,7 +393,7 @@ def _isolated_records(plan: AnonymizationPlan, released: WorkingFrame) -> list[s
     unique_rows = int(first_row(singled_out)["unique_rows"])
     if unique_rows == 0:
         return []
-    counted = "rows" if entity is None else "entities"
+    counted = _counted_noun(entity)
     return [
         f"{unique_rows} {counted} are unique across their discrete columns "
         f"({', '.join(columns)}), so they can be singled out"
